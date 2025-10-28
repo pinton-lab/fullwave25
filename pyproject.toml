@@ -6,11 +6,8 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "dataclasses>=0.8",
-    "joblib>=1.4.2",
     "matplotlib>=3.10.1",
     "numpy>=2.2.3",
-    "opencv-python>=4.11.0.86",
-    "pandas>=2.2.3",
     "scipy>=1.15.2",
     "tqdm>=4.67.1",
 ]
@@ -21,19 +18,7 @@ path = "fullwave/__init__.py"
 
 [project.optional-dependencies]
 test = ["pytest", "coverage==7.6.12"]
-dev = ["pre-commit==4.1.0", "memory-profiler>=0.61.0", "memray>=1.17.2"]
-example = [
-    "vtk>=9.4.2",
-    "simpleitk>=2.5.2",
-    "seaborn>=0.13.2",
-    "pymust>=0.1.8",
-    "mach-beamform>=0.0.4",
-    "lightgbm>=4.6.0",
-    "requests>=2.32.4",
-    "scikit-learn>=1.6.1",
-    "pyvista>=0.40.1",
-    "h5py>=3.15.1",
-]
+dev = ["pre-commit==4.1.0", "pytest>=8.3.5", "ruff>=0.12.9"]
 
 [build-system]
 requires = ["hatchling"]

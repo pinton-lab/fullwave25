@@ -44,10 +44,9 @@ Run below to install the development environment.
 ```sh
 git clone git@github.com:pinton-lab/fullwave-python.git
 cd fullwave-python
-make install
+make install-all-extras # for running examples
 # or
-make install-all-extras
-
+make install # for the core library installation
 ```
 
 To test the installation, run
