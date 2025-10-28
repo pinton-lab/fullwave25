@@ -105,12 +105,19 @@ class Source:
         *,
         show: bool = False,
     ) -> None:
-        """Plot the transducer mask, optionally exporting and displaying the figure."""
+        """Plot the transducer mask, optionally exporting and displaying the figure.
+
+        Raises
+        ------
+        ValueError
+            If 3D plotting is requested but not supported.
+
+        """
         if self.is_3d:
             error_msg = "3D plotting is not supported yet."
             raise ValueError(error_msg)
         plt.close("all")
-        fig, ax = plt.subplots()
+        fig, _ = plt.subplots()
         fig = plot_utils.plot_array(
             self.mask,
             xlim=[-10, self.mask.shape[1] + 10],

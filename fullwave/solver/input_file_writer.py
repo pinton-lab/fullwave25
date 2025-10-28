@@ -52,20 +52,8 @@ class InputFileWriter:
             The sensor configuration.
         path_fullwave_simulation_bin : Path, optional
             The path to the fullwave simulation binary.
-        m_spatial_order : int, optional
-            fullwave simulation's spatial order (default is 8).
-            It depends on the fullwave simulation binary version.
-            Fullwave simulation has 2M th order spatial accuracy and fourth order accuracy in time.
-            see Pinton, G. (2021) http://arxiv.org/abs/2106.11476 for more detail.
-        pml_layer_thickness_px : int, optional
-            PML layer thickness (default is 40).
-        n_relaxation : int, optional
-            The number of relaxation parameters (default is 2).
         validate_input: bool, optional
             Flag indicating whether to validate the input data.
-            default is True.
-        use_pml: bool, optional
-            Flag indicating whether to use PML.
             default is True.
         use_exponential_attenuation: bool, optional
             Flag indicating whether to use exponential attenuation.

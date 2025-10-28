@@ -95,7 +95,12 @@ class Sensor:
         *,
         show: bool = False,
     ) -> None:
-        """Plot the transducer mask, optionally exporting and displaying the figure."""
+        """Plot the transducer mask, optionally exporting and displaying the figure.
+
+        Raises:
+            ValueError: If the sensor is 3D because plotting is not supported.
+
+        """
         if self.is_3d:
             error_msg = "3D plotting is not supported yet."
             raise ValueError(error_msg)

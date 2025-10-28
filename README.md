@@ -94,6 +94,13 @@ import fullwave
 from fullwave.utils import plot_utils, signal_process
 ```
 
+### Define the working directory
+
+```py
+work_dir = Path("./outputs/") / "simple_plane_wave"
+work_dir.mkdir(parents=True, exist_ok=True)
+```
+
 ### Define the computational grid
 
 ```py
@@ -114,7 +121,7 @@ grid = fullwave.Grid(
 ### Define the properties of the acoustic medium
 
 ```py
-sound_speed = 1500  # m/s
+sound_speed = 1540  # m/s
 density = 1000  # kg/m^3
 alpha_coeff = 0.5  # dB/(MHz^gamma * cm)
 alpha_power = 1.0  # [-]
@@ -165,7 +172,6 @@ source = fullwave.Source(p0, p_mask)
 
 ```py
 sensor_mask = np.zeros((grid.nx, grid.ny), dtype=bool)
-# sensor_mask[0:1, :] = True
 sensor_mask[:, :] = True
 
 # setup the Sensor instance
@@ -175,9 +181,6 @@ sensor = fullwave.Sensor(mask=sensor_mask, sampling_interval=7)
 ### Execute the simulation
 
 ```py
-
-work_dir = Path("./temp") / "demo"
-
 # setup the Solver instance
 fw_solver = fullwave.Solver(
   work_dir=work_dir,
@@ -199,15 +202,14 @@ propagation_map = signal_process.reshape_whole_sensor_to_nt_nx_ny(
   grid,
 )
 
-power = 1 / 3
-
+p_max_plot = np.abs(propagation_map).max().item() / 4
 plot_utils.plot_wave_propagation_with_map(
-  propagation_map=signal_process.signed_power_compression(propagation_map, power=power),
+  propagation_map=propagation_map,
   c_map=medium.sound_speed,
   rho_map=medium.density,
-  export_name="./temp/anim.mp4",
-  vmax=1e5**power,
-  vmin=-(1e5**power),
+  export_name=work_dir / "wave_propagation_animation.mp4",
+  vmax=p_max_plot,
+  vmin=-p_max_plot,
 )
 ```
 

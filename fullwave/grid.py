@@ -43,7 +43,7 @@ class Grid:
     duration: float
     c0: float = 1540
     ppw: int = 12
-    cfl: float = 0.4
+    cfl: float = 0.2
 
     def __post_init__(self) -> None:
         """Post-initialization processing for Grid.

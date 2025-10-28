@@ -52,7 +52,6 @@ class Launcher:
     def run(
         self,
         simulation_dir: Path,
-        n_cores_3d: int = 1,
         *,
         load_results: bool = True,
     ) -> NDArray[np.float64] | Path:
@@ -63,10 +62,6 @@ class Launcher:
         simulation_dir : Path
             The directory where the simulation will be run.
             The directory should contain the necessary input files for the simulation.
-        n_cores_3d : int
-            The number of cores to use for 3D simulations.
-            Default is 1. If set to a value greater than 1,
-            the simulation will be run in parallel using the specified number of cores.
         load_results : bool
             Whether to load the results from genout.dat after the simulation.
             Default is True. If set to False, it returns the genout.dat file path instead.
@@ -85,54 +80,32 @@ class Launcher:
         home_dir = Path.cwd()
         simulation_dir = simulation_dir.absolute()
 
+        if not self.use_gpu:
+            message = "Currently, only GPU version is supported."
+            logger.error(message)
+            raise NotImplementedError(message)
+
         os.chdir(simulation_dir)
         try:
-            if self.is_3d and not self.use_gpu:
-                command = [
-                    "stdbuf",
-                    "-oL",
-                    "mpirun",
-                    "-np",
-                    str(n_cores_3d),
-                    str(self._path_fullwave_simulation_bin.resolve()),
-                ]
-                with (simulation_dir / "fw2_execution.log").open("w", encoding="utf-8") as file:
-                    time_start = time()
-                    subprocess.run(  # noqa: S603
-                        command,
-                        check=True,
-                        shell=False,
-                        stdout=file,
-                        stderr=file,
-                        text=True,
-                        # check=False,
-                    )
-                    time_passed = time() - time_start
-                    message = (
-                        f"Simulation completed in {time_passed:.2e} "
-                        f"seconds using {n_cores_3d} cores."
-                    )
-                    logger.info(message)
-            else:
-                command = [
-                    "stdbuf",
-                    "-oL",
-                    str(self._path_fullwave_simulation_bin.resolve()),
-                ]
-                with (simulation_dir / "fw2_execution.log").open("w", encoding="utf-8") as file:
-                    time_start = time()
-                    subprocess.run(  # noqa: S603
-                        command,
-                        check=True,
-                        shell=False,
-                        stdout=file,
-                        stderr=file,
-                        text=True,
-                        # check=False,
-                    )
-                    time_passed = time() - time_start
-                    message = f"Simulation completed in {time_passed:.2e} seconds."
-                    logger.info(message)
+            command = [
+                "stdbuf",
+                "-oL",
+                str(self._path_fullwave_simulation_bin.resolve()),
+            ]
+            with (simulation_dir / "fw2_execution.log").open("w", encoding="utf-8") as file:
+                time_start = time()
+                subprocess.run(  # noqa: S603
+                    command,
+                    check=True,
+                    shell=False,
+                    stdout=file,
+                    stderr=file,
+                    text=True,
+                    # check=False,
+                )
+                time_passed = time() - time_start
+                message = f"Simulation completed in {time_passed:.2e} seconds."
+                logger.info(message)
 
             os.chdir(home_dir)
         except Exception as e:

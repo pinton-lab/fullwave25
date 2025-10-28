@@ -271,7 +271,7 @@ class Solver:
     generates the required input files, and runs the simulation executable.
     """
 
-    def __init__(  # noqa: PLR0912
+    def __init__(  # noqa: PLR0912, PLR0915
         self,
         work_dir: Path,
         grid: fullwave.Grid,
@@ -289,10 +289,6 @@ class Solver:
         use_gpu: bool = True,
         use_exponential_attenuation: bool = False,
         use_isotropic_relaxation: bool = True,
-        # pml_alpha_target: float = 1.1,
-        # pml_alpha_power_target: float = 1.6,
-        # pml_strength_factor: float = 2.0,
-        # use_2_relax_mechanisms: bool = True,
     ) -> None:
         """Initialize a Solver instance for the fullwave simulation.
 
@@ -341,21 +337,11 @@ class Solver:
             Defaults to False.
         n_transition_layer : int, optional
             Number of transition layers (default is 40).
-        pml_alpha_target : float, optional
-            Target alpha value for PML (default is 0.5).
-            This value is used to calculate the transition layer values.
-        pml_alpha_power_target : float, optional
-            Target alpha power value for PML (default is 1.0).
-            This value is used to calculate the transition layer values.
-        pml_strength_factor : float, optional
-            Strength factor for PML (default is 2.0).
-            This value is used to calculate the PML target values.
-        use_2_relax_mechanisms : bool, optional
-            If True, use 2 relaxation mechanisms for PML for stability (default is False).
-            if True, pml_alpha_target, pml_alpha_power_target, and pml_strength_factor are ignored.
         use_gpu : bool, optional
             Whether to use GPU for the simulation.
-            Defaults to True. If False, the simulation will be run on multi-core CPU version.
+            Currently, only GPU version is supported.
+            Defaults to True.
+            In the future support the simulation will be run on multi-core CPU version if False.
         use_exponential_attenuation : bool, optional
             Whether to use exponential attenuation model.
             Defaults to False. If True, the simulation will use exponential attenuation.
@@ -390,6 +376,25 @@ class Solver:
         self.input_file_writer: InputFileWriter
 
         if run_on_memory:
+            message = (
+                "\nrun_on_memory is set to True."
+                "\nThis simulation will be executed in RAM-based temporary directory. "
+                "\n"
+                "\nIt speeds up the simulation significantly, "
+                "\nhowever you need to ensure that sufficient memory"
+                "is available for the simulation. "
+                "\n"
+                "\nIf you encounter memory issues, consider setting run_on_memory to False. "
+                "\n"
+                "\nThe temporary directory will be created in /run/user/{uid} if available. "
+                f"\nThe simulation output will not be saved in {work_dir}. "
+                "\n"
+                "\nThe maximum size depends on the system configuration. "
+                "\nIf needed, increase the size of /run/user/{uid} using the following website: "
+                "\nhttps://wiki.archlinux.org/title/Profile-sync-daemon#Allocate_more_memory_to_accommodate_profiles_in_/run/user/xxxx"
+                "\n"
+            )
+            logger.warning(message)
             self.tempfile = MemoryTempfile(
                 preferred_paths=["/run/user/{uid}"],
                 remove_paths=["/dev/shm", "/run/shm"],  # noqa: S108
@@ -570,7 +575,7 @@ class Solver:
         is_static_map: bool = False,
         recalculate_pml: bool = True,
         record_whole_domain: bool = False,
-        sampling_interval: int = 1,
+        sampling_interval_whole_domain: int = 1,
         n_cores_3d: int = 1,
         load_results: bool = True,
     ) -> NDArray[np.float64] | Path:
@@ -612,7 +617,7 @@ class Solver:
         record_whole_domain : bool
             Flag indicating whether to record the whole domain.
             If True, the simulation will record data for the entire grid.
-        sampling_interval : int
+        sampling_interval_whole_domain : int
             The sampling interval for the sensor data.
             Default is 1, which means every time step is recorded.
             If set to a value greater than 1, only every nth time step is recorded.
@@ -635,6 +640,14 @@ class Solver:
 
         # pml setup
         extended_medium = self.pml_builder.run(use_pml=self.use_pml)
+        if sampling_interval_whole_domain != 1 and record_whole_domain is False:
+            warning_msg = (
+                f"sampling_interval_whole_domain value {sampling_interval_whole_domain} is ignored "
+                "when record_whole_domain is False. "
+                f"The sampling_interval {self.sensor.sampling_interval} "
+                "in the sensor object is prioritized."
+            )
+            logger.warning(warning_msg)
 
         sensor_mask: NDArray[np.bool_]
         if record_whole_domain:
@@ -653,7 +666,10 @@ class Solver:
                     dtype=bool,
                 )
             sensor_mask[:, :] = True
-            sensor = fullwave.Sensor(mask=sensor_mask, sampling_interval=sampling_interval)
+            sensor = fullwave.Sensor(
+                mask=sensor_mask,
+                sampling_interval=sampling_interval_whole_domain,
+            )
         else:
             sensor = self.pml_builder.extended_sensor
 
