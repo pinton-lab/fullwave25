@@ -576,7 +576,6 @@ class Solver:
         recalculate_pml: bool = True,
         record_whole_domain: bool = False,
         sampling_interval_whole_domain: int = 1,
-        n_cores_3d: int = 1,
         load_results: bool = True,
     ) -> NDArray[np.float64] | Path:
         r"""Run the fullwave simulation and return the result as a NumPy array.
@@ -623,10 +622,6 @@ class Solver:
             If set to a value greater than 1, only every nth time step is recorded.
             This will only change the sensor class if record_whole_domain is True.
             If record_whole_domain is False, the sampling interval is ignored.
-        n_cores_3d : int
-            The number of cores to use for 3D simulations.
-            Default is 1. If set to a value greater than 1,
-            the simulation will be run in parallel using the specified number of cores.
         load_results : bool
             Whether to load the results from genout.dat after the simulation.
             Default is True. If set to False, it returns the genout.dat file path instead.
@@ -690,7 +685,6 @@ class Solver:
         )
         sim_result = self.fullwave_launcher.run(
             simulation_dir,
-            n_cores_3d=n_cores_3d,
             load_results=load_results,
         )
         if load_results:
