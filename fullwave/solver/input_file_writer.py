@@ -10,6 +10,7 @@ from numpy.typing import DTypeLike, NDArray
 
 import fullwave
 from fullwave.utils import check_functions
+from fullwave.utils.coordinates import map_to_coords
 from fullwave.utils.numerical import matlab_round
 
 logger = logging.getLogger("__main__." + __name__)
@@ -750,7 +751,7 @@ class InputFileWriter:
         )
         self._write_coords(
             simulation_dir / "icczero.dat",
-            self.medium.input_coords_zero,
+            map_to_coords(self.medium.air_map),
         )
 
         # self._write_ic(simulation_dir / "icmat.dat", np.transpose(initial_condition_mat))

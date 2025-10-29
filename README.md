@@ -84,6 +84,10 @@ After that, please see the following examples for more advanced usage.
       - ![alt text](figs/medium_3d.png)
       - x-y slice propagation and x-z slice propagation
         - ![alt text](figs/wave_propagation_x-y.gif), ![alt text](figs/wave_propagation_x-z.gif)
+    - [Simple plane wave in 3D with air](https://github.com/pinton-lab/fullwave25/blob/main/examples/wave_3d/simple_plane_wave_3d_with_air.py)
+      - ![alt text](figs/medium_3d_air.png)
+      - x-y slice propagation and x-z slice propagation
+        - ![alt text](figs/wave_propagation_x-y_air.gif), ![alt text](figs/wave_propagation_x-z_air.gif)
 - Medium builder usage
   - [simple medium builder usage](https://github.com/pinton-lab/fullwave25/blob/main/examples/medium_builder/medium_builder_example.py)
   - [simple medium builder usage with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/medium_builder/medium_builder_abdominal_example.py)
