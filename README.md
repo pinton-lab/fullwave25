@@ -1,4 +1,36 @@
-# Fullwave 2.5
+# Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities
+
+Fullwave 2.5 is a high-fidelity ultrasound simulation that incorporates heterogeneous power law attenuation modeling. This offers the state-of-the-art attenuation modeling capabilities for simulating the complex human body tissue.
+
+Fullwave 2.5 builds upon the original Fullwave 2.0 simulator, enhancing its capabilities to model ultrasound wave propagation in media where both the attenuation coefficient and exponent can vary spatially. This allows for more accurate simulations of biological tissues, which often exhibit complex attenuation behaviors that cannot be captured by uniform models.
+
+The library is designed with a Python wrapper for ease of use and extensibility, while the core simulation engine is implemented in CUDA/C to leverage high-performance computing on NVIDIA GPUs. Fullwave 2.5 supports both 2D and 3D simulations, including multi-GPU execution for enhanced performance.
+
+## Features
+
+- Heterogeneous power law attenuation modeling
+  - Both attenuation coefficient and exponent can vary spatially.
+- 2D and 3D ultrasound wave propagation simulation
+- Multiple GPU execution support
+- Python wrapper for easy usability and extensibility
+
+## Citation
+
+Fullwave 2.5 is developed and maintained by [Pinton Lab](https://pintonlab.org/) at the University of North Carolina at Chapel Hill.
+
+If you use Fullwave 2.5 in your research, please cite this repository as:
+
+```bibtex
+@software{sode-fullwave25,
+  author = {Sode, Masashi and Pinton, Gianmarco},
+  title = {Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities},
+  year = {2025},
+  month = {oct 29},
+  publisher = {GitHub},
+  journal = {GitHub repository},
+  url = {https://github.com/pinton-lab/fullwave25}
+}
+```
 
 ## Prerequisite
 
@@ -15,6 +47,8 @@
   ```sh
   git clone git@github.com:pinton-lab/fullwave-python.git
   ```
+
+````
 
 ## Resources
 
@@ -148,3 +182,4 @@ Please check [example_simple_plane_wave.ipynb](https://github.com/pinton-lab/ful
   ```
 - [Ruff](https://docs.astral.sh/ruff/) will check your code and suggest improvements before you commit.
   - Sometimes, however, the fix is unnecessary and cumbersome. Let Masashi know if you want to remove some coding rules.
+````
