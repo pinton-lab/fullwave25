@@ -1,10 +1,10 @@
 # Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities
 
-Fullwave 2.5 is a high-fidelity ultrasound simulation that incorporates heterogeneous power law attenuation modeling. This offers the state-of-the-art attenuation modeling capabilities for simulating the complex human body tissue.
+Fullwave 2.5 is a high-fidelity ultrasound simulation incorporating heterogeneous power-law attenuation modelling. It offers state-of-the-art attenuation modelling capabilities for simulating complex human tissue.
 
-Fullwave 2.5 builds upon the original Fullwave 2.0 simulator, enhancing its capabilities to model ultrasound wave propagation in media where both the attenuation coefficient and exponent can vary spatially. This allows for more accurate simulations of biological tissues, which often exhibit complex attenuation behaviors that cannot be captured by uniform models.
+Building upon the original Fullwave 2.0 simulator, Fullwave 2.5 enhances its capabilities to model ultrasound wave propagation in media where both the attenuation coefficient and exponent can vary spatially. This enables more accurate simulations of biological tissues, which often exhibit complex attenuation behaviours that cannot be captured by uniform models.
 
-The library is designed with a Python wrapper for ease of use and extensibility, while the core simulation engine is implemented in CUDA/C to leverage high-performance computing on NVIDIA GPUs. Fullwave 2.5 supports both 2D and 3D simulations, including multi-GPU execution for enhanced performance.
+The library is designed with a Python wrapper for ease of use and extensibility, while the core simulation engine is implemented in CUDA/C to leverage high-performance computing on NVIDIA GPUs. Fullwave 2.5 supports 2D and 3D simulations, including multi-GPU execution for enhanced performance.
 
 ## Features
 
