@@ -16,7 +16,7 @@ The library is designed with a Python wrapper for ease of use and extensibility,
 
 ## Citation
 
-Fullwave 2.5 is developed and maintained by [Pinton Lab](https://pintonlab.org/) at the University of North Carolina at Chapel Hill.
+Fullwave 2.5 is developed and maintained by [Pinton Lab](https://github.com/pinton-lab) at the University of North Carolina at Chapel Hill.
 
 If you use Fullwave 2.5 in your research, please cite this repository as:
 
