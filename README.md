@@ -69,12 +69,21 @@ After that, please see the following examples for more advanced usage.
       - ![alt text](figs/simple_plane_wave_with_air.gif)
   - Linear transducer
     - [Linear transducer](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer.py)
-    - [Linear transducer with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer.py)
+    - [Linear transducer (plane wave transmit) with animation settings](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer_animation.py)
+      - ![alt text](figs/linear_transducer.gif)
+    - [Linear transducer (focused transmit) with animation settings](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer_animation.py)
+      - ![alt text](figs/linear_transducer_focused.gif)
+    - [Linear transducer (focused transmit) with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer.py)
+      - ![alt text](figs/linear_transducer_focused_abdominal_wall.gif)
   - Convex transducer
     - [Convex transducer with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/convex_transducer/convex_transducer_abdominal_wall.py)
+      - ![alt text](figs/convex_transducer_abdominal_wall.gif)
 - 3D plane wave
   - Basic usage
     - [Simple plane wave in 3D](https://github.com/pinton-lab/fullwave25/blob/main/examples/wave_3d/simple_plane_wave_3d.py)
+      - ![alt text](figs/medium_3d.png)
+      - x-y slice propagation and x-z slice propagation
+        - ![alt text](figs/wave_propagation_x-y.gif), ![alt text](figs/wave_propagation_x-z.gif)
 - Medium builder usage
   - [simple medium builder usage](https://github.com/pinton-lab/fullwave25/blob/main/examples/medium_builder/medium_builder_example.py)
   - [simple medium builder usage with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/medium_builder/medium_builder_abdominal_example.py)

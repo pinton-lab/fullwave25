@@ -197,7 +197,7 @@ def main() -> None:  # noqa: PLR0915
     )
     propagation_map = np.nan_to_num(propagation_map, 0, posinf=p_max, neginf=-p_max)
 
-    p_max_plot = np.abs(propagation_map).max().item()
+    p_max_plot = np.abs(propagation_map).max().item() / 2
 
     time_step = propagation_map.shape[0] // 3 * 2
     plot_utils.plot_wave_propagation_snapshot(
@@ -214,9 +214,10 @@ def main() -> None:  # noqa: PLR0915
         propagation_map=propagation_map,
         c_map=medium.sound_speed,
         rho_map=medium.density,
-        export_name=work_dir / "wave_propagation_animation.mp4",
+        export_name=work_dir / "wave_propagation.mp4",
         vmin=-p_max_plot,
         vmax=p_max_plot,
+        figsize=(6, 6),
     )
 
 

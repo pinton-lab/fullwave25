@@ -757,43 +757,91 @@ class Medium:
         *,
         show: bool = False,
         cmap: str = "turbo",
+        figsize: tuple = (20, 6),
     ) -> None:
         """Plot the medium fields using matplotlib."""
         if self.is_3d:
-            error_msg = "3D plotting is not implemented yet."
-            raise NotImplementedError(error_msg)
-        plt.close("all")
-        _, axes = plt.subplots(2, 3, figsize=(15, 10))
+            plt.close("all")
+            _, axes = plt.subplots(2, 6, figsize=figsize)
+            # plot the x-y axis and x-z axis slices
+            for ax, map_data, title in zip(
+                axes.flatten(),
+                [
+                    self.sound_speed[:, :, self.grid.nz // 2],
+                    self.sound_speed[:, self.grid.ny // 2, :],
+                    self.density[:, :, self.grid.nz // 2],
+                    self.density[:, self.grid.ny // 2, :],
+                    self.alpha_coeff[:, :, self.grid.nz // 2],
+                    self.alpha_coeff[:, self.grid.ny // 2, :],
+                    self.alpha_power[:, :, self.grid.nz // 2],
+                    self.alpha_power[:, self.grid.ny // 2, :],
+                    self.beta[:, :, self.grid.nz // 2],
+                    self.beta[:, self.grid.ny // 2, :],
+                    self.air_map[:, :, self.grid.nz // 2],
+                    self.air_map[:, self.grid.ny // 2, :],
+                ],
+                [
+                    "Sound speed (x-y slice)",
+                    "Sound speed (x-z slice)",
+                    "Density (x-y slice)",
+                    "Density (x-z slice)",
+                    "Alpha coeff (x-y slice)",
+                    "Alpha coeff (x-z slice)",
+                    "Alpha power (x-y slice)",
+                    "Alpha power (x-z slice)",
+                    "Beta (x-y slice)",
+                    "Beta (x-z slice)",
+                    "Air map (x-y slice)",
+                    "Air map (x-z slice)",
+                ],
+                strict=False,
+            ):
+                plot_utils.plot_array_on_ax(
+                    ax,
+                    map_data,
+                    title=title,
+                    reverse_y_axis=True,
+                    cmap=cmap,
+                )
+            plt.tight_layout()
+            if export_path is not None:
+                plt.savefig(export_path, dpi=300)
+            if show:
+                plt.show()
+            plt.close("all")
+        else:
+            plt.close("all")
+            _, axes = plt.subplots(2, 3, figsize=(15, 10))
 
-        for ax, map_data, title in zip(
-            axes.flatten(),
-            [
-                self.sound_speed,
-                self.density,
-                self.alpha_coeff,
-                self.alpha_power,
-                self.beta,
-                self.air_map,
-            ],
-            ["Sound speed", "Density", "Alpha coeff", "Alpha power", "Beta", "Air map"],
-            strict=False,
-        ):
-            plot_utils.plot_array_on_ax(
-                ax,
-                map_data,
-                title=title,
-                xlim=(0 - 10, self.grid.ny + 10),
-                ylim=(0 - 10, self.grid.nx + 10),
-                reverse_y_axis=True,
-                cmap=cmap,
-            )
-        plt.tight_layout()
+            for ax, map_data, title in zip(
+                axes.flatten(),
+                [
+                    self.sound_speed,
+                    self.density,
+                    self.alpha_coeff,
+                    self.alpha_power,
+                    self.beta,
+                    self.air_map,
+                ],
+                ["Sound speed", "Density", "Alpha coeff", "Alpha power", "Beta", "Air map"],
+                strict=False,
+            ):
+                plot_utils.plot_array_on_ax(
+                    ax,
+                    map_data,
+                    title=title,
+                    xlim=(0 - 10, self.grid.ny + 10),
+                    ylim=(0 - 10, self.grid.nx + 10),
+                    reverse_y_axis=True,
+                    cmap=cmap,
+                )
+            plt.tight_layout()
 
-        if export_path is not None:
-            plt.savefig(export_path, dpi=300)
-        if show:
-            plt.show()
-        plt.close("all")
+            if export_path is not None:
+                plt.savefig(export_path, dpi=300)
+            if show:
+                plt.show()
+            plt.close("all")
 
     # ---
 
