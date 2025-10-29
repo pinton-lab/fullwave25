@@ -48,8 +48,6 @@ If you use Fullwave 2.5 in your research, please cite this repository as:
   git clone git@github.com:pinton-lab/fullwave-python.git
   ```
 
-````
-
 ## Resources
 
 - If you are not familiar with the tools below, please refer to the provided links.
@@ -182,4 +180,3 @@ Please check [example_simple_plane_wave.ipynb](https://github.com/pinton-lab/ful
   ```
 - [Ruff](https://docs.astral.sh/ruff/) will check your code and suggest improvements before you commit.
   - Sometimes, however, the fix is unnecessary and cumbersome. Let Masashi know if you want to remove some coding rules.
-````
