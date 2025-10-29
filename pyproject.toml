@@ -18,9 +18,10 @@ authors = [{ name = "Masashi Sode", email = "masashi.sode@gmail.com" }]
 [tool.hatch.version]
 path = "fullwave/__init__.py"
 
-[project.optional-dependencies]
+[project.optional-dependencies] # --extra
 test = ["pytest", "coverage==7.6.12"]
 dev = ["pre-commit==4.1.0", "pytest>=8.3.5", "ruff>=0.12.9"]
+examples = ["jupyter>=1.0.0", "ipykernel>=6.28.0"]
 
 [build-system]
 requires = ["hatchling"]

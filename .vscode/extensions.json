@@ -3,7 +3,10 @@
   // List of extensions which should be recommended for users of this workspace.
   "recommendations": [
     // formatting (replaces black), linting (replaces flake8), sorting imports!
-    "charliermarsh.ruff"
+    "charliermarsh.ruff",
+    "ms-python.python",
+    "ms-toolsai.jupyter",
+    "shardulm94.trailing-spaces"
   ],
   // List of extensions recommended by VS Code that should not be recommended for users of this workspace.
   "unwantedRecommendations": []

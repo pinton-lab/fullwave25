@@ -1,5 +1,6 @@
 {
   "editor.formatOnSave": true,
+  "notebook.formatOnSave.enabled": true,
   "[python]": {
     "editor.defaultFormatter": "charliermarsh.ruff",
     "editor.codeActionsOnSave": {

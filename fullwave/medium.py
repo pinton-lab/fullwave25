@@ -424,6 +424,8 @@ class MediumRelaxationMaps:
         plt.tight_layout()
 
         if export_path is not None:
+            export_path = Path(export_path)
+            export_path.mkdir(parents=True, exist_ok=True)
             plt.savefig(export_path, dpi=300)
         if show:
             plt.show()
@@ -875,3 +877,43 @@ class Medium:
             beta=self.beta,
             air_map=self.air_map,
         )
+
+    def print_info(self) -> None:
+        """Print grid information."""
+        print(str(self))
+
+    def __str__(self) -> str:
+        """Return a string representation of the Medium.
+
+        Returns
+        -------
+        str
+            A string summarizing the Medium properties.
+
+        """
+        return (
+            f"Medium: \n"
+            f"  Grid shape: {self.sound_speed.shape}\n"
+            f"  Sound speed: min={np.min(self.sound_speed):.2f}, "
+            f"max={np.max(self.sound_speed):.2f}\n"
+            f"  Density: min={np.min(self.density):.2f}, "
+            f"max={np.max(self.density):.2f}\n"
+            f"  Alpha coeff: min={np.min(self.alpha_coeff):.2f}, "
+            f"max={np.max(self.alpha_coeff):.2f}\n"
+            f"  Alpha power: min={np.min(self.alpha_power):.2f}, "
+            f"max={np.max(self.alpha_power):.2f}\n"
+            f"  Beta: min={np.min(self.beta):.2f}, max={np.max(self.beta):.2f}\n"
+            f"  Number of air coords: {self.n_air}\n"
+            f"  Attenuation builder: {self.attenuation_builder}\n"
+        )
+
+    def __repr__(self) -> str:
+        """Return a detailed string representation of the Medium.
+
+        Returns
+        -------
+        str
+            A detailed string representation of the Medium instance.
+
+        """
+        return str(self)

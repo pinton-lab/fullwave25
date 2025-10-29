@@ -140,3 +140,46 @@ class Grid:
     def shape(self) -> tuple[int, int, int] | tuple[int, int]:
         """Shape of the grid."""
         return (self.nx, self.ny, self.nz) if len(self.domain_size) == 3 else (self.nx, self.ny)
+
+    def print_info(self) -> None:
+        """Print grid information."""
+        print(str(self))
+
+    def __str__(self) -> str:
+        """Print string representation of the Grid object.
+
+        Returns
+        -------
+        str
+            String representation of the Grid object.
+
+        """
+        return (
+            "Grid Information:\n"
+            f"  Domain size: ({self.domain_size[0]:.2e} m, {self.domain_size[1]:.2e} m"
+            + (f", {self.domain_size[2]:.2f} m)" if self.is_3d else ")")
+            + "\n"
+            f"  Center frequency: {self.f0 / 1e6} MHz\n"
+            f"  Duration: {self.duration:.2e} s\n"
+            f"  Speed of sound: {self.c0} m/s\n"
+            f"  Points per wavelength (PPW): {self.ppw}\n"
+            f"  Courant-Friedrichs-Lewy (CFL) number: {self.cfl}\n"
+            f"  Wavelength: {self.wavelength * 1e3:.2e} m\n"
+            "  Grid spacing (dx, dy, dz): "
+            f"({self.dx * 1e3:.2e}, {self.dy * 1e3:.2e}, {self.dz * 1e3:.2e}) m\n"
+            f"  Number of grid points (nx, ny, nz): ({self.nx}, {self.ny}, {self.nz})\n"
+            f"  Time step (dt): {self.dt:.2e} sec\n"
+            f"  Number of time steps (nt): {self.nt}\n"
+            f"  is 3D simulation: {self.is_3d}"
+        )
+
+    def __repr__(self) -> str:
+        """Print string representation of the Grid object.
+
+        Returns
+        -------
+        str
+            String representation of the Grid object.
+
+        """
+        return self.__str__()

@@ -10,4 +10,4 @@ wheels/
 .venv
 
 temp/*
-outputs/*
+outputs

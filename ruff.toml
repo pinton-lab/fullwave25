@@ -56,6 +56,7 @@ ignore = [
     "S404",
     "CPY001",
     "PLR1702",
+    "T201",
 ]
 
 # Allow fix for all enabled rules (when `--fix`) is provided.
