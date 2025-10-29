@@ -425,7 +425,7 @@ class MediumRelaxationMaps:
 
         if export_path is not None:
             export_path = Path(export_path)
-            export_path.mkdir(parents=True, exist_ok=True)
+            export_path.parent.mkdir(parents=True, exist_ok=True)
             plt.savefig(export_path, dpi=300)
         if show:
             plt.show()
