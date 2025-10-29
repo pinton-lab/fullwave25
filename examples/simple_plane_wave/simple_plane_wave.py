@@ -33,22 +33,24 @@ def main() -> None:
     #
     # --- define the acoustic medium properties ---
     #
-    sound_speed = 1540  # m/s
-    density = 1000  # kg/m^3
-    alpha_coeff = 0.5  # dB/(MHz^gamma * cm)
-    alpha_power = 1.0  # [-]
-    beta = 0.0
+    # Define the base 2D medium arrays
+    sound_speed_map = 1540 * np.ones((grid.nx, grid.ny))  # m/s
+    density_map = 1000 * np.ones((grid.nx, grid.ny))  # kg/m^3
+    alpha_coeff_map = 0.5 * np.ones((grid.nx, grid.ny))  # dB/(MHz^y cm)
+    alpha_power_map = 1.0 * np.ones((grid.nx, grid.ny))  # power law exponent
+    beta_map = 0.0 * np.ones((grid.nx, grid.ny))  # nonlinearity parameter
 
-    sound_speed_map = sound_speed * np.ones((grid.nx, grid.ny))
-    sound_speed_map[
-        int(grid.nx // 2 - grid.nx * 0.1) : int(grid.nx // 2 + grid.nx * 0.1),
-        int(grid.ny // 2 - grid.ny * 0.1) : int(grid.ny // 2 + grid.ny * 0.1),
-    ] = 1600  # m/s
+    # embed an object with different properties in the center of the medium
+    obj_x_start = grid.nx // 3
+    obj_x_end = 2 * grid.nx // 3
+    obj_y_start = grid.ny // 3
+    obj_y_end = 2 * grid.ny // 3
 
-    density_map = density * np.ones((grid.nx, grid.ny))
-    alpha_coeff_map = alpha_coeff * np.ones((grid.nx, grid.ny))
-    alpha_power_map = alpha_power * np.ones((grid.nx, grid.ny))
-    beta_map = beta * np.ones((grid.nx, grid.ny))
+    sound_speed_map[obj_x_start:obj_x_end, obj_y_start:obj_y_end] = 1600  # m/s
+    density_map[obj_x_start:obj_x_end, obj_y_start:obj_y_end] = 1100  # kg/m^3
+    alpha_coeff_map[obj_x_start:obj_x_end, obj_y_start:obj_y_end] = 0.75  # dB/(MHz^y cm)
+    alpha_power_map[obj_x_start:obj_x_end, obj_y_start:obj_y_end] = 1.1  # power law exponent
+    beta_map[obj_x_start:obj_x_end, obj_y_start:obj_y_end] = 0.0  # nonlinearity parameter
 
     # setup the Medium instance
     medium = fullwave.Medium(
@@ -134,6 +136,7 @@ def main() -> None:
         export_name=work_dir / "wave_propagation_animation.mp4",
         vmax=p_max_plot,
         vmin=-p_max_plot,
+        figsize=(4, 6),
     )
 
 

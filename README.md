@@ -64,7 +64,9 @@ After that, please see the following examples for more advanced usage.
 - 2D plane wave
   - Basic usage
     - [Simple plane wave](https://github.com/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/simple_plane_wave.py)
+      - ![alt text](figs/simple_plane_wave.gif)
     - [Simple plane wave with air](https://github.com/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/simple_plane_wave.py)
+      - ![alt text](figs/simple_plane_wave_with_air.gif)
   - Linear transducer
     - [Linear transducer](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer.py)
     - [Linear transducer with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer.py)
