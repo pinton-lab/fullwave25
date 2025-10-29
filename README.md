@@ -64,30 +64,30 @@ After that, please see the following examples for more advanced usage.
 - 2D plane wave
   - Basic usage
     - [Simple plane wave](https://github.com/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/simple_plane_wave.py)
-      - ![alt text](figs/simple_plane_wave.gif)
+      - <img src="figs/simple_plane_wave.gif" width="200"/>
     - [Simple plane wave with air](https://github.com/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/simple_plane_wave.py)
-      - ![alt text](figs/simple_plane_wave_with_air.gif)
+      - <img src="figs/simple_plane_wave_with_air.gif" width="200"/>
   - Linear transducer
     - [Linear transducer](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer.py)
     - [Linear transducer (plane wave transmit) with animation settings](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer_animation.py)
-      - ![alt text](figs/linear_transducer.gif)
+      - <img src="figs/linear_transducer.gif" width="200"/>
     - [Linear transducer (focused transmit) with animation settings](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer_animation.py)
-      - ![alt text](figs/linear_transducer_focused.gif)
+      - <img src="figs/linear_transducer_focused.gif" width="200"/>
     - [Linear transducer (focused transmit) with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer.py)
-      - ![alt text](figs/linear_transducer_focused_abdominal_wall.gif)
+      - <img src="figs/linear_transducer_focused_abdominal_wall.gif" width="200"/>
   - Convex transducer
     - [Convex transducer with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/convex_transducer/convex_transducer_abdominal_wall.py)
-      - ![alt text](figs/convex_transducer_abdominal_wall.gif)
+      - <img src="figs/convex_transducer_abdominal_wall.gif" width="200"/>
 - 3D plane wave
   - Basic usage
     - [Simple plane wave in 3D](https://github.com/pinton-lab/fullwave25/blob/main/examples/wave_3d/simple_plane_wave_3d.py)
-      - ![alt text](figs/medium_3d.png)
+      - <img src="figs/medium_3d.png" width="400"/>
       - x-y slice propagation and x-z slice propagation
-        - ![alt text](figs/wave_propagation_x-y.gif), ![alt text](figs/wave_propagation_x-z.gif)
+      - <img src="figs/wave_propagation_x-y.gif" width="200"/> <img src="figs/wave_propagation_x-z.gif" width="200"/>
     - [Simple plane wave in 3D with air](https://github.com/pinton-lab/fullwave25/blob/main/examples/wave_3d/simple_plane_wave_3d_with_air.py)
-      - ![alt text](figs/medium_3d_air.png)
+      - <img src="figs/medium_3d_air.png" width="400"/>
       - x-y slice propagation and x-z slice propagation
-        - ![alt text](figs/wave_propagation_x-y_air.gif), ![alt text](figs/wave_propagation_x-z_air.gif)
+      - <img src="figs/wave_propagation_x-y_air.gif" width="200"/> <img src="figs/wave_propagation_x-z_air.gif" width="200"/>
 - Medium builder usage
   - [simple medium builder usage](https://github.com/pinton-lab/fullwave25/blob/main/examples/medium_builder/medium_builder_example.py)
   - [simple medium builder usage with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/medium_builder/medium_builder_abdominal_example.py)
