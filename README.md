@@ -1,6 +1,10 @@
 # Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities
 
-Fullwave 2.5 is a high-fidelity ultrasound simulation incorporating heterogeneous power-law attenuation modelling. It offers state-of-the-art attenuation modelling capabilities for simulating complex human tissue.
+Fullwave 2.5 is a high-fidelity ultrasound simulation incorporating heterogeneous power-law attenuation modelling. It offers state-of-the-art attenuation modelling capabilities for simulating ultrasound wave propagation in complex biological tissues.
+
+| Computational medium                     | Wave propagation                                                           |
+| ---------------------------------------- | -------------------------------------------------------------------------- |
+| <img src="figs/medium.png" width="600"/> | <img src="figs/linear_transducer_focused_abdominal_wall.gif" width="400"/> |
 
 Building upon the original Fullwave 2.0 simulator, Fullwave 2.5 enhances its capabilities to model ultrasound wave propagation in media where both the attenuation coefficient and exponent can vary spatially. This enables more accurate simulations of biological tissues, which often exhibit complex attenuation behaviours that cannot be captured by uniform models.
 
@@ -111,15 +115,44 @@ After that, please see the following examples for more advanced usage.
     - [Convex transducer with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/convex_transducer/convex_transducer_abdominal_wall.py)
       - <img src="figs/convex_transducer_abdominal_wall.gif" width="200"/>
 - 3D plane wave
+
   - Basic usage
+
     - [Simple plane wave in 3D](https://github.com/pinton-lab/fullwave25/blob/main/examples/wave_3d/simple_plane_wave_3d.py)
-      - <img src="figs/medium_3d.png" width="400"/>
-      - x-y slice propagation and x-z slice propagation
-      - <img src="figs/wave_propagation_x-y.gif" width="200"/> <img src="figs/wave_propagation_x-z.gif" width="200"/>
-    - [Simple plane wave in 3D with air](https://github.com/pinton-lab/fullwave25/blob/main/examples/wave_3d/simple_plane_wave_3d_with_air.py)
-      - <img src="figs/medium_3d_air.png" width="400"/>
-      - x-y slice propagation and x-z slice propagation
-      - <img src="figs/wave_propagation_x-y_air.gif" width="200"/> <img src="figs/wave_propagation_x-z_air.gif" width="200"/>
+      <table>
+        <tr>
+          <td style="text-align: center;" colspan="2">Computational medium</td>
+        </tr>
+        <tr>
+          <td style="text-align: center;" colspan="2"><img src="figs/medium_3d.png" width="600"/></td>
+        </tr>
+        <tr>
+          <td style="text-align: center;" >x-y slice propagation</td>
+          <td style="text-align: center;" >x-z slice propagation</td>
+        </tr>
+        <tr>
+          <td style="text-align: center;" ><img src="figs/wave_propagation_x-y.gif" width="300"/></td>
+          <td style="text-align: center;" ><img src="figs/wave_propagation_x-z.gif" width="300"/></td>
+        </tr>
+      </table>
+    - [Simple plane wave in 3D with air inclusion](https://github.com/pinton-lab/fullwave25/blob/main/examples/wave_3d/simple_plane_wave_3d_with_air.py)
+      <table>
+        <tr>
+          <td style="text-align: center;"  colspan="2">Computational medium with air inclusion</td>
+        </tr>
+        <tr>
+          <td style="text-align: center;"  colspan="2"><img src="figs/medium_3d_air.png" width="600"/></td>
+        </tr>
+        <tr>
+          <td style="text-align: center;" >x-y slice propagation</td>
+          <td style="text-align: center;" >x-z slice propagation</td>
+        </tr>
+        <tr>
+          <td style="text-align: center;" ><img src="figs/wave_propagation_x-y_air.gif" width="300"/></td>
+          <td style="text-align: center;" ><img src="figs/wave_propagation_x-z_air.gif" width="300"/></td>
+        </tr>
+      </table>
+
 - Medium builder usage
   - [simple medium builder usage](https://github.com/pinton-lab/fullwave25/blob/main/examples/medium_builder/medium_builder_example.py)
   - [simple medium builder usage with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/medium_builder/medium_builder_abdominal_example.py)
