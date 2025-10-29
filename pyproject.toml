@@ -1,5 +1,5 @@
 [project]
-name = "fullwave-python"
+name = "fullwave25"
 dynamic = ["version"]
 description = ""
 readme = "README.md"
