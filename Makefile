@@ -8,6 +8,9 @@ install:
 install-dev:
 	uv sync --dev
 	uv run pre-commit install
+install-examples:
+	uv sync --extra examples
+	uv run pre-commit install
 test:
 	uv run pytest
 install-all-extras:

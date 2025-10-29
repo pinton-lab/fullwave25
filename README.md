@@ -57,20 +57,37 @@ make test
 
 ## Examples
 
-Please see
+Start from [example_simple_plane_wave.ipynb](https://github.com/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/example_simple_plane_wave.ipynb).
+
+After that, please see the following examples for more advanced usage.
 
 - 2D plane wave
   - Basic usage
     - [Simple plane wave](https://github.com/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/simple_plane_wave.py)
+      - ![alt text](figs/simple_plane_wave.gif)
     - [Simple plane wave with air](https://github.com/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/simple_plane_wave.py)
+      - ![alt text](figs/simple_plane_wave_with_air.gif)
   - Linear transducer
     - [Linear transducer](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer.py)
-    - [Linear transducer with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer.py)
+    - [Linear transducer (plane wave transmit) with animation settings](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer_animation.py)
+      - ![alt text](figs/linear_transducer.gif)
+    - [Linear transducer (focused transmit) with animation settings](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer_animation.py)
+      - ![alt text](figs/linear_transducer_focused.gif)
+    - [Linear transducer (focused transmit) with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer.py)
+      - ![alt text](figs/linear_transducer_focused_abdominal_wall.gif)
   - Convex transducer
     - [Convex transducer with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/convex_transducer/convex_transducer_abdominal_wall.py)
+      - ![alt text](figs/convex_transducer_abdominal_wall.gif)
 - 3D plane wave
   - Basic usage
     - [Simple plane wave in 3D](https://github.com/pinton-lab/fullwave25/blob/main/examples/wave_3d/simple_plane_wave_3d.py)
+      - ![alt text](figs/medium_3d.png)
+      - x-y slice propagation and x-z slice propagation
+        - ![alt text](figs/wave_propagation_x-y.gif), ![alt text](figs/wave_propagation_x-z.gif)
+    - [Simple plane wave in 3D with air](https://github.com/pinton-lab/fullwave25/blob/main/examples/wave_3d/simple_plane_wave_3d_with_air.py)
+      - ![alt text](figs/medium_3d_air.png)
+      - x-y slice propagation and x-z slice propagation
+        - ![alt text](figs/wave_propagation_x-y_air.gif), ![alt text](figs/wave_propagation_x-z_air.gif)
 - Medium builder usage
   - [simple medium builder usage](https://github.com/pinton-lab/fullwave25/blob/main/examples/medium_builder/medium_builder_example.py)
   - [simple medium builder usage with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/medium_builder/medium_builder_abdominal_example.py)
@@ -78,11 +95,23 @@ Please see
 
 ## Attention
 
-- Note that 3D utilities are under development.
-- The simulation grid is defined as (x, y, z) = (depth, lateral, elevational)
-  - This order is due to the multiple-GPU development efficiency.
-  - Multi-GPU domain decomposition is processed in the depth dimension.
-  - The index of the input coordinates (acoustic source location) is defined in C-array order (row-major) within the simulation, regardless of your setup. This is for the efficiency of multi-GPU development.
+- The simulation grid is defined as follows:
+  - (x, y, z) = (depth, lateral, elevational).
+    - This order is due to the efficiency of the multiple-GPU execution.
+    - Multi-GPU domain decomposition is processed in the depth dimension.
+  - The index of the input coordinates (i.e. the acoustic source location) is defined in C-array order (i.e. row-major) within the simulation, regardless of your setup. This is to improve the efficiency of multi-GPU development.
+  - This might be confusing, so please be careful when you define the source and source signal definition.
+- GPU memory requirement
+  - A 3D simulation requires a lot of GPU memory.
+    - Please reduce the grid size or use multiple GPUs if you run out of memory.
+    - You can check GPU memory usage with the 'nvidia-smi' or 'nvtop' commands.
+- Multi-GPU execution
+  - The current implementation supports multiple GPU execution in 2D and 3D simulations.
+  - Our implementation demonstrates linear performance scaling with the number of GPUs.
+- Before 3D simulation...
+  - If you want to run a 3D simulation, it is recommended that you start with a 2D simulation first to understand the basic usage.
+  - The 3D simulation code is similar to the 2D code, but some plot functions are unavailable in 3D.
+  - The 3D simulation takes longer to run, so starting with 2D will help you debug your code faster.
 
 ## Usage 2D
 
@@ -94,135 +123,7 @@ Here are the main steps to run the Fullwave simulation
 4. Define the sensor.
 5. Execute the simulation.
 
-### Import libraries
-
-```py
-from pathlib import Path
-
-import numpy as np
-
-import fullwave
-from fullwave.utils import plot_utils, signal_process
-```
-
-### Define the working directory
-
-```py
-work_dir = Path("./outputs/") / "simple_plane_wave"
-work_dir.mkdir(parents=True, exist_ok=True)
-```
-
-### Define the computational grid
-
-```py
-domain_size = (3e-2, 3e-2)  # meters
-f0 = 3e6  # Hz
-c0 = 1540  # m/s
-duration = domain_size[0] / c0 * 2  # seconds
-
-# setup the Grid instance
-grid = fullwave.Grid(
-  domain_size=domain_size,
-  f0=f0,
-  duration=duration,
-  c0=c0,
-)
-```
-
-### Define the properties of the acoustic medium
-
-```py
-sound_speed = 1540  # m/s
-density = 1000  # kg/m^3
-alpha_coeff = 0.5  # dB/(MHz^gamma * cm)
-alpha_power = 1.0  # [-]
-beta = 0.0
-
-sound_speed_map = sound_speed * np.ones((grid.nx, grid.ny))
-density_map = density * np.ones((grid.nx, grid.ny))
-alpha_coeff_map = alpha_coeff * np.ones((grid.nx, grid.ny))
-alpha_power_map = alpha_power * np.ones((grid.nx, grid.ny))
-beta_map = beta * np.ones((grid.nx, grid.ny))
-
-# setup the Medium instance
-medium = fullwave.Medium(
-  grid=grid,
-  sound_speed=sound_speed_map,
-  density=density_map,
-  alpha_coeff=alpha_coeff_map,
-  alpha_power=alpha_power_map,
-  beta=beta_map,
-  # air_map=air_map,
-)
-```
-
-### Define the acoustic source
-
-```py
-# define where to put the pressure source [nx, ny]
-p_mask = np.zeros((grid.nx, grid.ny), dtype=bool)
-p_mask[0:1, :] = True
-
-# define the pressure source [n_sources, nt]
-p0_vec = fullwave.utils.pulse.gaussian_modulated_sinusoidal_signal(
-  nt=grid.nt,
-  f0=f0,
-  duration=duration,
-  ncycles=2,
-  drop_off=2,
-  p0=1e5,
-)
-p0 = np.zeros((p_mask.sum(), grid.nt))
-p0[:] = p0_vec
-
-# setup the Source instance
-source = fullwave.Source(p0, p_mask)
-```
-
-### Define the sensor
-
-```py
-sensor_mask = np.zeros((grid.nx, grid.ny), dtype=bool)
-sensor_mask[:, :] = True
-
-# setup the Sensor instance
-sensor = fullwave.Sensor(mask=sensor_mask, sampling_interval=7)
-```
-
-### Execute the simulation
-
-```py
-# setup the Solver instance
-fw_solver = fullwave.Solver(
-  work_dir=work_dir,
-  grid=grid,
-  medium=medium,
-  source=source,
-  sensor=sensor,
-)
-
-# execute the solver
-sensor_output = fw_solver.run()
-```
-
-### Visualization
-
-```py
-propagation_map = signal_process.reshape_whole_sensor_to_nt_nx_ny(
-  sensor_output,
-  grid,
-)
-
-p_max_plot = np.abs(propagation_map).max().item() / 4
-plot_utils.plot_wave_propagation_with_map(
-  propagation_map=propagation_map,
-  c_map=medium.sound_speed,
-  rho_map=medium.density,
-  export_name=work_dir / "wave_propagation_animation.mp4",
-  vmax=p_max_plot,
-  vmin=-p_max_plot,
-)
-```
+Please check [example_simple_plane_wave.ipynb](https://github.com/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/example_simple_plane_wave.ipynb) for the detailed code example.
 
 ## New simulation development instruction
 

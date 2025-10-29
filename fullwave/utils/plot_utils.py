@@ -36,6 +36,7 @@ def plot_array(  # noqa: C901, D417, PLR0912
     cmap: str = "turbo",
     alpha_array: NDArray[np.float64] | None = None,
     extent: tuple[float, float, float, float] | None = None,
+    show: bool = False,
 ) -> Figure:
     """Plot a 2D array using matplotlib.
 
@@ -69,6 +70,8 @@ def plot_array(  # noqa: C901, D417, PLR0912
         if true, a colorbar will be added to the plot
     dpi: int
         The resolution in dots per inch (default is 300).
+    show: bool
+        if true, it displays the plot after creation
 
     Returns
     -------
@@ -134,6 +137,8 @@ def plot_array(  # noqa: C901, D417, PLR0912
             plt.savefig(export_path, dpi=dpi)
         else:
             plt.savefig(export_path, dpi=dpi)
+    if show:
+        plt.show()
 
     if clear_all:
         plt.close("all")
@@ -219,12 +224,16 @@ def plot_1d_array(
     x: NDArray[np.float64 | np.int64 | np.bool],
     vmin: float | None = None,
     vmax: float | None = None,
-    export_path: str | None | Path = None,
+    export_path: str | Path | None = None,
     title: str = "",
     linewidth: float = 0.5,
     title_font_size: int = 8,
     marker: str | None = None,
     markersize: int = 1,
+    *,
+    xlim: tuple[float, ...] | None = None,
+    ylim: tuple[float, ...] | None = None,
+    show: bool = False,
 ) -> None:
     """Plot a 1D array using matplotlib.
 
@@ -248,11 +257,18 @@ def plot_1d_array(
         The marker style for the plot (default is None).
     markersize: int
         The size of the markers (default is 1).
+    show: bool
+        if true, it displays the plot after creation
+    xlim : tuple, optional
+        The x-axis limits.
+    ylim : tuple, optional
+        The y-axis limits.
 
     """
     plt.close("all")
     plt.plot(x, linewidth=linewidth, marker=marker, markersize=markersize)
-    plt.ylim(vmin, vmax)
+    plt.ylim(*(ylim if ylim is not None else (vmin, vmax)))
+    plt.xlim(*(xlim if xlim is not None else (0, len(x) - 1)))
     plt.title(title, fontsize=title_font_size)
 
     if export_path is None:
@@ -261,6 +277,8 @@ def plot_1d_array(
         plt.savefig(export_path, dpi=300)
     else:
         plt.savefig(export_path, dpi=300)
+    if show:
+        plt.show()
 
 
 def plot_wave_propagation_animation(

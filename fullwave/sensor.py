@@ -116,9 +116,40 @@ class Sensor:
             fig=fig,
             colorbar=True,
         )
+        if export_path is not None:
+            plt.savefig(export_path, dpi=300)
         if show:
             plt.show()
 
-        if export_path is not None:
-            plt.savefig(export_path, dpi=300)
         plt.close("all")
+
+    def print_info(self) -> None:
+        """Print sensor information to the logger."""
+        print(str(self))
+
+    def __str__(self) -> str:
+        """Show sensor information.
+
+        Returns
+        -------
+        str
+            Formatted string containing source information.
+
+        """
+        return (
+            f"Sensor: \n"
+            f"  Number of sensors: {self.n_sensors}\n"
+            f"  Grid shape: {self.grid_shape}\n"
+            f"  Is 3D: {self.is_3d}\n"
+        )
+
+    def __repr__(self) -> str:
+        """Show sensor information.
+
+        Returns
+        -------
+        str
+            Formatted string containing source information.
+
+        """
+        return self.__str__()

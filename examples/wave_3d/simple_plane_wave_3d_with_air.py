@@ -69,6 +69,21 @@ def main() -> None:  # noqa: PLR0915
         0.0  # nonlinearity
     )
 
+    air_map = np.zeros((grid.nx, grid.ny, grid.nz), dtype=bool)
+    rng = np.random.default_rng()
+    random_location = rng.random((2000, 3))
+    for loc in random_location:
+        x_idx = obj_x_start + int(loc[0] * (obj_x_end - obj_x_start))
+        y_idx = obj_y_start + int(loc[1] * (obj_y_end - obj_y_start))
+        z_idx = obj_z_start + int(loc[2] * (obj_z_end - obj_z_start))
+        air_map[x_idx, y_idx, z_idx] = True
+    # # only 1 point at the center
+    # air_map[
+    #     (obj_x_start + obj_x_end) // 2,
+    #     (obj_y_start + obj_y_end) // 2,
+    #     :,
+    # ] = True
+
     medium = fullwave.Medium(
         grid=grid,
         sound_speed=sound_speed_map,
@@ -76,6 +91,7 @@ def main() -> None:  # noqa: PLR0915
         alpha_coeff=alpha_coeff_map,
         alpha_power=alpha_power_map,
         beta=beta_map,
+        air_map=air_map,
     )
     medium.print_info()
     medium.plot(figsize=(20, 6), export_path=Path(work_dir / "medium.png"))

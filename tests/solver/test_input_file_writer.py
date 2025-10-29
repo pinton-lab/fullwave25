@@ -28,7 +28,7 @@ def create_dummy_objects():
         beta=np.array([0.5, 0.5], dtype=np.float64),
         relaxation_param_dict_for_fw2={"a_pml_u1": np.array([[1.0]], dtype=np.float64)},
         n_relaxation_mechanisms=1,
-        input_coords_zero=np.array([[1, 1]], dtype=np.int64),
+        air_map=np.array([0, 1], dtype=bool),
         n_air=1,
     )
     source = SimpleNamespace(

@@ -564,6 +564,31 @@ class TransducerGeometry:
         """Return the number of source elements."""
         return self.element_mask_input.sum() // self.number_elements
 
+    def __str__(self) -> str:
+        """Return string representation of the TransducerGeometry.
+
+        Returns
+        -------
+        str
+            String representation of the TransducerGeometry.
+
+        """
+        return (
+            f"TransducerGeometry:\n"
+            f"  Number of elements: {self.number_elements}\n"
+            f"  Element width (m): {self.element_width_m}\n"
+            f"  Element height (m): {self.element_height_m}\n"
+            f"  Element spacing (m): {self.element_spacing_m}\n"
+            f"  Element layer (m): {self.element_layer_m}\n"
+            f"  Position (m): {self.position_m}\n"
+            f"  Radius (m): {self.radius}\n"
+            f"  Element width (px): {self.element_width_px}\n"
+            f"  Element height (px): {self.element_height_px}\n"
+            f"  Element spacing (px): {self.element_spacing_px}\n"
+            f"  Element layer (px): {self.element_layer_px}\n"
+            f"  Position (px): {self.position_px}\n"
+        )
+
 
 class Transducer:
     """General transducer class.
@@ -842,6 +867,41 @@ class Transducer:
         if show:
             plt.show()
         plt.close()
+
+    def print_info(self) -> None:
+        """Print information about the Transducer object."""
+        print(str(self))
+
+    def __str__(self) -> str:
+        """Return a string representation of the Transducer object.
+
+        Returns
+        -------
+        str
+            A string representation of the Transducer object.
+
+        """
+        return (
+            f"Transducer with {self.transducer_geometry.number_elements} elements\n"
+            f"Element width (m): {self.transducer_geometry.element_width_m}\n"
+            f"Element spacing (m): {self.transducer_geometry.element_spacing_m}\n"
+            f"Transducer width (m): {self.transducer_geometry.transducer_width_m}\n"
+            f"Position (m): {self.transducer_geometry.position_m}\n"
+            f"Active source elements: {self.active_source_elements}\n"
+            f"Active sensor elements: {self.active_sensor_elements}\n"
+            f"Input signal shape: {self._signal.shape if self._signal is not None else None}\n"
+        )
+
+    def __repr__(self) -> str:
+        """Return a string representation of the Transducer object.
+
+        Returns
+        -------
+        str
+            A string representation of the Transducer object.
+
+        """
+        return self.__str__()
 
 
 class LinearTransducer(Transducer):

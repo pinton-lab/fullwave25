@@ -23,29 +23,31 @@ def main() -> None:
     domain_size = (42.5e-3 * 1.5, 42.5e-3)  # meters
     f0 = 1e6
     c0 = 1540
-    duration = domain_size[0] / c0 * 2.5
+    duration = domain_size[0] / c0 * 2
     grid = fullwave.Grid(domain_size, f0, duration, c0=c0)
 
     #
     # --- define the acoustic medium properties ---
     #
 
-    sound_speed = 1540
-    density = 1000
-    alpha_coeff = 0.5
-    alpha_power = 1.0
-    beta = 0.0
+    sound_speed_map = 1540 * np.ones((grid.nx, grid.ny))  # m/s
+    density_map = 1000 * np.ones((grid.nx, grid.ny))  # kg/m^3
+    alpha_coeff_map = 0.5 * np.ones((grid.nx, grid.ny))  # dB/(MHz^y cm)
+    alpha_power_map = 1.0 * np.ones((grid.nx, grid.ny))  # power law exponent
+    beta_map = 0.0 * np.ones((grid.nx, grid.ny))  # nonlinearity parameter
 
-    sound_speed_map = sound_speed * np.ones((grid.nx, grid.ny))
-    sound_speed_map[
-        grid.nx // 2 - int(grid.nx * 0.1) : grid.nx // 2 + int(grid.nx * 0.1),
-        grid.ny // 2 - int(grid.ny * 0.1) : grid.ny // 2 + int(grid.ny * 0.1),
-    ] = 1400
+    # embed an object with different properties in the center of the medium
+    obj_x_start = grid.nx // 3
+    obj_x_end = 2 * grid.nx // 3
+    obj_y_start = grid.ny // 3
+    obj_y_end = 2 * grid.ny // 3
 
-    density_map = density * np.ones((grid.nx, grid.ny))
-    alpha_coeff_map = alpha_coeff * np.ones((grid.nx, grid.ny))
-    alpha_power_map = alpha_power * np.ones((grid.nx, grid.ny))
-    beta_map = beta * np.ones((grid.nx, grid.ny))
+    sound_speed_map[obj_x_start:obj_x_end, obj_y_start:obj_y_end] = 1600  # m/s
+    density_map[obj_x_start:obj_x_end, obj_y_start:obj_y_end] = 1100  # kg/m^3
+    alpha_coeff_map[obj_x_start:obj_x_end, obj_y_start:obj_y_end] = 0.75  # dB/(MHz^y cm)
+    alpha_power_map[obj_x_start:obj_x_end, obj_y_start:obj_y_end] = 1.1  # power law exponent
+    beta_map[obj_x_start:obj_x_end, obj_y_start:obj_y_end] = 0.0  # nonlinearity parameter
+
     medium = fullwave.Medium(
         grid=grid,
         sound_speed=sound_speed_map,
@@ -76,7 +78,7 @@ def main() -> None:
         # [axial, lateral]
         # position_px=(0, 0),
         position_m=(
-            (42.5 - 37.5) / 2 * 1e-3,
+            0,
             (42.5 - 37.5) / 2 * 1e-3,
         ),
         # -
@@ -150,6 +152,7 @@ def main() -> None:
         c_map=medium.sound_speed,
         rho_map=medium.density,
         export_name=work_dir / "wave_propagation.mp4",
+        figsize=(4, 6),
     )
 
 

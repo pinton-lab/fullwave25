@@ -5,8 +5,6 @@ from pathlib import Path
 import numpy as np
 
 import fullwave
-from fullwave.constants import MaterialProperties
-from fullwave.medium_builder import MediumBuilder, presets
 from fullwave.utils import plot_utils, signal_process
 
 
@@ -22,11 +20,43 @@ def main() -> None:  # noqa: PLR0915
     # --- define the computational grid ---
     #
 
-    domain_size = (6e-2, 6e-2)  # [axial, lateral] meters
+    domain_size = (42.5e-3 * 1.5, 42.5e-3)  # meters
     f0 = 1e6
     c0 = 1540
-    duration = domain_size[0] / c0 * 1.2
+    duration = domain_size[0] / c0 * 2
     grid = fullwave.Grid(domain_size, f0, duration, c0=c0)
+
+    #
+    # --- define the acoustic medium properties ---
+    #
+
+    sound_speed_map = 1540 * np.ones((grid.nx, grid.ny))  # m/s
+    density_map = 1000 * np.ones((grid.nx, grid.ny))  # kg/m^3
+    alpha_coeff_map = 0.5 * np.ones((grid.nx, grid.ny))  # dB/(MHz^y cm)
+    alpha_power_map = 1.0 * np.ones((grid.nx, grid.ny))  # power law exponent
+    beta_map = 0.0 * np.ones((grid.nx, grid.ny))  # nonlinearity parameter
+
+    # embed an object with different properties in the center of the medium
+    obj_x_start = grid.nx // 3
+    obj_x_end = 2 * grid.nx // 3
+    obj_y_start = grid.ny // 3
+    obj_y_end = 2 * grid.ny // 3
+
+    sound_speed_map[obj_x_start:obj_x_end, obj_y_start:obj_y_end] = 1600  # m/s
+    density_map[obj_x_start:obj_x_end, obj_y_start:obj_y_end] = 1100  # kg/m^3
+    alpha_coeff_map[obj_x_start:obj_x_end, obj_y_start:obj_y_end] = 0.75  # dB/(MHz^y cm)
+    alpha_power_map[obj_x_start:obj_x_end, obj_y_start:obj_y_end] = 1.1  # power law exponent
+    beta_map[obj_x_start:obj_x_end, obj_y_start:obj_y_end] = 0.0  # nonlinearity parameter
+
+    medium = fullwave.Medium(
+        grid=grid,
+        sound_speed=sound_speed_map,
+        density=density_map,
+        alpha_coeff=alpha_coeff_map,
+        alpha_power=alpha_power_map,
+        beta=beta_map,
+    )
+    medium.plot(export_path=Path(work_dir / "medium.png"))
 
     #
     # --- define the linear transducer ---
@@ -38,15 +68,18 @@ def main() -> None:  # noqa: PLR0915
         number_elements=128,
         # -
         element_width_m=0.146484375e-3,
+        # element_width_px=6,  # depends on the ppw, cfl
         # -
         element_spacing_m=0.146484375e-3,
+        # element_spacing_px=6,
         # -
         element_layer_px=element_layer_px,
         # -
         # [axial, lateral]
+        # position_px=(0, 0),
         position_m=(
             0,
-            (60 - 37.4) / 2 * 1e-3,
+            (42.5 - 37.5) / 2 * 1e-3,
         ),
         # -
         radius=float("inf"),
@@ -59,7 +92,7 @@ def main() -> None:  # noqa: PLR0915
 
     angle = 0
     # length = 1000000
-    length = int(grid.nx * (9 / 10))
+    length = int(grid.nx * (5 / 10))
     target_location_px = np.array(
         [
             # focus transmit
@@ -78,8 +111,8 @@ def main() -> None:  # noqa: PLR0915
 
     active_source_elements = np.zeros(transducer_geometry.number_elements, dtype=bool)
     active_sensor_elements = np.zeros(transducer_geometry.number_elements, dtype=bool)
-    active_source_elements[:] = True
-    # active_source_elements[32:96] = True
+    # active_source_elements[:] = True
+    active_source_elements[32:96] = True
     active_sensor_elements[:] = True
 
     input_signal = np.zeros((transducer.n_sources, grid.nt))
@@ -123,98 +156,14 @@ def main() -> None:  # noqa: PLR0915
 
     transducer.set_signal(input_signal)
 
+    transducer.plot_source_mask(export_path=work_dir / "source_transducer.svg")
+    transducer.plot_sensor_mask(export_path=work_dir / "sensor_transducer.svg")
+
     # make a sensor for whole domain to make an animation
     sensor_mask = np.zeros((grid.nx, grid.ny), dtype=bool)
     sensor_mask[:, :] = True
     sensor = fullwave.Sensor(mask=sensor_mask, sampling_interval=2)
     sensor.plot(export_path=work_dir / "sensor_whole.svg")
-
-    #
-    # --- define the acoustic medium properties ---
-    #
-
-    # define background
-    background_property_name = "liver"
-    material_properties = MaterialProperties()
-    background = presets.BackgroundDomain(
-        grid=grid,
-        background_property_name=background_property_name,
-    )
-    # define abdominal wall
-    abdominal_wall = presets.AbdominalWallDomain(
-        grid=grid,
-    )
-
-    geometry = np.zeros((grid.nx, grid.ny))
-    air_location = np.array(
-        [
-            [round(grid.nx // 3 * 2 - grid.nx * 0.1), round(grid.nx // 3 * 2 + grid.nx * 0.1)],
-            [round(grid.ny // 2 - grid.ny * 0.2), round(grid.ny // 2 + grid.ny * 0.2)],
-        ],
-    )
-    geometry[
-        air_location[0][0] : air_location[0][1],
-        air_location[1][0] : air_location[1][1],
-    ] = 1
-    sound_speed = getattr(material_properties, background_property_name)["sound_speed"]
-    density = getattr(material_properties, background_property_name)["density"]
-    alpha_coeff = getattr(material_properties, background_property_name)["alpha_coeff"]
-    alpha_power = getattr(material_properties, background_property_name)["alpha_power"]
-    beta = getattr(material_properties, background_property_name)["beta"]
-    air_map = np.zeros((grid.nx, grid.ny), dtype=bool)
-
-    rng = np.random.default_rng()
-    random_location = rng.random((1000, 2))
-    for loc in random_location:
-        # x_idx = int(grid.nx // 2 - grid.nx * 0.1) + int(loc[0] * grid.nx * 0.4)
-        # y_idx = int(grid.ny // 2 - grid.ny * 0.2) + int(loc[1] * grid.ny * 0.4)
-        x_idx = air_location[0][0] + int(loc[0] * (air_location[0][1] - air_location[0][0]))
-        y_idx = air_location[1][0] + int(loc[1] * (air_location[1][1] - air_location[1][0]))
-        air_map[x_idx, y_idx] = True
-
-    maps = {
-        "sound_speed": sound_speed * geometry,
-        "density": density * geometry,
-        "alpha_coeff": alpha_coeff * geometry,
-        "alpha_power": alpha_power * geometry,
-        "beta": beta * geometry,
-        "air": air_map,
-    }
-    air_domain = presets.SimpleDomain(
-        grid=grid,
-        name="air",
-        geometry=geometry,
-        maps=maps,
-    )
-
-    # define scatterer
-    scatterer = presets.ScattererDomain(
-        grid=grid,
-        num_scatterer=18,
-        ncycles=2,
-    )
-
-    # scatterer will be applied to density directly, instead of registering as a domain
-    csr = 0.035
-    background.density -= scatterer.density * csr
-    abdominal_wall.density -= scatterer.density * csr
-    air_domain.density -= scatterer.density * csr
-
-    # register the domains to MediumBuilder
-    mb = MediumBuilder(
-        grid=grid,
-    )
-    mb.register_domain(background)
-    mb.register_domain(abdominal_wall)
-    mb.register_domain(air_domain)
-    # mb.register_domain(simple_domain_1)
-    # mb.register_domain(simple_domain_2)
-
-    # we can plot to see the current registered domains
-    mb.plot_current_map(export_path=work_dir / "medium.png")
-
-    # generate medium for simulation
-    medium = mb.run()
 
     #
     # --- run simulation ---
@@ -225,7 +174,7 @@ def main() -> None:  # noqa: PLR0915
         work_dir=work_dir,
         grid=grid,
         medium=medium,
-        transducer=transducer,
+        source=transducer.source,
         sensor=sensor,
         run_on_memory=False,
         pml_layer_thickness_px=grid.ppw * 3,
@@ -237,33 +186,16 @@ def main() -> None:  # noqa: PLR0915
     # --- visualization ---
     #
 
-    propagation_map = signal_process.reshape_whole_sensor_to_nt_nx_ny(
-        sensor_output,
-        grid,
-    )
-    propagation_map = np.nan_to_num(propagation_map, 0, posinf=p_max, neginf=-p_max)
-
-    p_max_plot = np.abs(propagation_map).max().item()
-
-    time_step = propagation_map.shape[0] // 3 * 2
-    plot_utils.plot_wave_propagation_snapshot(
-        propagation_map=propagation_map[time_step],
-        c_map=medium.sound_speed,
-        rho_map=medium.density,
-        export_name=work_dir / "wave_propagation_snapshot_1.png",
-        vmin=-p_max_plot,
-        vmax=p_max_plot,
-        turn_off_axes=True,
-    )
-
+    propagation_map = signal_process.reshape_whole_sensor_to_nt_nx_ny(sensor_output, grid)
+    p_max_plot = np.abs(propagation_map).max().item() / 2
     plot_utils.plot_wave_propagation_with_map(
         propagation_map=propagation_map,
         c_map=medium.sound_speed,
         rho_map=medium.density,
-        export_name=work_dir / "wave_propagation_animation.mp4",
-        vmin=-p_max_plot,
+        export_name=work_dir / "wave_propagation.mp4",
         vmax=p_max_plot,
-        figsize=(6, 6),
+        vmin=-p_max_plot,
+        figsize=(4, 6),
     )
 
 

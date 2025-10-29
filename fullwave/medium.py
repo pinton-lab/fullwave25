@@ -12,7 +12,6 @@ from numpy.typing import NDArray
 from fullwave import Grid
 from fullwave.solver.utils import initialize_relaxation_param_dict
 from fullwave.utils import check_functions, plot_utils
-from fullwave.utils.coordinates import coords_to_map, map_to_coords
 from fullwave.utils.relaxation_parameters import generate_relaxation_params
 
 logger = logging.getLogger("__main__." + __name__)
@@ -26,7 +25,7 @@ class MediumRelaxationMaps:
     sound_speed: NDArray[np.float64]
     density: NDArray[np.float64]
     beta: NDArray[np.float64]
-    input_coords_zero: NDArray[np.int64]
+    air_map: NDArray[np.int64]
     relaxation_param_dict: dict[str, NDArray[np.float64]]
     relaxation_param_dict_for_fw2: dict[str, NDArray[np.float64]]
     use_regression: bool = False
@@ -87,13 +86,10 @@ class MediumRelaxationMaps:
         self.density = density
         self.beta = beta
 
-        if air_map is not None:
-            air_map = np.atleast_2d(air_map)
-            self.input_coords_zero = map_to_coords(air_map)
+        if air_map is None:
+            self.air_map = np.zeros_like(self.sound_speed, dtype=bool)
         else:
-            air_map = np.zeros_like(self.sound_speed, dtype=bool)
-            air_map = np.atleast_2d(air_map)
-            self.input_coords_zero = map_to_coords(air_map)
+            self.air_map = air_map
 
         self.__post_init__()
 
@@ -244,15 +240,6 @@ class MediumRelaxationMaps:
                 raise ValueError(error_msg)
 
     @property
-    def air_map(self) -> NDArray[np.int64]:
-        """Return the air map."""
-        return coords_to_map(
-            self.input_coords_zero,
-            grid_shape=self.sound_speed.shape,
-            is_3d=self.is_3d,
-        )
-
-    @property
     def bulk_modulus(self) -> NDArray[np.float64]:
         """Return the bulk_modulus."""
         return np.multiply(self.sound_speed**2, self.density)
@@ -268,7 +255,7 @@ class MediumRelaxationMaps:
     @property
     def n_air(self) -> int:
         """Return the number of air coordinates."""
-        return self.input_coords_zero.shape[0]
+        return self.air_map.sum()
 
     @staticmethod
     def _calc_a_and_b(
@@ -424,10 +411,48 @@ class MediumRelaxationMaps:
         plt.tight_layout()
 
         if export_path is not None:
+            export_path = Path(export_path)
+            export_path.parent.mkdir(parents=True, exist_ok=True)
             plt.savefig(export_path, dpi=300)
         if show:
             plt.show()
         plt.close("all")
+
+    def print_info(self) -> None:
+        """Print grid information."""
+        print(str(self))
+
+    def __str__(self) -> str:
+        """Return a string representation of the Medium.
+
+        Returns
+        -------
+        str
+            A string summarizing the Medium properties.
+
+        """
+        return (
+            f"Relaxation Medium:\n"
+            f"  Grid: {self.grid}\n"
+            f"  Sound speed: min {np.min(self.sound_speed):.2f} m/s, "
+            f"max {np.max(self.sound_speed):.2f} m/s\n"
+            f"  Density: min {np.min(self.density):.2f} kg/m^3, "
+            f"max {np.max(self.density):.2f} kg/m^3\n"
+            f"  Beta: min {np.min(self.beta):.2f}, max {np.max(self.beta):.2f}\n"
+            f"  Number of air coordinates: {self.n_air}\n"
+            f"  Number of relaxation mechanisms: {self.n_relaxation_mechanisms}\n"
+        )
+
+    def __repr__(self) -> str:
+        """Return a detailed string representation of the Medium.
+
+        Returns
+        -------
+        str
+            A detailed string representation of the Medium instance.
+
+        """
+        return str(self)
 
 
 @dataclass
@@ -439,7 +464,7 @@ class MediumExponentialAttenuation:
     density: NDArray[np.float64]
     alpha_exp: NDArray[np.float64]
     beta: NDArray[np.float64]
-    input_coords_zero: NDArray[np.int64]
+    air_map: NDArray[np.int64]
 
     def __init__(
         self,
@@ -484,13 +509,11 @@ class MediumExponentialAttenuation:
         self.alpha_exp = alpha_exp
         self.beta = beta
 
-        if air_map is not None:
-            air_map = np.atleast_2d(air_map)
-            self.input_coords_zero = map_to_coords(air_map)
+        if air_map is None:
+            self.air_map = np.zeros_like(self.sound_speed, dtype=bool)
         else:
-            air_map = np.zeros_like(self.sound_speed, dtype=bool)
-            air_map = np.atleast_2d(air_map)
-            self.input_coords_zero = map_to_coords(air_map)
+            self.air_map = air_map
+
         self.__post_init__()
         self.check_fields()
 
@@ -521,15 +544,6 @@ class MediumExponentialAttenuation:
         assert self.beta.shape == grid_shape, _error_msg(self.beta, grid_shape)
 
     @property
-    def air_map(self) -> NDArray[np.int64]:
-        """Return the air map."""
-        return coords_to_map(
-            self.input_coords_zero,
-            grid_shape=self.sound_speed.shape,
-            is_3d=self.is_3d,
-        )
-
-    @property
     def bulk_modulus(self) -> NDArray[np.float64]:
         """Return the bulk_modulus."""
         return np.multiply(self.sound_speed**2, self.density)
@@ -545,7 +559,7 @@ class MediumExponentialAttenuation:
     @property
     def n_air(self) -> int:
         """Return the number of air coordinates."""
-        return self.input_coords_zero.shape[0]
+        return self.air_map.sum()
 
     def plot(
         self,
@@ -590,6 +604,43 @@ class MediumExponentialAttenuation:
             plt.show()
         plt.close("all")
 
+    def print_info(self) -> None:
+        """Print grid information."""
+        print(str(self))
+
+    def __str__(self) -> str:
+        """Return a string representation of the Medium.
+
+        Returns
+        -------
+        str
+            A string summarizing the Medium properties.
+
+        """
+        return (
+            f"Relaxation Medium:\n"
+            f"  Grid: {self.grid}\n"
+            f"  Sound speed: min {np.min(self.sound_speed):.2f} m/s, "
+            f"max {np.max(self.sound_speed):.2f} m/s\n"
+            f"  Density: min {np.min(self.density):.2f} kg/m^3, "
+            f"max {np.max(self.density):.2f} kg/m^3\n"
+            f"  Beta: min {np.min(self.beta):.2f}, max {np.max(self.beta):.2f}\n"
+            f"  Number of air coordinates: {self.n_air}\n"
+            f"  Exponential attenuation coefficient: min {np.min(self.alpha_exp):.2f}, "
+            f"max {np.max(self.alpha_exp):.2f}\n"
+        )
+
+    def __repr__(self) -> str:
+        """Return a detailed string representation of the Medium.
+
+        Returns
+        -------
+        str
+            A detailed string representation of the Medium instance.
+
+        """
+        return str(self)
+
 
 @dataclass
 class Medium:
@@ -601,7 +652,7 @@ class Medium:
     alpha_coeff: NDArray[np.float64]
     alpha_power: NDArray[np.float64]
     beta: NDArray[np.float64]
-    input_coords_zero: NDArray[np.int64]
+    air_map: NDArray[np.int64]
     attenuation_builder: str = "lookup"
 
     def __init__(
@@ -672,23 +723,20 @@ class Medium:
         self.alpha_coeff = alpha_coeff
         self.alpha_power = alpha_power
         self.beta = beta
-        if air_map is not None:
-            air_map = np.atleast_2d(air_map)
-            self.input_coords_zero = map_to_coords(air_map)
+        if air_map is None:
+            self.air_map = np.zeros_like(self.sound_speed, dtype=bool)
         else:
-            air_map = np.zeros_like(self.sound_speed, dtype=bool)
-            air_map = np.atleast_2d(air_map)
-            self.input_coords_zero = map_to_coords(air_map)
+            self.air_map = air_map
         self.path_relaxation_parameters_database = path_relaxation_parameters_database
         self.n_relaxation_mechanisms = n_relaxation_mechanisms
 
-        if self.n_relaxation_mechanisms != 2 and self.input_coords_zero.size > 0:
+        if self.n_relaxation_mechanisms != 2 and self.air_map.sum() > 0:
             warning_msg = (
                 "Warning: Currently, only n_relaxation_mechanisms=2 supports air regions. "
                 "Setting air regions to zero for other n_relaxation_mechanisms."
             )
             logger.warning(warning_msg)
-            self.input_coords_zero = np.zeros((0, 2), dtype=np.int64)
+            self.air_map = np.zeros_like(self.sound_speed, dtype=bool)
 
         self.attenuation_builder = attenuation_builder
         self.__post_init__()
@@ -723,15 +771,6 @@ class Medium:
         assert self.beta.shape == grid_shape, _error_msg(self.beta, grid_shape)
 
     @property
-    def air_map(self) -> NDArray[np.int64]:
-        """Return the air map."""
-        return coords_to_map(
-            self.input_coords_zero,
-            grid_shape=self.sound_speed.shape,
-            is_3d=self.is_3d,
-        )
-
-    @property
     def bulk_modulus(self) -> NDArray[np.float64]:
         """Return the bulk_modulus."""
         return np.multiply(self.sound_speed**2, self.density)
@@ -747,7 +786,7 @@ class Medium:
     @property
     def n_air(self) -> int:
         """Return the number of air coordinates."""
-        return self.input_coords_zero.shape[0]
+        return self.air_map.sum()
 
     def plot(
         self,
@@ -755,43 +794,90 @@ class Medium:
         *,
         show: bool = False,
         cmap: str = "turbo",
+        figsize: tuple = (20, 6),
     ) -> None:
         """Plot the medium fields using matplotlib."""
         if self.is_3d:
-            error_msg = "3D plotting is not implemented yet."
-            raise NotImplementedError(error_msg)
-        plt.close("all")
-        _, axes = plt.subplots(2, 3, figsize=(15, 10))
+            plt.close("all")
+            _, axes = plt.subplots(2, 6, figsize=figsize)
+            # plot the x-y axis and x-z axis slices
+            for ax, map_data, title in zip(
+                axes.flatten(),
+                [
+                    self.sound_speed[:, :, self.grid.nz // 2],
+                    self.sound_speed[:, self.grid.ny // 2, :],
+                    self.density[:, :, self.grid.nz // 2],
+                    self.density[:, self.grid.ny // 2, :],
+                    self.alpha_coeff[:, :, self.grid.nz // 2],
+                    self.alpha_coeff[:, self.grid.ny // 2, :],
+                    self.alpha_power[:, :, self.grid.nz // 2],
+                    self.alpha_power[:, self.grid.ny // 2, :],
+                    self.beta[:, :, self.grid.nz // 2],
+                    self.beta[:, self.grid.ny // 2, :],
+                    self.air_map[:, :, self.grid.nz // 2],
+                    self.air_map[:, self.grid.ny // 2, :],
+                ],
+                [
+                    "Sound speed (x-y slice)",
+                    "Sound speed (x-z slice)",
+                    "Density (x-y slice)",
+                    "Density (x-z slice)",
+                    "Alpha coeff (x-y slice)",
+                    "Alpha coeff (x-z slice)",
+                    "Alpha power (x-y slice)",
+                    "Alpha power (x-z slice)",
+                    "Beta (x-y slice)",
+                    "Beta (x-z slice)",
+                    "Air map (x-y slice)",
+                    "Air map (x-z slice)",
+                ],
+                strict=False,
+            ):
+                plot_utils.plot_array_on_ax(
+                    ax,
+                    map_data,
+                    title=title,
+                    cmap=cmap,
+                )
+            plt.tight_layout()
+            if export_path is not None:
+                plt.savefig(export_path, dpi=300)
+            if show:
+                plt.show()
+            plt.close("all")
+        else:
+            plt.close("all")
+            _, axes = plt.subplots(2, 3, figsize=(15, 10))
 
-        for ax, map_data, title in zip(
-            axes.flatten(),
-            [
-                self.sound_speed,
-                self.density,
-                self.alpha_coeff,
-                self.alpha_power,
-                self.beta,
-                self.air_map,
-            ],
-            ["Sound speed", "Density", "Alpha coeff", "Alpha power", "Beta", "Air map"],
-            strict=False,
-        ):
-            plot_utils.plot_array_on_ax(
-                ax,
-                map_data,
-                title=title,
-                xlim=(0 - 10, self.grid.ny + 10),
-                ylim=(0 - 10, self.grid.nx + 10),
-                reverse_y_axis=True,
-                cmap=cmap,
-            )
-        plt.tight_layout()
+            for ax, map_data, title in zip(
+                axes.flatten(),
+                [
+                    self.sound_speed,
+                    self.density,
+                    self.alpha_coeff,
+                    self.alpha_power,
+                    self.beta,
+                    self.air_map,
+                ],
+                ["Sound speed", "Density", "Alpha coeff", "Alpha power", "Beta", "Air map"],
+                strict=False,
+            ):
+                plot_utils.plot_array_on_ax(
+                    ax,
+                    map_data,
+                    title=title,
+                    xlim=(0 - 10, self.grid.ny + 10),
+                    ylim=(0 - 10, self.grid.nx + 10),
+                    reverse_y_axis=True,
+                    cmap=cmap,
+                )
+            plt.tight_layout()
 
-        if export_path is not None:
-            plt.savefig(export_path, dpi=300)
-        if show:
-            plt.show()
-        plt.close("all")
+            if export_path is not None:
+                plt.savefig(export_path, dpi=300)
+            if show:
+                plt.show()
+            plt.close("all")
 
     # ---
 
@@ -875,3 +961,43 @@ class Medium:
             beta=self.beta,
             air_map=self.air_map,
         )
+
+    def print_info(self) -> None:
+        """Print grid information."""
+        print(str(self))
+
+    def __str__(self) -> str:
+        """Return a string representation of the Medium.
+
+        Returns
+        -------
+        str
+            A string summarizing the Medium properties.
+
+        """
+        return (
+            f"Medium: \n"
+            f"  Grid shape: {self.sound_speed.shape}\n"
+            f"  Sound speed: min={np.min(self.sound_speed):.2f}, "
+            f"max={np.max(self.sound_speed):.2f}\n"
+            f"  Density: min={np.min(self.density):.2f}, "
+            f"max={np.max(self.density):.2f}\n"
+            f"  Alpha coeff: min={np.min(self.alpha_coeff):.2f}, "
+            f"max={np.max(self.alpha_coeff):.2f}\n"
+            f"  Alpha power: min={np.min(self.alpha_power):.2f}, "
+            f"max={np.max(self.alpha_power):.2f}\n"
+            f"  Beta: min={np.min(self.beta):.2f}, max={np.max(self.beta):.2f}\n"
+            f"  Number of air coords: {self.n_air}\n"
+            f"  Attenuation builder: {self.attenuation_builder}\n"
+        )
+
+    def __repr__(self) -> str:
+        """Return a detailed string representation of the Medium.
+
+        Returns
+        -------
+        str
+            A detailed string representation of the Medium instance.
+
+        """
+        return str(self)

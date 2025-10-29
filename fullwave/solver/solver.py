@@ -695,3 +695,44 @@ class Solver:
         # if load_results is False, return the raw result
         # which is a list of file names
         return sim_result
+
+    def print_info(self) -> None:
+        """Print the Solver instance information."""
+        print(str(self))
+
+    def __str__(self) -> str:
+        """Return a string representation of the Solver instance.
+
+        Returns
+        -------
+        str
+            A formatted string containing the Solver's attributes.
+
+        """
+        return (
+            f"Solver(\n"
+            f"  work_dir={self.work_dir}\n\n"
+            f"  grid={self.grid}\n"
+            f"  medium={self.medium}\n"
+            f"  source={self.source}\n"
+            f"  sensor={self.sensor}\n"
+            f"  transducer={self.transducer}\n\n"
+            f"  path_fullwave_simulation_bin={self.path_fullwave_simulation_bin}\n"
+            f"  use_pml={self.use_pml}\n"
+            f"  is_3d={self.is_3d}\n"
+            f"  use_gpu={self.use_gpu}\n"
+            f"  use_exponential_attenuation={self.use_exponential_attenuation}\n"
+            f"  use_isotropic_relaxation={self.use_isotropic_relaxation}\n"
+            f")"
+        )
+
+    def __repr__(self) -> str:
+        """Return a string representation of the Solver instance.
+
+        Returns
+        -------
+        str
+            A formatted string containing the Solver's attributes.
+
+        """
+        return self.__str__()

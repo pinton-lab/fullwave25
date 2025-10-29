@@ -128,9 +128,42 @@ class Source:
             fig=fig,
             colorbar=True,
         )
-        if show:
-            plt.show()
 
         if export_path is not None:
             plt.savefig(export_path, dpi=300)
+        if show:
+            plt.show()
+
         plt.close("all")
+
+    def print_info(self) -> None:
+        """Print source information to the logger."""
+        print(str(self))
+
+    def __str__(self) -> str:
+        """Show source information.
+
+        Returns
+        -------
+        str
+            Formatted string containing source information.
+
+        """
+        return (
+            f"Source: \n"
+            f"  Number of sources: {self.n_sources}\n"
+            f"  Grid shape: {self.grid_shape}\n"
+            f"  Is 3D: {self.is_3d}\n"
+            f"  p0 shape: {self.p0.shape}\n"
+        )
+
+    def __repr__(self) -> str:
+        """Show source information.
+
+        Returns
+        -------
+        str
+            Formatted string containing source information.
+
+        """
+        return self.__str__()
