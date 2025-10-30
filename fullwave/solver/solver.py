@@ -580,7 +580,7 @@ class Solver:
         is_static_map: bool = False,
         recalculate_pml: bool = True,
         record_whole_domain: bool = False,
-        sampling_interval_whole_domain: int = 1,
+        sampling_modulus_time_whole_domain: int = 1,
         load_results: bool = True,
     ) -> NDArray[np.float64] | Path:
         r"""Run the fullwave simulation and return the result as a NumPy array.
@@ -621,12 +621,13 @@ class Solver:
         record_whole_domain : bool
             Flag indicating whether to record the whole domain.
             If True, the simulation will record data for the entire grid.
-        sampling_interval_whole_domain : int
-            The sampling interval for the sensor data.
-            Default is 1, which means every time step is recorded.
-            If set to a value greater than 1, only every nth time step is recorded.
+        sampling_modulus_time_whole_domain : int
+            Sampling modulus in time. Default is 1 (record at every time step).
+            Changing this value to n will record the pressure every n time steps.
+            It reduces the size of the output data.
             This will only change the sensor class if record_whole_domain is True.
-            If record_whole_domain is False, the sampling interval is ignored.
+            If record_whole_domain is False,
+            the sampling sampling_modulus_time_whole_domain is ignored.
         load_results : bool
             Whether to load the results from genout.dat after the simulation.
             Default is True. If set to False, it returns the genout.dat file path instead.
@@ -640,11 +641,12 @@ class Solver:
 
         # pml setup
         extended_medium = self.pml_builder.run(use_pml=self.use_pml)
-        if sampling_interval_whole_domain != 1 and record_whole_domain is False:
+        if sampling_modulus_time_whole_domain != 1 and record_whole_domain is False:
             warning_msg = (
-                f"sampling_interval_whole_domain value {sampling_interval_whole_domain} is ignored "
+                f"sampling_modulus_time_whole_domain value "
+                f"{sampling_modulus_time_whole_domain} is ignored "
                 "when record_whole_domain is False. "
-                f"The sampling_interval {self.sensor.sampling_interval} "
+                f"The sampling_modulus_time {self.sensor.sampling_modulus_time} "
                 "in the sensor object is prioritized."
             )
             logger.warning(warning_msg)
@@ -668,7 +670,7 @@ class Solver:
             sensor_mask[:, :] = True
             sensor = fullwave.Sensor(
                 mask=sensor_mask,
-                sampling_interval=sampling_interval_whole_domain,
+                sampling_modulus_time=sampling_modulus_time_whole_domain,
             )
         else:
             sensor = self.pml_builder.extended_sensor

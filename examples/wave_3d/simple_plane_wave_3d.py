@@ -107,7 +107,7 @@ def main() -> None:  # noqa: PLR0915
     #
     sensor_mask = np.zeros((grid.nx, grid.ny, grid.nz), dtype=bool)
     sensor_mask[:, :] = True
-    sensor = fullwave.Sensor(mask=sensor_mask, sampling_interval=7)
+    sensor = fullwave.Sensor(mask=sensor_mask, sampling_modulus_time=7)
 
     #
     # --- run simulation ---

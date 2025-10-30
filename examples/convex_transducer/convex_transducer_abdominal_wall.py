@@ -62,7 +62,7 @@ def main() -> None:  # noqa: PLR0915
     # make a sensor for whole domain to make an animation
     sensor_mask = np.zeros((grid.nx, grid.ny), dtype=bool)
     sensor_mask[:, :] = True
-    sensor = fullwave.Sensor(mask=sensor_mask, sampling_interval=2)
+    sensor = fullwave.Sensor(mask=sensor_mask, sampling_modulus_time=2)
     sensor.plot(export_path=work_dir / "sensor_whole.svg")
 
     #

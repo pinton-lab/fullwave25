@@ -93,7 +93,7 @@ def main() -> None:
     sensor_mask[:, :] = True
 
     # setup the Sensor instance
-    sensor = fullwave.Sensor(mask=sensor_mask, sampling_interval=7)
+    sensor = fullwave.Sensor(mask=sensor_mask, sampling_modulus_time=7)
 
     #
     # --- run simulation ---
