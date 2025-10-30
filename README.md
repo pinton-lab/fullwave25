@@ -22,7 +22,7 @@ Fullwave 2.5 models multiple relaxation processes to approximate frequency-depen
 It solves the stretched-coordinate pressure-velocity formulation using a staggered-grid finite-difference schemes with 8th-order accuracy in space and 4th-order accuracy in time. The stretched-coordinate formulation enables accurate modeling of frequency-dependent power-law attenuation through optimal selection of relaxation parameters.
 
 The following figure illustrates the performance of the attenuation modeling in Fullwave 2.5.
-The graph shows a comparison of the target power-law attenuation $\alpha=\alpha_0^\gamma$ (red line) and the simulated attenuation (black dots) for various spatially varying attenuation coefficients ($\alpha_0 =$ 0.25, 0.5, and 0.75) and exponents ($\gamma =$ 0.4, 0.7, 1.0, 1.3, and 1.6).
+The graph shows a comparison of the target power-law attenuation $\alpha=\alpha_0 f^\gamma$ (red line) and the simulated attenuation (black dots) for various spatially varying attenuation coefficients ($\alpha_0 =$ 0.25, 0.5, and 0.75) and exponents ($\gamma =$ 0.4, 0.7, 1.0, 1.3, and 1.6).
 
 ![attenuation modeling performance](./figs/attenuation_modeling.svg)
 
