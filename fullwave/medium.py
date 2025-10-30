@@ -422,6 +422,10 @@ class MediumRelaxationMaps:
         """Print grid information."""
         print(str(self))
 
+    def summary(self) -> None:
+        """Alias for print_info."""
+        self.print_info()
+
     def __str__(self) -> str:
         """Return a string representation of the Medium.
 
@@ -434,6 +438,7 @@ class MediumRelaxationMaps:
         return (
             f"Relaxation Medium:\n"
             f"  Grid: {self.grid}\n"
+            "\n"
             f"  Sound speed: min {np.min(self.sound_speed):.2f} m/s, "
             f"max {np.max(self.sound_speed):.2f} m/s\n"
             f"  Density: min {np.min(self.density):.2f} kg/m^3, "
@@ -608,6 +613,10 @@ class MediumExponentialAttenuation:
         """Print grid information."""
         print(str(self))
 
+    def summary(self) -> None:
+        """Alias for print_info."""
+        self.print_info()
+
     def __str__(self) -> str:
         """Return a string representation of the Medium.
 
@@ -620,6 +629,7 @@ class MediumExponentialAttenuation:
         return (
             f"Relaxation Medium:\n"
             f"  Grid: {self.grid}\n"
+            "\n"
             f"  Sound speed: min {np.min(self.sound_speed):.2f} m/s, "
             f"max {np.max(self.sound_speed):.2f} m/s\n"
             f"  Density: min {np.min(self.density):.2f} kg/m^3, "
@@ -990,6 +1000,10 @@ class Medium:
         """Print grid information."""
         print(str(self))
 
+    def summary(self) -> None:
+        """Alias for print_info."""
+        self.print_info()
+
     def __str__(self) -> str:
         """Return a string representation of the Medium.
 
@@ -1001,7 +1015,8 @@ class Medium:
         """
         return (
             f"Medium: \n"
-            f"  Grid shape: {self.sound_speed.shape}\n"
+            f"  Grid: {self.grid}\n"
+            "\n"
             f"  Sound speed: min={np.min(self.sound_speed):.2f}, "
             f"max={np.max(self.sound_speed):.2f}\n"
             f"  Density: min={np.min(self.density):.2f}, "
