@@ -700,6 +700,10 @@ class Solver:
         """Print the Solver instance information."""
         print(str(self))
 
+    def summary(self) -> None:
+        """Alias for print_info."""
+        self.print_info()
+
     def __str__(self) -> str:
         """Return a string representation of the Solver instance.
 
@@ -712,7 +716,6 @@ class Solver:
         return (
             f"Solver(\n"
             f"  work_dir={self.work_dir}\n\n"
-            f"  grid={self.grid}\n"
             f"  medium={self.medium}\n"
             f"  source={self.source}\n"
             f"  sensor={self.sensor}\n"

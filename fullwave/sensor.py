@@ -127,6 +127,10 @@ class Sensor:
         """Print sensor information to the logger."""
         print(str(self))
 
+    def summary(self) -> None:
+        """Alias for print_info."""
+        self.print_info()
+
     def __str__(self) -> str:
         """Show sensor information.
 

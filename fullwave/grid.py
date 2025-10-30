@@ -145,6 +145,10 @@ class Grid:
         """Print grid information."""
         print(str(self))
 
+    def summary(self) -> None:
+        """Alias for print_info."""
+        self.print_info()
+
     def __str__(self) -> str:
         """Print string representation of the Grid object.
 
@@ -154,23 +158,56 @@ class Grid:
             String representation of the Grid object.
 
         """
+        domain_size_str_desc = (
+            "  Domain size (axial, lateral, elevational) (grid.domain_size): "
+            if self.is_3d
+            else "  Domain size (axial, lateral) (grid.domain_size): "
+        )
+        domain_size_str = (
+            (
+                f"({self.domain_size[0]:.2e} m, "
+                f"{self.domain_size[1]:.2e} m, "
+                f"{self.domain_size[2]:.2e} m)"
+            )
+            if self.is_3d
+            else f"({self.domain_size[0]:.2e} m, {self.domain_size[1]:.2e} m)"
+        )
+        grid_spacing_str_desc = (
+            "  Grid spacing (grid.dx, grid.dy, grid.dz): "
+            if self.is_3d
+            else "  Grid spacing (grid.dx, grid.dy): "
+        )
+        grid_spacing_str = (
+            f"({self.dx * 1e3:.2e} m, {self.dy * 1e3:.2e} m, {self.dz * 1e3:.2e} m)"
+            if self.is_3d
+            else f"({self.dx * 1e3:.2e} m, {self.dy * 1e3:.2e} m)"
+        )
+
+        num_grid_points_str_desc = (
+            "  Number of grid points (grid.nx, grid.ny, grid.nz): "
+            if self.is_3d
+            else "  Number of grid points (grid.nx, grid.ny): "
+        )
+        num_grid_points_str = (
+            f"({self.nx}, {self.ny}, {self.nz})" if self.is_3d else f"({self.nx}, {self.ny})"
+        )
         return (
-            "Grid Information:\n"
-            f"  Domain size: ({self.domain_size[0]:.2e} m, {self.domain_size[1]:.2e} m"
-            + (f", {self.domain_size[2]:.2f} m)" if self.is_3d else ")")
+            "Grid Information:\n" + domain_size_str_desc + domain_size_str + "\n"
+            f"  Center frequency: (grid.f0) {self.f0 / 1e6} MHz\n"
+            f"  Duration: (grid.duration) {self.duration:.2e} s\n"
+            f"  Speed of sound (grid.c0): {self.c0} m/s\n"
+            f"  Points per wavelength (PPW) (grid.ppw): {self.ppw}\n"
+            f"  Courant-Friedrichs-Lewy (CFL) number (grid.cfl): {self.cfl}\n"
+            f"  Wavelength (grid.wavelength): {self.wavelength * 1e3:.2e} m\n"
+            + grid_spacing_str_desc
+            + grid_spacing_str
             + "\n"
-            f"  Center frequency: {self.f0 / 1e6} MHz\n"
-            f"  Duration: {self.duration:.2e} s\n"
-            f"  Speed of sound: {self.c0} m/s\n"
-            f"  Points per wavelength (PPW): {self.ppw}\n"
-            f"  Courant-Friedrichs-Lewy (CFL) number: {self.cfl}\n"
-            f"  Wavelength: {self.wavelength * 1e3:.2e} m\n"
-            "  Grid spacing (dx, dy, dz): "
-            f"({self.dx * 1e3:.2e}, {self.dy * 1e3:.2e}, {self.dz * 1e3:.2e}) m\n"
-            f"  Number of grid points (nx, ny, nz): ({self.nx}, {self.ny}, {self.nz})\n"
-            f"  Time step (dt): {self.dt:.2e} sec\n"
-            f"  Number of time steps (nt): {self.nt}\n"
-            f"  is 3D simulation: {self.is_3d}"
+            + num_grid_points_str_desc
+            + num_grid_points_str
+            + "\n"
+            + f"  Time step (grid.dt): {self.dt:.2e} sec\n"
+            f"  Number of time steps (grid.nt): {self.nt}\n"
+            f"  is 3D simulation (grid.is_3d): {self.is_3d}"
         )
 
     def __repr__(self) -> str:

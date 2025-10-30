@@ -872,6 +872,10 @@ class Transducer:
         """Print information about the Transducer object."""
         print(str(self))
 
+    def summary(self) -> None:
+        """Alias for print_info."""
+        self.print_info()
+
     def __str__(self) -> str:
         """Return a string representation of the Transducer object.
 

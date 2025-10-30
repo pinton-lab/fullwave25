@@ -140,6 +140,10 @@ class Source:
         """Print source information to the logger."""
         print(str(self))
 
+    def summary(self) -> None:
+        """Alias for print_info."""
+        self.print_info()
+
     def __str__(self) -> str:
         """Show source information.
 
