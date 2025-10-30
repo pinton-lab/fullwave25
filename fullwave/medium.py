@@ -795,6 +795,7 @@ class Medium:
         show: bool = False,
         cmap: str = "turbo",
         figsize: tuple = (20, 6),
+        fontsize_title: int = 20,
     ) -> None:
         """Plot the medium fields using matplotlib."""
         if self.is_3d:
@@ -859,7 +860,29 @@ class Medium:
                     self.beta,
                     self.air_map,
                 ],
-                ["Sound speed", "Density", "Alpha coeff", "Alpha power", "Beta", "Air map"],
+                [
+                    (
+                        "Sound speed\n"
+                        r"$c$"
+                    ),
+                    (
+                        "Density\n"
+                        r"$\rho$"
+                    ),
+                    (
+                        "Alpha coefficient\n"
+                        r"$\alpha_0$"
+                    ),
+                    (
+                        "Power law exponent\n"
+                        r"$\gamma$"
+                    ),
+                    (
+                        "Nonlinearity\n"
+                        r"$\beta=1+\frac{B}{2A}$"
+                    ),
+                    "Air map",
+                ],
                 strict=False,
             ):
                 plot_utils.plot_array_on_ax(
@@ -871,6 +894,7 @@ class Medium:
                     reverse_y_axis=True,
                     cmap=cmap,
                 )
+                ax.title.set_fontsize(fontsize_title)
             plt.tight_layout()
 
             if export_path is not None:
