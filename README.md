@@ -10,7 +10,7 @@ Fullwave 2.5 is a Python package for high-fidelity ultrasound wave propagation s
 
 | Computational medium                     | Wave propagation                                                           |
 | ---------------------------------------- | -------------------------------------------------------------------------- |
-| <img src="figs/medium.png" width="600"/> | <img src="figs/linear_transducer_focused_abdominal_wall.gif" width="400"/> |
+| <img src="figs/medium.png" width="600"/> | <img src="figs/linear_transducer_focused_abdominal_wall.gif" width="200"/> |
 
 Building upon the original Fullwave 2 simulator, Fullwave 2.5 enhances its capabilities to model ultrasound wave propagation in media where **both the attenuation coefficient and exponent can vary spatially**. This enables more accurate simulations of biological tissues, which often exhibit complex attenuation behaviours that cannot be captured by uniform exponent models.
 
