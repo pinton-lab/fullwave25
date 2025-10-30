@@ -980,7 +980,7 @@ def make_p4_1c_trasnducer(
 
     """
     transducer_width_m = 27e-3
-    element_layer_px = 1
+    element_layer_px = 4
     transducer_geometry = fullwave.TransducerGeometry(
         grid,
         number_elements=64,
