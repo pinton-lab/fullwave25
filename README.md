@@ -3,7 +3,7 @@
 Fullwave 2.5 is a Python package for high-fidelity ultrasound wave propagation simulation with the following features:
 
 - State-of-the-art attenuation modelling capabilities for simulating ultrasound wave propagation in complex biological tissues.
-- Heterogeneous power law attenuation modeling, where **both the attenuation coefficient and exponent can vary** spatially.
+- Heterogeneous power law attenuation ($\alpha=\alpha_0 f^\gamma$) modeling, where **both the attenuation coefficient and exponent can vary** spatially.
 - 2D and 3D ultrasound wave propagation simulation.
 - Multiple GPU execution support.
 - Python wrapper for easy usability and extensibility, with the core simulation engine implemented in CUDA/C for high performance on NVIDIA GPUs.
@@ -19,7 +19,13 @@ The library is designed with a Python wrapper for ease of use and extensibility,
 ## Theoretical Background
 
 Fullwave 2.5 models multiple relaxation processes to approximate frequency-dependent power-law attenuation in heterogeneous media.
-It solves the stretched-coordinate pressure-velocity formulation using a staggered-grid finite-difference schemes with 8th-order accuracy in space and 4th-order accuracy in time. The stretched-coordinate formulation enables accurate modeling of frequency-dependent power-law attenuation through optimal selection of relaxation parameters.
+It solves the stretched-coordinate pressure-velocity formulation using a staggered-grid finite-difference schemes with 8th-order accuracy in space and 4th-order accuracy in time.
+The formulation is expressed as follows:
+
+$$\nabla_1 p + \rho \cfrac{\partial {\bf{v}}}{\partial t} = 0$$
+$$\nabla_2 \cdot {\bf{v}} + \kappa \cfrac{\partial p}{\partial t} = 0$$
+
+The stretched-coordinate derivatives, denoted by $\nabla_1$ and $\nabla_2$, control frequency-dependent power-law attenuation and dispersion by selecting the optimal relaxation parameters.
 
 The following figure illustrates the performance of the attenuation modeling in Fullwave 2.5.
 The graph shows a comparison of the target power-law attenuation $\alpha=\alpha_0 f^\gamma$ (red line) and the simulated attenuation (black dots) for various spatially varying attenuation coefficients ($\alpha_0 =$ 0.25, 0.5, and 0.75) and exponents ($\gamma =$ 0.4, 0.7, 1.0, 1.3, and 1.6).
