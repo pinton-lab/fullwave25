@@ -38,7 +38,7 @@ def create_dummy_objects():
     )
     sensor = SimpleNamespace(
         outcoords=np.array([[1, 2], [3, 4]], dtype=np.int64),
-        sampling_interval=0.5,
+        sampling_modulus_time=0.5,
         n_sensors=2,
     )
     return grid, medium, source, sensor

@@ -243,7 +243,7 @@ class PMLBuilder:
         )
         self.extended_sensor = fullwave.Sensor(
             mask=self._extend_map_for_pml(self.sensor_org.mask, fill_edge=False),
-            sampling_interval=self.sensor_org.sampling_interval,
+            sampling_modulus_time=self.sensor_org.sampling_modulus_time,
         )
         if self.is_3d:
             self.pml_mask_x, self.pml_mask_y, self.pml_mask_z = self._localize_pml_region()
@@ -1767,7 +1767,7 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
         )
         self.extended_sensor = fullwave.Sensor(
             mask=self._extend_map_for_pml(self.sensor_org.mask, fill_edge=False),
-            sampling_interval=self.sensor_org.sampling_interval,
+            sampling_modulus_time=self.sensor_org.sampling_modulus_time,
         )
         if self.is_3d:
             self.pml_mask_x, self.pml_mask_y, self.pml_mask_z = self._localize_pml_region()

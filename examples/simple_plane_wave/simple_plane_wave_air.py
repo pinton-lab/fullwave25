@@ -91,7 +91,7 @@ def main() -> None:
     # --- define the sensor ---
     sensor_mask = np.zeros((grid.nx, grid.ny), dtype=bool)
     sensor_mask[:, :] = True
-    sensor = fullwave.Sensor(mask=sensor_mask, sampling_interval=7)
+    sensor = fullwave.Sensor(mask=sensor_mask, sampling_modulus_time=7)
 
     # --- run simulation ---
     fw_solver = fullwave.Solver(

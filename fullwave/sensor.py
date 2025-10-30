@@ -19,9 +19,9 @@ class Sensor:
     """Sensor class for Fullwave."""
 
     outcoords: NDArray[np.int64]
-    sampling_interval: int = 1
+    sampling_modulus_time: int = 1
 
-    def __init__(self, mask: NDArray[np.bool], sampling_interval: int = 1) -> None:
+    def __init__(self, mask: NDArray[np.bool], sampling_modulus_time: int = 1) -> None:
         """Sensor class for Fullwave.
 
         Parameters
@@ -29,14 +29,16 @@ class Sensor:
         mask : NDArray[np.bool]
             Binary matrix where the pressure is recorded at each time-step
             shape: [nx, ny] for 2D, [nx, ny, nz] for 3D
-        sampling_interval: int
-            The time-step interval at which the pressure is recorded
+        sampling_modulus_time: int
+            Sampling modulus in time. Default is 1 (record at every time step).
+            Changing this value to n will record the pressure every n time steps.
+            It reduces the size of the output data.
 
         """
         mask = np.atleast_2d(mask)
 
         self.grid_shape = mask.shape
-        self.sampling_interval = sampling_interval
+        self.sampling_modulus_time = sampling_modulus_time
         self.is_3d = len(self.grid_shape) == 3
         outcoords = map_to_coords(mask)
         if self.is_3d:
