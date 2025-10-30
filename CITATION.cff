@@ -8,7 +8,7 @@ authors:
     given-names: Gianmarco
     orcid: https://orcid.org/0000-0002-4896-1439
 title: "Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities"
-version: 1.0.4
+version: v1.0.5
 # identifiers:
 #   - type: doi
 #     value:
