@@ -48,7 +48,7 @@ def main() -> None:  # noqa: PLR0915
     )
 
     # define simple domain 1
-    geometry = np.zeros((grid.nx, grid.ny, grid.nz), dtype=int)
+    geometry = np.zeros((grid.nx, grid.ny, grid.nz))
     geometry[
         round(grid.nx // 2 - grid.nx * 0.1) : round(grid.nx // 2 + grid.nx * 0.1),
         round(grid.ny // 2 - grid.ny * 0.1) : round(grid.ny // 2 + grid.ny * 0.1),
@@ -69,7 +69,7 @@ def main() -> None:  # noqa: PLR0915
     )
 
     # define simple domain 2
-    geometry_2 = np.zeros((grid.nx, grid.ny, grid.nz), dtype=int)
+    geometry_2 = np.zeros((grid.nx, grid.ny, grid.nz))
     geometry_2[
         round(grid.nx // 4 - grid.nx * 0.1) : round(grid.nx // 4 + grid.nx * 0.1),
         round(grid.ny // 4 - grid.ny * 0.1) : round(grid.ny // 4 + grid.ny * 0.1),
@@ -114,12 +114,7 @@ def main() -> None:  # noqa: PLR0915
     # generate medium for simulation
     medium = mb.run()
 
-    # we can plot to see the generated medium properties
-    plot_utils.plot_array(
-        medium.sound_speed[grid.nx // 2, :, :],
-        aspect=1,
-        export_path=work_dir / "sound_speed.png",
-    )
+    medium.plot(export_path=work_dir / "medium.png")
 
     #
     # --- define the acoustic source ---
@@ -127,19 +122,33 @@ def main() -> None:  # noqa: PLR0915
 
     # define where to put the pressure source [nx, ny, nz]
     p_mask = np.zeros((grid.nx, grid.ny, grid.nz), dtype=bool)
-    p_mask[0, :, :] = True
+    element_thickness_px = 3
+    p_mask[0:element_thickness_px, :] = True
 
-    # define the pressure source [n_sources, nt]
-    p0_vec = fullwave.utils.pulse.gaussian_modulated_sinusoidal_signal(
-        nt=grid.nt,
-        f0=f0,
-        duration=duration,
-        ncycles=2,
-        drop_off=2,
-        p0=1e5,
-    )
-    p0 = np.zeros((p_mask.sum(), grid.nt))
-    p0[:] = p0_vec
+    # define the pressure source [n_sources, nt]d
+    p0 = np.zeros((p_mask.sum(), grid.nt))  # [n_sources, nt]
+
+    # The order of p_coordinates corresponds to the order of sources in p0
+    # p_coordinates = map_to_coords(p_mask)
+
+    for i_thickness in range(element_thickness_px):
+        # create a gaussian-modulated sinusoidal pulse as the source signal with layer delay
+        p0_vec = fullwave.utils.pulse.gaussian_modulated_sinusoidal_signal(
+            nt=grid.nt,  # number of time steps
+            f0=f0,  # center frequency [Hz]
+            duration=duration,  # duration [s]
+            ncycles=2,  # number of cycles
+            drop_off=2,  # drop off factor
+            p0=1e5,  # maximum amplitude [Pa]
+            i_layer=i_thickness,
+            dt_for_layer_delay=grid.dt,
+            cfl_for_layer_delay=grid.cfl,
+        )
+
+        # assign the source signal to the corresponding layer
+        p0[grid.ny * grid.nz * i_thickness : grid.ny * grid.nz * (i_thickness + 1), :] = (
+            p0_vec.copy()
+        )
 
     source = fullwave.Source(p0, p_mask)
 
@@ -162,8 +171,6 @@ def main() -> None:  # noqa: PLR0915
         source=source,
         sensor=sensor,
         run_on_memory=False,
-        pml_layer_thickness_px=grid.ppw * 3,
-        n_transition_layer=grid.ppw * 3,
     )
     result_path: Path = fw_solver.run(load_results=False)
     sensor_output = load_dat_and_reshape(

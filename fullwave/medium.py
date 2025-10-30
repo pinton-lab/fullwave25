@@ -422,6 +422,10 @@ class MediumRelaxationMaps:
         """Print grid information."""
         print(str(self))
 
+    def summary(self) -> None:
+        """Alias for print_info."""
+        self.print_info()
+
     def __str__(self) -> str:
         """Return a string representation of the Medium.
 
@@ -434,6 +438,7 @@ class MediumRelaxationMaps:
         return (
             f"Relaxation Medium:\n"
             f"  Grid: {self.grid}\n"
+            "\n"
             f"  Sound speed: min {np.min(self.sound_speed):.2f} m/s, "
             f"max {np.max(self.sound_speed):.2f} m/s\n"
             f"  Density: min {np.min(self.density):.2f} kg/m^3, "
@@ -608,6 +613,10 @@ class MediumExponentialAttenuation:
         """Print grid information."""
         print(str(self))
 
+    def summary(self) -> None:
+        """Alias for print_info."""
+        self.print_info()
+
     def __str__(self) -> str:
         """Return a string representation of the Medium.
 
@@ -620,6 +629,7 @@ class MediumExponentialAttenuation:
         return (
             f"Relaxation Medium:\n"
             f"  Grid: {self.grid}\n"
+            "\n"
             f"  Sound speed: min {np.min(self.sound_speed):.2f} m/s, "
             f"max {np.max(self.sound_speed):.2f} m/s\n"
             f"  Density: min {np.min(self.density):.2f} kg/m^3, "
@@ -795,6 +805,7 @@ class Medium:
         show: bool = False,
         cmap: str = "turbo",
         figsize: tuple = (20, 6),
+        fontsize_title: int = 20,
     ) -> None:
         """Plot the medium fields using matplotlib."""
         if self.is_3d:
@@ -859,7 +870,29 @@ class Medium:
                     self.beta,
                     self.air_map,
                 ],
-                ["Sound speed", "Density", "Alpha coeff", "Alpha power", "Beta", "Air map"],
+                [
+                    (
+                        "Sound speed\n"
+                        r"$c$"
+                    ),
+                    (
+                        "Density\n"
+                        r"$\rho$"
+                    ),
+                    (
+                        "Alpha coefficient\n"
+                        r"$\alpha_0$"
+                    ),
+                    (
+                        "Power law exponent\n"
+                        r"$\gamma$"
+                    ),
+                    (
+                        "Nonlinearity\n"
+                        r"$\beta=1+\frac{B}{2A}$"
+                    ),
+                    "Air map",
+                ],
                 strict=False,
             ):
                 plot_utils.plot_array_on_ax(
@@ -871,6 +904,7 @@ class Medium:
                     reverse_y_axis=True,
                     cmap=cmap,
                 )
+                ax.title.set_fontsize(fontsize_title)
             plt.tight_layout()
 
             if export_path is not None:
@@ -966,6 +1000,10 @@ class Medium:
         """Print grid information."""
         print(str(self))
 
+    def summary(self) -> None:
+        """Alias for print_info."""
+        self.print_info()
+
     def __str__(self) -> str:
         """Return a string representation of the Medium.
 
@@ -977,7 +1015,8 @@ class Medium:
         """
         return (
             f"Medium: \n"
-            f"  Grid shape: {self.sound_speed.shape}\n"
+            f"  Grid: {self.grid}\n"
+            "\n"
             f"  Sound speed: min={np.min(self.sound_speed):.2f}, "
             f"max={np.max(self.sound_speed):.2f}\n"
             f"  Density: min={np.min(self.density):.2f}, "

@@ -102,19 +102,33 @@ def main() -> None:  # noqa: PLR0915
 
     # define where to put the pressure source [nx, ny]
     p_mask = np.zeros((grid.nx, grid.ny, grid.nz), dtype=bool)
-    p_mask[0, :, :] = True
+    element_thickness_px = 3
+    p_mask[0:element_thickness_px, :] = True
 
-    # define the pressure source [n_sources, nt]
-    p0_vec = fullwave.utils.pulse.gaussian_modulated_sinusoidal_signal(
-        nt=grid.nt,
-        f0=f0,
-        duration=duration,
-        ncycles=1,
-        drop_off=1,
-        p0=1e5,
-    )
-    p0 = np.zeros((p_mask.sum(), grid.nt))
-    p0[:] = p0_vec
+    # define the pressure source [n_sources, nt]d
+    p0 = np.zeros((p_mask.sum(), grid.nt))  # [n_sources, nt]
+
+    # The order of p_coordinates corresponds to the order of sources in p0
+    # p_coordinates = map_to_coords(p_mask)
+
+    for i_thickness in range(element_thickness_px):
+        # create a gaussian-modulated sinusoidal pulse as the source signal with layer delay
+        p0_vec = fullwave.utils.pulse.gaussian_modulated_sinusoidal_signal(
+            nt=grid.nt,  # number of time steps
+            f0=f0,  # center frequency [Hz]
+            duration=duration,  # duration [s]
+            ncycles=2,  # number of cycles
+            drop_off=2,  # drop off factor
+            p0=1e5,  # maximum amplitude [Pa]
+            i_layer=i_thickness,
+            dt_for_layer_delay=grid.dt,
+            cfl_for_layer_delay=grid.cfl,
+        )
+
+        # assign the source signal to the corresponding layer
+        p0[grid.ny * grid.nz * i_thickness : grid.ny * grid.nz * (i_thickness + 1), :] = (
+            p0_vec.copy()
+        )
 
     source = fullwave.Source(p0, p_mask)
 
@@ -123,7 +137,7 @@ def main() -> None:  # noqa: PLR0915
     #
     sensor_mask = np.zeros((grid.nx, grid.ny, grid.nz), dtype=bool)
     sensor_mask[:, :] = True
-    sensor = fullwave.Sensor(mask=sensor_mask, sampling_interval=7)
+    sensor = fullwave.Sensor(mask=sensor_mask, sampling_modulus_time=7)
 
     #
     # --- run simulation ---
@@ -135,8 +149,6 @@ def main() -> None:  # noqa: PLR0915
         source=source,
         sensor=sensor,
         run_on_memory=False,
-        pml_layer_thickness_px=grid.ppw * 3,
-        n_transition_layer=grid.ppw * 3,
     )
     fw_solver.print_info()
     sensor_output = fw_solver.run()

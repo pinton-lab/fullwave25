@@ -62,7 +62,7 @@ def main() -> None:  # noqa: PLR0915
     # --- define the linear transducer ---
     #
 
-    element_layer_px = 1
+    element_layer_px = 3
     transducer_geometry = fullwave.TransducerGeometry(
         grid,
         number_elements=128,
@@ -135,7 +135,8 @@ def main() -> None:  # noqa: PLR0915
         delay_sec = delay_list[i_source_index]
         source_location = dict_source_index_to_location[i_source_index + 1]
 
-        i_layer = i_source_index % element_layer_px
+        n_y = input_signal.shape[0] // element_layer_px
+        i_layer = i_source_index // n_y
         element_id = transducer.transducer_geometry.indexed_element_mask_input[*source_location]
         if not active_source_elements[element_id - 1]:
             p0_vec = np.zeros(grid.nt)
@@ -144,16 +145,15 @@ def main() -> None:  # noqa: PLR0915
                 nt=grid.nt,
                 f0=f0,
                 duration=duration,
-                ncycles=1,
-                drop_off=1,
+                ncycles=2,
+                drop_off=2,
                 p0=p_max,
-                i_layer=i_layer + 1,
+                i_layer=i_layer,
                 dt_for_layer_delay=grid.dt,
                 cfl_for_layer_delay=grid.cfl,
                 delay_sec=delay_sec,
             )
         input_signal[i_source_index, :] = p0_vec.copy()
-
     transducer.set_signal(input_signal)
 
     transducer.plot_source_mask(export_path=work_dir / "source_transducer.svg")
@@ -162,7 +162,7 @@ def main() -> None:  # noqa: PLR0915
     # make a sensor for whole domain to make an animation
     sensor_mask = np.zeros((grid.nx, grid.ny), dtype=bool)
     sensor_mask[:, :] = True
-    sensor = fullwave.Sensor(mask=sensor_mask, sampling_interval=2)
+    sensor = fullwave.Sensor(mask=sensor_mask, sampling_modulus_time=2)
     sensor.plot(export_path=work_dir / "sensor_whole.svg")
 
     #
@@ -177,8 +177,6 @@ def main() -> None:  # noqa: PLR0915
         source=transducer.source,
         sensor=sensor,
         run_on_memory=False,
-        pml_layer_thickness_px=grid.ppw * 3,
-        n_transition_layer=grid.ppw * 3,
     )
     sensor_output = fw_solver.run()
 
@@ -188,6 +186,16 @@ def main() -> None:  # noqa: PLR0915
 
     propagation_map = signal_process.reshape_whole_sensor_to_nt_nx_ny(sensor_output, grid)
     p_max_plot = np.abs(propagation_map).max().item() / 2
+
+    time_step = propagation_map.shape[0] // 3
+    plot_utils.plot_array(
+        propagation_map[time_step, :, :],
+        aspect=propagation_map.shape[2] / propagation_map.shape[1],
+        export_path=work_dir / "wave_propagation_snapshot_1.png",
+        vmax=p_max_plot,
+        vmin=-p_max_plot,
+    )
+
     plot_utils.plot_wave_propagation_with_map(
         propagation_map=propagation_map,
         c_map=medium.sound_speed,

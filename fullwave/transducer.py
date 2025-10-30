@@ -605,7 +605,7 @@ class Transducer:
         active_sensor_elements: tuple[bool] | None = None,
         *,
         validate_input: bool = True,
-        sampling_interval: int = 1,
+        sampling_modulus_time: int = 1,
     ) -> None:
         """Initialize the GeneralTransducer with the provided geometry, grid, and input signal.
 
@@ -626,8 +626,10 @@ class Transducer:
         validate_input: bool, optional
             Flag indicating whether to validate the input data.
             default is True.
-        sampling_interval: int
-            The time-step interval at which the pressure is recorded
+        sampling_modulus_time: int
+            Sampling modulus in time. Default is 1 (record at every time step).
+            Changing this value to n will record the pressure every n time steps.
+            It reduces the size of the output data.
 
         """
         if validate_input:
@@ -646,7 +648,7 @@ class Transducer:
             active_sensor_elements = np.ones(transducer_geometry.number_elements, dtype=bool)
         self.active_sensor_elements = active_sensor_elements
 
-        self.sampling_interval = sampling_interval
+        self.sampling_modulus_time = sampling_modulus_time
 
         if input_signal is not None:
             self._check_signal(input_signal)
@@ -740,7 +742,7 @@ class Transducer:
         """
         return fullwave.sensor.Sensor(
             self.sensor_mask,
-            sampling_interval=self.sampling_interval,
+            sampling_modulus_time=self.sampling_modulus_time,
         )
 
     @property
@@ -872,6 +874,10 @@ class Transducer:
         """Print information about the Transducer object."""
         print(str(self))
 
+    def summary(self) -> None:
+        """Alias for print_info."""
+        self.print_info()
+
     def __str__(self) -> str:
         """Return a string representation of the Transducer object.
 
@@ -974,7 +980,7 @@ def make_p4_1c_trasnducer(
 
     """
     transducer_width_m = 27e-3
-    element_layer_px = 1
+    element_layer_px = 4
     transducer_geometry = fullwave.TransducerGeometry(
         grid,
         number_elements=64,

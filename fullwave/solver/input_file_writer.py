@@ -783,7 +783,7 @@ class InputFileWriter:
             ("ncoordsout", self.sensor.n_sensors),
             ("ncoordszero", self.medium.n_air),
             ("nTic", nt_ic),
-            ("modT", self.sensor.sampling_interval),
+            ("modT", self.sensor.sampling_modulus_time),
         ]
         if self.is_3d:
             var_list.extend(

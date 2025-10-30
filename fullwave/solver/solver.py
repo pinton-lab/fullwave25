@@ -271,7 +271,7 @@ class Solver:
     generates the required input files, and runs the simulation executable.
     """
 
-    def __init__(  # noqa: PLR0912, PLR0915
+    def __init__(  # noqa: PLR0912, PLR0915, C901
         self,
         work_dir: Path,
         grid: fullwave.Grid,
@@ -283,8 +283,8 @@ class Solver:
         path_fullwave_simulation_bin: Path | None = None,
         use_pml: bool = True,
         m_spatial_order: int = 8,
-        pml_layer_thickness_px: int = 36,
-        n_transition_layer: int = 48,
+        pml_layer_thickness_px: int | None = None,
+        n_transition_layer: int | None = None,
         run_on_memory: bool = False,
         use_gpu: bool = True,
         use_exponential_attenuation: bool = False,
@@ -325,7 +325,9 @@ class Solver:
             Fullwave simulation has 2M th order spatial accuracy and fourth order accuracy in time.
             see Pinton, G. (2021) http://arxiv.org/abs/2106.11476 for more detail.
         pml_layer_thickness_px : int, optional
-            PML layer thickness (default is 40).
+            PML layer thickness (default is 3 ppw).
+        n_transition_layer : int, optional
+            Number of transition layers (default is 3 ppw).
         run_on_memory : bool, optional
             Flag indicating whether to run the simulation in memory.
             If True, a temporary directory is created in memory.
@@ -335,8 +337,6 @@ class Solver:
             https://wiki.archlinux.org/title/Profile-sync-daemon#Allocate_more_memory_to_accommodate_profiles_in_/run/user/xxxx
             If False, a temporary directory is created on disk.
             Defaults to False.
-        n_transition_layer : int, optional
-            Number of transition layers (default is 40).
         use_gpu : bool, optional
             Whether to use GPU for the simulation.
             Currently, only GPU version is supported.
@@ -441,6 +441,11 @@ class Solver:
         if not use_pml:
             pml_layer_thickness_px = 0
             n_transition_layer = 0
+
+        if pml_layer_thickness_px is None:
+            pml_layer_thickness_px = self.grid.ppw * 3
+        if n_transition_layer is None:
+            n_transition_layer = self.grid.ppw * 3
 
         if source is not None:
             self.source = source
@@ -575,7 +580,7 @@ class Solver:
         is_static_map: bool = False,
         recalculate_pml: bool = True,
         record_whole_domain: bool = False,
-        sampling_interval_whole_domain: int = 1,
+        sampling_modulus_time_whole_domain: int = 1,
         load_results: bool = True,
     ) -> NDArray[np.float64] | Path:
         r"""Run the fullwave simulation and return the result as a NumPy array.
@@ -616,12 +621,13 @@ class Solver:
         record_whole_domain : bool
             Flag indicating whether to record the whole domain.
             If True, the simulation will record data for the entire grid.
-        sampling_interval_whole_domain : int
-            The sampling interval for the sensor data.
-            Default is 1, which means every time step is recorded.
-            If set to a value greater than 1, only every nth time step is recorded.
+        sampling_modulus_time_whole_domain : int
+            Sampling modulus in time. Default is 1 (record at every time step).
+            Changing this value to n will record the pressure every n time steps.
+            It reduces the size of the output data.
             This will only change the sensor class if record_whole_domain is True.
-            If record_whole_domain is False, the sampling interval is ignored.
+            If record_whole_domain is False,
+            the sampling sampling_modulus_time_whole_domain is ignored.
         load_results : bool
             Whether to load the results from genout.dat after the simulation.
             Default is True. If set to False, it returns the genout.dat file path instead.
@@ -635,11 +641,12 @@ class Solver:
 
         # pml setup
         extended_medium = self.pml_builder.run(use_pml=self.use_pml)
-        if sampling_interval_whole_domain != 1 and record_whole_domain is False:
+        if sampling_modulus_time_whole_domain != 1 and record_whole_domain is False:
             warning_msg = (
-                f"sampling_interval_whole_domain value {sampling_interval_whole_domain} is ignored "
+                f"sampling_modulus_time_whole_domain value "
+                f"{sampling_modulus_time_whole_domain} is ignored "
                 "when record_whole_domain is False. "
-                f"The sampling_interval {self.sensor.sampling_interval} "
+                f"The sampling_modulus_time {self.sensor.sampling_modulus_time} "
                 "in the sensor object is prioritized."
             )
             logger.warning(warning_msg)
@@ -663,7 +670,7 @@ class Solver:
             sensor_mask[:, :] = True
             sensor = fullwave.Sensor(
                 mask=sensor_mask,
-                sampling_interval=sampling_interval_whole_domain,
+                sampling_modulus_time=sampling_modulus_time_whole_domain,
             )
         else:
             sensor = self.pml_builder.extended_sensor
@@ -700,6 +707,10 @@ class Solver:
         """Print the Solver instance information."""
         print(str(self))
 
+    def summary(self) -> None:
+        """Alias for print_info."""
+        self.print_info()
+
     def __str__(self) -> str:
         """Return a string representation of the Solver instance.
 
@@ -710,15 +721,16 @@ class Solver:
 
         """
         return (
-            f"Solver(\n"
+            f"\nSolver(\n"
             f"  work_dir={self.work_dir}\n\n"
-            f"  grid={self.grid}\n"
             f"  medium={self.medium}\n"
             f"  source={self.source}\n"
             f"  sensor={self.sensor}\n"
             f"  transducer={self.transducer}\n\n"
             f"  path_fullwave_simulation_bin={self.path_fullwave_simulation_bin}\n"
             f"  use_pml={self.use_pml}\n"
+            f"  pml_thickness_px={self.pml_builder.n_pml_layer}\n"
+            f"  n_transition_layer={self.pml_builder.n_transition_layer}\n"
             f"  is_3d={self.is_3d}\n"
             f"  use_gpu={self.use_gpu}\n"
             f"  use_exponential_attenuation={self.use_exponential_attenuation}\n"
