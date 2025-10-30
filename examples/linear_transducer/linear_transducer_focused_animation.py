@@ -177,8 +177,6 @@ def main() -> None:  # noqa: PLR0915
         source=transducer.source,
         sensor=sensor,
         run_on_memory=False,
-        pml_layer_thickness_px=grid.ppw * 3,
-        n_transition_layer=grid.ppw * 3,
     )
     sensor_output = fw_solver.run()
 

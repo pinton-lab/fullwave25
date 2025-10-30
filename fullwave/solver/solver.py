@@ -271,7 +271,7 @@ class Solver:
     generates the required input files, and runs the simulation executable.
     """
 
-    def __init__(  # noqa: PLR0912, PLR0915
+    def __init__(  # noqa: PLR0912, PLR0915, C901
         self,
         work_dir: Path,
         grid: fullwave.Grid,
@@ -283,8 +283,8 @@ class Solver:
         path_fullwave_simulation_bin: Path | None = None,
         use_pml: bool = True,
         m_spatial_order: int = 8,
-        pml_layer_thickness_px: int = 36,
-        n_transition_layer: int = 48,
+        pml_layer_thickness_px: int | None = None,
+        n_transition_layer: int | None = None,
         run_on_memory: bool = False,
         use_gpu: bool = True,
         use_exponential_attenuation: bool = False,
@@ -325,7 +325,9 @@ class Solver:
             Fullwave simulation has 2M th order spatial accuracy and fourth order accuracy in time.
             see Pinton, G. (2021) http://arxiv.org/abs/2106.11476 for more detail.
         pml_layer_thickness_px : int, optional
-            PML layer thickness (default is 40).
+            PML layer thickness (default is 3 ppw).
+        n_transition_layer : int, optional
+            Number of transition layers (default is 3 ppw).
         run_on_memory : bool, optional
             Flag indicating whether to run the simulation in memory.
             If True, a temporary directory is created in memory.
@@ -335,8 +337,6 @@ class Solver:
             https://wiki.archlinux.org/title/Profile-sync-daemon#Allocate_more_memory_to_accommodate_profiles_in_/run/user/xxxx
             If False, a temporary directory is created on disk.
             Defaults to False.
-        n_transition_layer : int, optional
-            Number of transition layers (default is 40).
         use_gpu : bool, optional
             Whether to use GPU for the simulation.
             Currently, only GPU version is supported.
@@ -441,6 +441,11 @@ class Solver:
         if not use_pml:
             pml_layer_thickness_px = 0
             n_transition_layer = 0
+
+        if pml_layer_thickness_px is None:
+            pml_layer_thickness_px = self.grid.ppw * 3
+        if n_transition_layer is None:
+            n_transition_layer = self.grid.ppw * 3
 
         if source is not None:
             self.source = source
@@ -714,7 +719,7 @@ class Solver:
 
         """
         return (
-            f"Solver(\n"
+            f"\nSolver(\n"
             f"  work_dir={self.work_dir}\n\n"
             f"  medium={self.medium}\n"
             f"  source={self.source}\n"
@@ -722,6 +727,8 @@ class Solver:
             f"  transducer={self.transducer}\n\n"
             f"  path_fullwave_simulation_bin={self.path_fullwave_simulation_bin}\n"
             f"  use_pml={self.use_pml}\n"
+            f"  pml_thickness_px={self.pml_builder.n_pml_layer}\n"
+            f"  n_transition_layer={self.pml_builder.n_transition_layer}\n"
             f"  is_3d={self.is_3d}\n"
             f"  use_gpu={self.use_gpu}\n"
             f"  use_exponential_attenuation={self.use_exponential_attenuation}\n"
