@@ -31,7 +31,7 @@ def main() -> None:  # noqa: PLR0915
     # --- define the linear transducer ---
     #
 
-    element_layer_px = 1
+    element_layer_px = 3
     transducer_geometry = fullwave.TransducerGeometry(
         grid,
         number_elements=128,
@@ -101,7 +101,8 @@ def main() -> None:  # noqa: PLR0915
         delay_sec = delay_list[i_source_index]
         source_location = dict_source_index_to_location[i_source_index + 1]
 
-        i_layer = i_source_index % element_layer_px
+        n_y = input_signal.shape[0] // element_layer_px
+        i_layer = i_source_index // n_y
         element_id = transducer.transducer_geometry.indexed_element_mask_input[*source_location]
         if not active_source_elements[element_id - 1]:
             p0_vec = np.zeros(grid.nt)
@@ -110,10 +111,10 @@ def main() -> None:  # noqa: PLR0915
                 nt=grid.nt,
                 f0=f0,
                 duration=duration,
-                ncycles=1,
-                drop_off=1,
+                ncycles=2,
+                drop_off=2,
                 p0=p_max,
-                i_layer=i_layer + 1,
+                i_layer=i_layer,
                 dt_for_layer_delay=grid.dt,
                 cfl_for_layer_delay=grid.cfl,
                 delay_sec=delay_sec,
