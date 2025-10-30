@@ -2,11 +2,14 @@
 
 Fullwave 2.5 is a Python package for high-fidelity ultrasound wave propagation simulation with the following features:
 
-- State-of-the-art attenuation modelling capabilities for simulating ultrasound wave propagation in complex biological tissues.
-- Heterogeneous power law attenuation ($\alpha=\alpha_0 f^\gamma$) modeling, where **both the attenuation coefficient and exponent can vary** spatially.
-- 2D and 3D ultrasound wave propagation simulation.
-- Multiple GPU execution support.
-- Python wrapper for easy usability and extensibility, with the core simulation engine implemented in CUDA/C for high performance on NVIDIA GPUs.
+- State-of-the-art attenuation modelling capabilities for ultrasound wave propagation in complex biological tissues
+  - Heterogeneous power law attenuation ($\alpha=\alpha_0 f^\gamma$) modeling, where **both the attenuation coefficient $\alpha_0$ and exponent $\gamma$ can vary** spatially.
+- High-performance simulation engine
+  - High accuracy staggered-grid finite-difference time-domain (FDTD) scheme (8th-order in space and 4th-order in time).
+  - 2D and 3D ultrasound wave propagation simulation.
+  - Multiple GPU execution support.
+- Easy-to-use Python interface with CUDA/C backend
+  - Python wrapper for easy usability and extensibility, with the core simulation engine implemented in CUDA/C for high performance on NVIDIA GPUs.
 
 | Computational medium                     | Wave propagation                                                           |
 | ---------------------------------------- | -------------------------------------------------------------------------- |
@@ -43,9 +46,10 @@ If you use Fullwave 2.5 in your research, please cite this repository as:
   author = {Sode, Masashi and Pinton, Gianmarco},
   title = {Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities},
   year = {2025},
-  month = {10},
+  month = oct,
   publisher = {GitHub},
   journal = {GitHub repository},
+  version = {1.0.4},
   url = {https://github.com/pinton-lab/fullwave25}
 }
 ```
