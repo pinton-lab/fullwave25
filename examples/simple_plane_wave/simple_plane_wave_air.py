@@ -6,6 +6,7 @@ import numpy as np
 
 import fullwave
 from fullwave.utils import plot_utils, signal_process
+from fullwave.utils.coordinates import map_to_coords
 
 
 def main() -> None:
@@ -70,21 +71,36 @@ def main() -> None:
 
     # --- define the acoustic source ---
 
-    # define where to put the pressure source [nx, ny]
+    # initialize the pressure source mask
     p_mask = np.zeros((grid.nx, grid.ny), dtype=bool)
-    p_mask[0:1, :] = True
 
-    # define the pressure source [n_sources, nt]
-    p0_vec = fullwave.utils.pulse.gaussian_modulated_sinusoidal_signal(
-        nt=grid.nt,
-        f0=f0,
-        duration=duration,
-        ncycles=2,
-        drop_off=2,
-        p0=1e5,
-    )
-    p0 = np.zeros((p_mask.sum(), grid.nt))
-    p0[:] = p0_vec
+    # set the source location at the top rows of the grid with specified thickness
+    element_thickness_px = 3
+    p_mask[0:element_thickness_px, :] = True
+
+    # define the pressure source [n_sources, nt]d
+    p0 = np.zeros((p_mask.sum(), grid.nt))  # [n_sources, nt]
+
+    # The order of p_coordinates corresponds to the order of sources in p0
+    p_coordinates = map_to_coords(p_mask)
+
+    for i_thickness in range(element_thickness_px):
+        # create a gaussian-modulated sinusoidal pulse as the source signal with layer delay
+        p0_vec = fullwave.utils.pulse.gaussian_modulated_sinusoidal_signal(
+            nt=grid.nt,  # number of time steps
+            f0=f0,  # center frequency [Hz]
+            duration=duration,  # duration [s]
+            ncycles=2,  # number of cycles
+            drop_off=2,  # drop off factor
+            p0=1e5,  # maximum amplitude [Pa]
+            i_layer=i_thickness,
+            dt_for_layer_delay=grid.dt,
+            cfl_for_layer_delay=grid.cfl,
+        )
+
+        # assign the source signal to the corresponding layer
+        n_y = p_coordinates.shape[0] // element_thickness_px
+        p0[n_y * i_thickness : n_y * (i_thickness + 1), :] = p0_vec.copy()
 
     source = fullwave.Source(p0, p_mask)
 
