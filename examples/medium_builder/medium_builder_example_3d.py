@@ -162,8 +162,6 @@ def main() -> None:  # noqa: PLR0915
         source=source,
         sensor=sensor,
         run_on_memory=False,
-        pml_layer_thickness_px=grid.ppw * 3,
-        n_transition_layer=grid.ppw * 3,
     )
     result_path: Path = fw_solver.run(load_results=False)
     sensor_output = load_dat_and_reshape(
