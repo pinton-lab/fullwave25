@@ -5,13 +5,11 @@ description = ""
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "dataclasses>=0.8",
     "matplotlib>=3.10.1",
     "numpy>=2.2.3",
     "scipy>=1.15.2",
     "tqdm>=4.67.1",
     "opencv-python>=4.11.0.86",
-
 ]
 authors = [{ name = "Masashi Sode", email = "masashi.sode@gmail.com" }]
 
