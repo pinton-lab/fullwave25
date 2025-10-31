@@ -42,15 +42,28 @@ Fullwave 2.5 is developed and maintained by [Pinton Lab](https://github.com/pint
 If you use Fullwave 2.5 in your research, please cite this repository as:
 
 ```bibtex
-@software{sode-fullwave25,
+@software{Sode2025-fullwave25,
   author = {Sode, Masashi and Pinton, Gianmarco},
   title = {Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities},
-  year = {2025},
+  year = 2025,
   month = oct,
   publisher = {GitHub},
   journal = {GitHub repository},
   version = {v1.0.6},
   url = {https://github.com/pinton-lab/fullwave25}
+}
+
+@ARTICLE{Pinton2021-fullwave2,
+  title         = "A fullwave model of the nonlinear wave equation with
+                   multiple relaxations and relaxing perfectly matched layers
+                   for high-order numerical finite-difference solutions",
+  author        = "Pinton, Gianmarco",
+  month         =  jun,
+  year          =  2021,
+  copyright     = "http://creativecommons.org/licenses/by/4.0/",
+  archivePrefix = "arXiv",
+  primaryClass  = "physics.med-ph",
+  eprint        = "2106.11476"
 }
 ```
 
@@ -90,7 +103,13 @@ If you use Fullwave 2.5 in your research, please cite this repository as:
 
 ---
 
-## installation
+## installation for users
+
+```sh
+pip install fullwave25
+```
+
+## installation for development
 
 We use [uv](https://docs.astral.sh/uv/) for package project and virtual environment management.
 
