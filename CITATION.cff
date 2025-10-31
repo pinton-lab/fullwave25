@@ -10,7 +10,5 @@ authors:
     given-names: Gianmarco
     orcid: https://orcid.org/0000-0002-4896-1439
 version: v1.0.7
-identifiers:
-  - type: doi
-    value: 10.5281/zenodo.17497690
-date-released: 2025-10-29
+doi: 10.5281/zenodo.17497690
+date-released: 2025-10-31
