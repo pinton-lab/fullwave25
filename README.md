@@ -103,7 +103,13 @@ If you use Fullwave 2.5 in your research, please cite this repository as:
 
 ---
 
-## installation
+## installation for users
+
+```sh
+pip install fullwave25
+```
+
+## installation for development
 
 We use [uv](https://docs.astral.sh/uv/) for package project and virtual environment management.
 
