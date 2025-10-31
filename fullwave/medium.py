@@ -71,8 +71,8 @@ class MediumRelaxationMaps:
         """
         check_functions.check_compatible_value(
             n_relaxation_mechanisms,
-            [1, 2, 3, 4, 5, 6],
-            "Only n_relaxation_mechanisms=1, 2, 3, 4, 5, 6 are supported currently.",
+            [2],
+            "Only n_relaxation_mechanisms=2 are supported currently.",
         )
         self.n_relaxation_mechanisms = n_relaxation_mechanisms
         self.relaxation_param_dict = initialize_relaxation_param_dict(
@@ -720,8 +720,8 @@ class Medium:
         """
         check_functions.check_compatible_value(
             n_relaxation_mechanisms,
-            [1, 2, 3, 4, 5, 6],
-            "Only n_relaxation_mechanisms=1, 2, 3, 4, 5, 6 are supported currently.",
+            [2],
+            "Only n_relaxation_mechanisms=2 are supported currently.",
         )
         check_functions.check_instance(grid, Grid)
         check_functions.check_path_exists(path_relaxation_parameters_database)
