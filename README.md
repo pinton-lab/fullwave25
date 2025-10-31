@@ -49,11 +49,11 @@ If you use Fullwave 2.5 in your research, please cite this repository as:
 @software{Sode2025-fullwave25,
   author = {Sode, Masashi and Pinton, Gianmarco},
   title = {{Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities}},
-  year = {2025}
+  year = {2025},
   month = oct,
   doi = {10.5281/zenodo.17497690},
   url = {https://github.com/pinton-lab/fullwave25},
-  version = {v1.0.7},
+  version = {v1.0.7}
 }
 
 @ARTICLE{Pinton2021-fullwave2,
