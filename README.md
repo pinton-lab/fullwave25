@@ -49,7 +49,7 @@ If you use Fullwave 2.5 in your research, please cite this repository as:
   month = oct,
   publisher = {GitHub},
   journal = {GitHub repository},
-  version = {v1.0.5},
+  version = {v1.0.6},
   url = {https://github.com/pinton-lab/fullwave25}
 }
 ```
