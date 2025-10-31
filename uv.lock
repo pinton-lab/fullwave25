@@ -545,7 +545,7 @@ wheels = [
 
 [[package]]
 name = "fullwave25"
-version = "1.0.5"
+version = "1.0.6rc4"
 source = { editable = "." }
 dependencies = [
     { name = "matplotlib" },
@@ -582,14 +582,14 @@ requires-dist = [
     { name = "coverage", marker = "extra == 'test'", specifier = "==7.6.12" },
     { name = "ipykernel", marker = "extra == 'examples'", specifier = ">=6.28.0" },
     { name = "jupyter", marker = "extra == 'examples'", specifier = ">=1.0.0" },
-    { name = "matplotlib", specifier = ">=3.10.1" },
-    { name = "numpy", specifier = ">=2.2.3" },
+    { name = "matplotlib", specifier = ">=3.10.0" },
+    { name = "numpy", specifier = ">=2.0.0" },
     { name = "opencv-python", specifier = ">=4.11.0.86" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = "==4.1.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.5" },
     { name = "pytest", marker = "extra == 'test'" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12.9" },
-    { name = "scipy", specifier = ">=1.15.2" },
+    { name = "scipy", specifier = ">=1.16.3" },
     { name = "tqdm", specifier = ">=4.67.1" },
 ]
 
