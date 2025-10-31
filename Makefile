@@ -16,3 +16,5 @@ test:
 install-all-extras:
 	uv sync --all-extras
 	uv run pre-commit install
+build:
+	uv build

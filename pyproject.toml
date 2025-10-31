@@ -5,11 +5,11 @@ description = ""
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "matplotlib>=3.10.1",
-    "numpy>=2.2.3",
-    "scipy>=1.15.2",
-    "tqdm>=4.67.1",
+    "matplotlib>=3.10.0",
+    "numpy>=2.0.0",
     "opencv-python>=4.11.0.86",
+    "scipy>=1.16.3",
+    "tqdm>=4.67.1",
 ]
 authors = [{ name = "Masashi Sode", email = "masashi.sode@gmail.com" }]
 
@@ -30,3 +30,6 @@ dev = ["pre-commit>=4.1.0", "pytest>=8.3.5", "ruff>=0.12.9"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["fullwave", "fullwave.utils"]
+
+[tool.hatch.build]
+exclude = ["tests", "figs", "examples", ".vscode", ".github"]
