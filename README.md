@@ -1,5 +1,9 @@
 # Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities
 
+<a href="https://doi.org/10.5281/zenodo.17497689"><img src="https://zenodo.org/badge/1085335402.svg" alt="DOI"></a>
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://drive.google.com/file/d/1QqCmF9A0JKfDjnFO66_hRO_eP04suwrk/view?usp=sharing)
+
 Fullwave 2.5 is a Python package for high-fidelity ultrasound wave propagation simulation with the following features:
 
 - State-of-the-art attenuation modelling capabilities for ultrasound wave propagation in complex biological tissues
@@ -50,7 +54,8 @@ If you use Fullwave 2.5 in your research, please cite this repository as:
   publisher = {GitHub},
   journal = {GitHub repository},
   version = {v1.0.7},
-  url = {https://github.com/pinton-lab/fullwave25}
+  url = {https://github.com/pinton-lab/fullwave25},
+  doi = {10.5281/zenodo.17497690}
 }
 
 @ARTICLE{Pinton2021-fullwave2,
