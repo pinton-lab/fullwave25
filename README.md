@@ -57,9 +57,7 @@ If you use Fullwave 2.5 in your research, please cite this repository as:
 }
 
 @ARTICLE{Pinton2021-fullwave2,
-  title = "A fullwave model of the nonlinear wave equation with
-  multiple relaxations and relaxing perfectly matched layers
-  for high-order numerical finite-difference solutions",
+  title = "A fullwave model of the nonlinear wave equation with multiple relaxations and relaxing perfectly matched layers for high-order numerical finite-difference solutions",
   author = "Pinton, Gianmarco",
   month = jun,
   year = 2021,
