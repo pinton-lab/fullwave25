@@ -50,7 +50,8 @@ If you use Fullwave 2.5 in your research, please cite this repository as:
   publisher = {GitHub},
   journal = {GitHub repository},
   version = {v1.0.7},
-  url = {https://github.com/pinton-lab/fullwave25}
+  url = {https://github.com/pinton-lab/fullwave25},
+  doi = {10.5281/zenodo.17497690}
 }
 
 @ARTICLE{Pinton2021-fullwave2,
