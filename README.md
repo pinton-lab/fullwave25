@@ -141,6 +141,9 @@ make test
 
 Please start from [example_simple_plane_wave.ipynb](https://github.com/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/example_simple_plane_wave.ipynb).
 
+or try the Google Colab tutorial:
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://drive.google.com/file/d/1QqCmF9A0JKfDjnFO66_hRO_eP04suwrk/view?usp=sharing)
+
 Here are the main steps to run the Fullwave simulation
 
 1. Define the computational grid.
