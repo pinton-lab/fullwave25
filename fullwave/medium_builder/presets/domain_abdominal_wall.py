@@ -139,9 +139,12 @@ class AbdominalWallDomain(Domain):
         self,
         grid: Grid,
         *,
-        abdominal_wall_mat_path: Path = Path(
-            "fullwave/medium_builder/presets/data/abdominal_wall/i2365f_etfw1.mat",
-        ),
+        abdominal_wall_mat_path: Path = Path(__file__).parent.parent.parent
+        / "medium_builder"
+        / "presets"
+        / "data"
+        / "abdominal_wall"
+        / "i2365f_etfw1.mat",
         crop_depth: float = 0.8e-2,
         start_depth: float = 0,
         name: str = "abdominal_wall",
