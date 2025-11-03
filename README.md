@@ -1,6 +1,6 @@
 # Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities
 
-<a href="https://doi.org/10.5281/zenodo.17497689"><img src="https://zenodo.org/badge/1085335402.svg" alt="DOI"></a>
+<a href="https://doi.org/10.5281/zenodo.17497689"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.17497689.svg" alt="DOI"></a>
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://drive.google.com/file/d/153Sx9D_5zTlF7UtlKHlyz_CTJnLIAI6s/view?usp=sharing)
 
@@ -51,9 +51,8 @@ If you use Fullwave 2.5 in your research, please cite this repository as:
   title = {{Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities}},
   year = {2025},
   month = oct,
-  doi = {10.5281/zenodo.17497690},
+  doi = {10.5281/zenodo.17497689},
   url = {https://github.com/pinton-lab/fullwave25},
-  version = {v1.0.7}
 }
 
 @ARTICLE{Pinton2021-fullwave2,
