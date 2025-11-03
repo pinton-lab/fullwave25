@@ -1,8 +1,7 @@
 import numpy as np
 
+from fullwave import Domain, MediumBuilder
 from fullwave.constants import MaterialProperties
-from fullwave.medium_builder.domain import Domain
-from fullwave.medium_builder.medium_builder import MediumBuilder
 
 
 class FakeDomain(Domain):

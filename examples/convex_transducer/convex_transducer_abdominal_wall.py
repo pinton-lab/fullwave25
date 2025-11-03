@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 
 import fullwave
-from fullwave.medium_builder import MediumBuilder, presets
+from fullwave import MediumBuilder, presets
 from fullwave.utils import plot_utils, signal_process
 
 

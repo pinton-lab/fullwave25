@@ -7,7 +7,8 @@ from numpy.typing import NDArray
 
 from fullwave import Grid
 from fullwave.constants import MaterialProperties
-from fullwave.medium_builder import Domain
+
+from fullwave.medium_builder.domain import Domain  # isort:skip
 
 
 class BackgroundDomain(Domain):

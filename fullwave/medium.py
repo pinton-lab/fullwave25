@@ -372,6 +372,7 @@ class MediumRelaxationMaps:
         export_path: Path | str | None = Path("./temp/temp.png"),
         *,
         show: bool = False,
+        dpi: int = 300,
     ) -> None:
         """Plot the medium fields using matplotlib."""
         if self.is_3d:
@@ -413,7 +414,7 @@ class MediumRelaxationMaps:
         if export_path is not None:
             export_path = Path(export_path)
             export_path.parent.mkdir(parents=True, exist_ok=True)
-            plt.savefig(export_path, dpi=300)
+            plt.savefig(export_path, dpi=dpi)
         if show:
             plt.show()
         plt.close("all")
@@ -572,6 +573,7 @@ class MediumExponentialAttenuation:
         *,
         show: bool = False,
         cmap: str = "turbo",
+        dpi: int = 300,
     ) -> None:
         """Plot the medium fields using matplotlib."""
         if self.is_3d:
@@ -604,7 +606,7 @@ class MediumExponentialAttenuation:
         plt.tight_layout()
 
         if export_path is not None:
-            plt.savefig(export_path, dpi=300)
+            plt.savefig(export_path, dpi=dpi)
         if show:
             plt.show()
         plt.close("all")
@@ -806,6 +808,7 @@ class Medium:
         cmap: str = "turbo",
         figsize: tuple = (20, 6),
         fontsize_title: int = 20,
+        dpi: int = 300,
     ) -> None:
         """Plot the medium fields using matplotlib."""
         if self.is_3d:
@@ -852,7 +855,7 @@ class Medium:
                 )
             plt.tight_layout()
             if export_path is not None:
-                plt.savefig(export_path, dpi=300)
+                plt.savefig(export_path, dpi=dpi)
             if show:
                 plt.show()
             plt.close("all")
@@ -908,7 +911,7 @@ class Medium:
             plt.tight_layout()
 
             if export_path is not None:
-                plt.savefig(export_path, dpi=300)
+                plt.savefig(export_path, dpi=dpi)
             if show:
                 plt.show()
             plt.close("all")
