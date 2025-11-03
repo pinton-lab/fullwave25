@@ -31,5 +31,5 @@ __all__ = [
     "utils",
 ]
 
-VERSION = "1.0.7"
+VERSION = "1.0.8-rc2"
 __version__ = VERSION
