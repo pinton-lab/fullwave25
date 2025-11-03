@@ -2,7 +2,7 @@
 
 <a href="https://doi.org/10.5281/zenodo.17497689"><img src="https://zenodo.org/badge/1085335402.svg" alt="DOI"></a>
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://drive.google.com/file/d/1QqCmF9A0JKfDjnFO66_hRO_eP04suwrk/view?usp=sharing)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://drive.google.com/file/d/153Sx9D_5zTlF7UtlKHlyz_CTJnLIAI6s/view?usp=sharing)
 
 Fullwave 2.5 is a Python package for high-fidelity ultrasound wave propagation simulation with the following features:
 
@@ -171,9 +171,9 @@ Please see the following examples for more advanced usage.
 
 - 2D plane wave
   - Basic usage
-    - [Simple plane wave](https://github.com/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/simple_plane_wave.py)
+    - [Simple plane wave](https://github.com/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/simple_plane_wave.py) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://drive.google.com/file/d/153Sx9D_5zTlF7UtlKHlyz_CTJnLIAI6s/view?usp=sharing)
       - <img src="figs/simple_plane_wave.gif" width="200"/>
-    - [Simple plane wave with air](https://github.com/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/simple_plane_wave.py)
+    - [Simple plane wave with air](https://github.com/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/simple_plane_wave.py) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://drive.google.com/file/d/1AnTaT6ZtwyIEcOvGgpn5srB4LWPfYKh0/view?usp=sharing)
       - <img src="figs/simple_plane_wave_with_air.gif" width="200"/>
   - Linear transducer
     - [Linear transducer](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer.py)
@@ -181,7 +181,7 @@ Please see the following examples for more advanced usage.
       - <img src="figs/linear_transducer.gif" width="200"/>
     - [Linear transducer (focused transmit) with animation settings](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer_animation.py)
       - <img src="figs/linear_transducer_focused.gif" width="200"/>
-    - [Linear transducer (focused transmit) with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer.py)
+    - [Linear transducer (focused transmit) with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer.py) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://drive.google.com/file/d/1zlviYe0qBy0JLifFuA2MqUkavJKUQrNb/view?usp=sharing)
       - <img src="figs/linear_transducer_focused_abdominal_wall.gif" width="200"/>
   - Convex transducer
     - [Convex transducer with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/convex_transducer/convex_transducer_abdominal_wall.py)
@@ -227,7 +227,7 @@ Please see the following examples for more advanced usage.
 
 - Medium builder usage
   - Medium builder is a utility to create computational medium from simple geometric operations. This is especially useful when you want to create complex heterogeneous media.
-  - [simple medium builder usage](https://github.com/pinton-lab/fullwave25/blob/main/examples/medium_builder/medium_builder_example.py)
+  - [simple medium builder usage](https://github.com/pinton-lab/fullwave25/blob/main/examples/medium_builder/medium_builder_example.py) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://drive.google.com/file/d/169aHbXRt_-aXFEdf2pfPkwH4-niJvrfL/view?usp=sharing)
   - [simple medium builder usage with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/medium_builder/medium_builder_abdominal_example.py)
   - [medium builder in 3D](https://github.com/pinton-lab/fullwave25/blob/main/examples/medium_builder/medium_builder_example_3d.py)
 
