@@ -36,6 +36,7 @@ VERIFIED_CUDA_ARCHITECTURES = [
     "sm_80",  # Ampere: A100
     "sm_89",  # Ada: RTX 4090, L40, RTX6000
     "sm_120",  # Blackwell: RTX 50 series
+    "sm_75",  # Turing: RTX 20*0, T4
 ]
 
 COMPATIBLE_CUDA_VERSIONS = [
@@ -50,6 +51,7 @@ COMPATIBLE_CUDA_RANGES = [
 ]
 
 VERIFIED_CUDA_VERSIONS = [
+    12.4,
     12.6,
     12.9,
 ]
