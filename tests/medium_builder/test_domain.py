@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from fullwave.medium_builder.domain import Domain
+from fullwave import Domain
 from fullwave.utils import check_functions
 
 # Override check_instance to bypass instance checking for testing purposes.

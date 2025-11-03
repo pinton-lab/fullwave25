@@ -6,7 +6,8 @@ import numpy as np
 from numpy.typing import NDArray
 
 from fullwave import Grid
-from fullwave.medium_builder.domain import Domain
+
+from fullwave.medium_builder.domain import Domain  # isort:skip
 
 
 class SimpleDomain(Domain):

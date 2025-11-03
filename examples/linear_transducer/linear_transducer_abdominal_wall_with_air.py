@@ -5,8 +5,8 @@ from pathlib import Path
 import numpy as np
 
 import fullwave
+from fullwave import MediumBuilder, presets
 from fullwave.constants import MaterialProperties
-from fullwave.medium_builder import MediumBuilder, presets
 from fullwave.utils import plot_utils, signal_process
 
 
@@ -263,6 +263,13 @@ def main() -> None:  # noqa: PLR0915
         vmin=-p_max_plot,
         vmax=p_max_plot,
         figsize=(6, 6),
+    )
+
+    # maximum intensity projection
+    plot_utils.plot_array(
+        np.max(np.abs(propagation_map**2), axis=0),
+        aspect=propagation_map.shape[2] / propagation_map.shape[1],
+        export_path=work_dir / "wave_propagation_mip.png",
     )
 
 

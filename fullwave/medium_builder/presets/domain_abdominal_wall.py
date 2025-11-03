@@ -8,7 +8,7 @@ from scipy.io import loadmat
 
 from fullwave import Grid
 from fullwave.constants import MaterialProperties
-from fullwave.medium_builder import Domain
+from fullwave.medium_builder.domain import Domain
 from fullwave.utils import check_functions
 from fullwave.utils.numerical import matlab_interp2easy
 
