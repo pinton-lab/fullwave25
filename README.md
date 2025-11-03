@@ -141,8 +141,10 @@ make test
 
 Please start from [example_simple_plane_wave.ipynb](https://github.com/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/example_simple_plane_wave.ipynb).
 
-or try the Google Colab tutorial:
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://drive.google.com/file/d/1QqCmF9A0JKfDjnFO66_hRO_eP04suwrk/view?usp=sharing)
+or try the Google Colab tutorial.
+You don't need to install or set up a GPU environment on your local machine in order to run the simulation.
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://drive.google.com/file/d/153Sx9D_5zTlF7UtlKHlyz_CTJnLIAI6s/view?usp=sharing)
 
 Here are the main steps to run the Fullwave simulation
 
