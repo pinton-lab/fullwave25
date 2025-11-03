@@ -8,7 +8,7 @@ from scipy.io import loadmat
 
 from fullwave import Grid
 from fullwave.constants import MaterialProperties
-from fullwave.medium_builder import Domain
+from fullwave.medium_builder.domain import Domain
 from fullwave.utils import check_functions
 from fullwave.utils.numerical import matlab_interp2easy
 
@@ -139,9 +139,12 @@ class AbdominalWallDomain(Domain):
         self,
         grid: Grid,
         *,
-        abdominal_wall_mat_path: Path = Path(
-            "fullwave/medium_builder/presets/data/abdominal_wall/i2365f_etfw1.mat",
-        ),
+        abdominal_wall_mat_path: Path = Path(__file__).parent.parent.parent
+        / "medium_builder"
+        / "presets"
+        / "data"
+        / "abdominal_wall"
+        / "i2365f_etfw1.mat",
         crop_depth: float = 0.8e-2,
         start_depth: float = 0,
         name: str = "abdominal_wall",

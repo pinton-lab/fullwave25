@@ -104,6 +104,7 @@ class Source:
         export_path: Path | str | None = Path("./temp/temp.png"),
         *,
         show: bool = False,
+        dpi: int = 3000,
     ) -> None:
         """Plot the transducer mask, optionally exporting and displaying the figure.
 
@@ -130,7 +131,7 @@ class Source:
         )
 
         if export_path is not None:
-            plt.savefig(export_path, dpi=300)
+            plt.savefig(export_path, dpi=dpi)
         if show:
             plt.show()
 
