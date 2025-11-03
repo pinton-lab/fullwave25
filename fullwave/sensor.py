@@ -96,6 +96,7 @@ class Sensor:
         export_path: Path | str | None = Path("./temp/temp.png"),
         *,
         show: bool = False,
+        dpi: int = 300,
     ) -> None:
         """Plot the transducer mask, optionally exporting and displaying the figure.
 
@@ -119,7 +120,7 @@ class Sensor:
             colorbar=True,
         )
         if export_path is not None:
-            plt.savefig(export_path, dpi=300)
+            plt.savefig(export_path, dpi=dpi)
         if show:
             plt.show()
 

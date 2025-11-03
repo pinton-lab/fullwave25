@@ -186,8 +186,6 @@ def plot_array_on_ax(
         The title of the plot
     cmap: str
         The colormap to use for the plot.
-    plot_array_on_ax: bool
-        if true, the generated figure will be saved to ecport_path
 
     Returns
     -------
@@ -234,6 +232,7 @@ def plot_1d_array(
     xlim: tuple[float, ...] | None = None,
     ylim: tuple[float, ...] | None = None,
     show: bool = False,
+    dpi: int = 300,
 ) -> None:
     """Plot a 1D array using matplotlib.
 
@@ -263,6 +262,8 @@ def plot_1d_array(
         The x-axis limits.
     ylim : tuple, optional
         The y-axis limits.
+    dpi : int
+        The resolution in dots per inch (default is 300).
 
     """
     plt.close("all")
@@ -274,9 +275,9 @@ def plot_1d_array(
     if export_path is None:
         export_path = Path("./temp/temp.png")
         export_path.parent.mkdir(exist_ok=True, parents=True)
-        plt.savefig(export_path, dpi=300)
+        plt.savefig(export_path, dpi=dpi)
     else:
-        plt.savefig(export_path, dpi=300)
+        plt.savefig(export_path, dpi=dpi)
     if show:
         plt.show()
 
@@ -307,10 +308,6 @@ def plot_wave_propagation_animation(
     propagation_map : NDArray[np.float64]
         The wave propagation data.
         shape = (nt, nx, ny)
-    c_map : NDArray[np.float64]
-        The speed of sound map.
-    rho_map : NDArray[np.float64]
-        The density map.
     dpi : int, optional
         Resolution in dots per inch.
     num_plot_image : int, optional
@@ -335,10 +332,6 @@ def plot_wave_propagation_animation(
         Size of the figure (width, height).
     n_transition_layer : int, optional
         Thickness of the PML transition layer in pixels.
-    grid_steps : int, optional
-        Steps for the grid lines.
-    plot_grid : bool, optional
-        If True, plot the grid lines.
     cmap : str, optional
         The colormap to use for the plot.
 
