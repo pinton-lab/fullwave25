@@ -868,6 +868,7 @@ def plot_wave_propagation_with_map(  # noqa: PLR0915, C901
         repeat_delay=500,
     )
     animation_data.save(export_name, writer="ffmpeg", dpi=dpi)
+    plt.close("all")
 
 
 def plot_wave_propagation_snapshot(  # noqa: PLR0915
