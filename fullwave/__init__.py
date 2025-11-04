@@ -21,7 +21,7 @@ logging.Formatter.converter = time.gmtime
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(filename)s | %(funcName)s | %(lineno)d - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S GMT",
-    level=logging.WARNING,
+    level=logging.INFO,
 )
 
 logger = logging.getLogger("__main__." + __name__)
@@ -56,5 +56,5 @@ if platform.system() != "Linux":
     )
 del platform
 
-VERSION = "1.0.8"
+VERSION = "1.0.9rc1"
 __version__ = VERSION
