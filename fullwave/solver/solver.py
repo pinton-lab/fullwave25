@@ -1,6 +1,7 @@
 """solver module."""
 
 import logging
+import time
 from pathlib import Path
 
 import numpy as np
@@ -108,12 +109,13 @@ def _make_cuda_arch_option(*, use_gpu: bool = True) -> str:
             f"Please use one of the following architectures: "
             f"{COMPATIBLE_CUDA_ARCHITECTURES}"
         )
+        logger.error(error_msg)
         raise ValueError(error_msg)
     if use_gpu and arch_option not in VERIFIED_CUDA_ARCHITECTURES:
         warning_msg = (
             f"Warning: CUDA architecture {arch_option} is not verified. "
-            f"Verified architectures are: {VERIFIED_CUDA_ARCHITECTURES}. "
-            "The simulation may not run correctly."
+            f"The simulation may work, but it has not been tested extensively. \n"
+            f"Verified architectures are: {VERIFIED_CUDA_ARCHITECTURES}. \n"
         )
         logger.warning(warning_msg)
     return arch_option
@@ -126,6 +128,7 @@ def _make_cuda_version_option(*, use_gpu: bool = True) -> tuple[str, float]:
             "Could not retrieve CUDA version. "
             "Please ensure that the CUDA toolkit is properly installed."
         )
+        logger.error(error_msg)
         raise ValueError(error_msg)
 
     # range check
@@ -134,6 +137,7 @@ def _make_cuda_version_option(*, use_gpu: bool = True) -> tuple[str, float]:
             f"CUDA version {cuda_version} is not in the compatible ranges: "
             f"{COMPATIBLE_CUDA_RANGES}. Please install a compatible CUDA version."
         )
+        logger.error(error_msg)
         raise ValueError(error_msg)
 
     # find the a compatible cuda version below the system cuda
@@ -141,18 +145,19 @@ def _make_cuda_version_option(*, use_gpu: bool = True) -> tuple[str, float]:
         compatible_versions_below = [v for v in COMPATIBLE_CUDA_VERSIONS if v < cuda_version]
         if compatible_versions_below:
             closest_version = max(compatible_versions_below)
-            warning_msg = (
-                f"CUDA version {cuda_version} is not in the compatible versions: "
+            message = (
+                f"Warning: CUDA version {cuda_version} is not in the compatible versions: "
                 f"{COMPATIBLE_CUDA_VERSIONS}. "
                 f"Using the closest compatible version {closest_version} instead."
             )
-            logger.warning(warning_msg)
+            logger.warning(message)
             cuda_version = closest_version
         else:
             error_msg = (
                 f"No compatible CUDA versions found below {cuda_version}. "
                 "Please install a compatible CUDA version."
             )
+            logger.error(error_msg)
             raise ValueError(error_msg)
 
     if use_gpu and cuda_version not in VERIFIED_CUDA_VERSIONS:
@@ -209,6 +214,7 @@ def _retrieve_fullwave_simulation_path(
                 "Currently, exponential attenuation model is only supported in GPU mode. "
                 "Please use GPU mode for exponential attenuation simulations."
             )
+            logger.error(error_msg)
             raise NotImplementedError(error_msg)
     elif is_3d:
         if use_gpu:
@@ -217,6 +223,7 @@ def _retrieve_fullwave_simulation_path(
                     "Currently, only 2 relaxation mechanisms are supported in 3D simulations. "
                     "Please set n_relax_mechanisms to 2 for 3D simulations."
                 )
+                logger.error(error_msg)
                 raise NotImplementedError(error_msg)
 
             path_fullwave_simulation_bin = (
@@ -238,6 +245,7 @@ def _retrieve_fullwave_simulation_path(
                 "Currently, 3D simulation is not supported in CPU mode. "
                 "Please use GPU mode for 3D simulations."
             )
+            logger.error(error_msg)
             raise NotImplementedError(error_msg)
     else:  # noqa: PLR5501
         if use_gpu:
@@ -260,6 +268,7 @@ def _retrieve_fullwave_simulation_path(
                 "Currently, 2D simulation is not supported in CPU mode. "
                 "Please use GPU mode for 3D simulations."
             )
+            logger.error(error_msg)
             raise NotImplementedError(error_msg)
     return path_fullwave_simulation_bin
 
@@ -396,7 +405,7 @@ class Solver:
                 "\nhttps://wiki.archlinux.org/title/Profile-sync-daemon#Allocate_more_memory_to_accommodate_profiles_in_/run/user/xxxx"
                 "\n"
             )
-            logger.warning(message)
+            logger.info(message)
             self.tempfile = MemoryTempfile(
                 preferred_paths=["/run/user/{uid}"],
                 remove_paths=["/dev/shm", "/run/shm"],  # noqa: S108
@@ -463,6 +472,7 @@ class Solver:
             self.sensor = transducer.sensor
         else:
             error_msg = "sensor or transducer must be provided"
+            logger.error(error_msg)
             raise ValueError(error_msg)
 
         self.transducer: fullwave.Transducer | None = transducer
@@ -518,12 +528,15 @@ class Solver:
         # check if the source and sensor have value or transducer has value
         if source is None and transducer is None:
             error_msg = "source or transducer must be defined"
+            logger.error(error_msg)
             raise ValueError(error_msg)
         if sensor is None and transducer is None:
             error_msg = "sensor or transducer must be defined"
+            logger.error(error_msg)
             raise ValueError(error_msg)
         if transducer is not None and source is not None:
             error_msg = "source and transducer cannot be defined at the same time"
+            logger.error(error_msg)
             raise ValueError(error_msg)
 
         if transducer is not None and sensor is not None:
@@ -642,10 +655,21 @@ class Solver:
         # self._save_data_for_beamforming()
 
         # pml setup
+        message = f"Starting Fullwave 2.5 v{fullwave.__version__}..."
+        logger.info(message)
+
+        message = f"simulation settings overview: \n{self!s}"
+        logger.debug(message)
+
+        start_time = time.time()
         extended_medium = self.pml_builder.run(use_pml=self.use_pml)
+        end_pml_builder_time = time.time()
+        message = f"PML building completed in {end_pml_builder_time - start_time:.2e} seconds."
+        logger.debug(message)
+
         if sampling_modulus_time_whole_domain != 1 and record_whole_domain is False:
             warning_msg = (
-                f"sampling_modulus_time_whole_domain value "
+                f"Warning: sampling_modulus_time_whole_domain value "
                 f"{sampling_modulus_time_whole_domain} is ignored "
                 "when record_whole_domain is False. "
                 f"The sampling_modulus_time {self.sensor.sampling_modulus_time} "
@@ -677,6 +701,7 @@ class Solver:
         else:
             sensor = self.pml_builder.extended_sensor
 
+        start_input_file_writer_time = time.time()
         input_file_writer = InputFileWriter(
             work_dir=self.work_dir,
             grid=self.pml_builder.extended_grid,
@@ -692,15 +717,33 @@ class Solver:
             is_static_map=is_static_map,
             recalculate_pml=recalculate_pml,
         )
+        end_input_file_writer_time = time.time()
+        message = (
+            f"Input file writing completed in "
+            f"{end_input_file_writer_time - start_input_file_writer_time:.2e} seconds."
+        )
+        logger.debug(message)
+
         sim_result = self.fullwave_launcher.run(
             simulation_dir,
             load_results=load_results,
         )
+
         if load_results:
-            return self._reshape_sensor_data(
+            logger.info("reshaping the result...")
+
+            start_loading_time = time.time()
+            result = self._reshape_sensor_data(
                 sim_result,
                 sensor=sensor,
             )
+            end_loading_time = time.time()
+            message = (
+                f"Result reshaping completed in "
+                f"{end_loading_time - start_loading_time:.2e} seconds."
+            )
+            logger.info(message)
+            return result
         # if load_results is False, return the raw result
         # which is a list of file names
         return sim_result
@@ -724,6 +767,7 @@ class Solver:
         """
         return (
             f"\nSolver(\n"
+            f"  version={fullwave.__version__}\n"
             f"  work_dir={self.work_dir}\n\n"
             f"  medium={self.medium}\n"
             f"  source={self.source}\n"

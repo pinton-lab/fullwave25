@@ -1,10 +1,12 @@
 """utils module for Fullwave solver."""
 
-import warnings
+import logging
 from pathlib import Path
 
 import numpy as np
 from numpy.typing import DTypeLike, NDArray
+
+logger = logging.getLogger("__main__." + __name__)
 
 
 def load_dat_data(dat_file_path: Path, dtype: DTypeLike = np.float32) -> NDArray[np.float64]:
@@ -23,21 +25,22 @@ def load_dat_data(dat_file_path: Path, dtype: DTypeLike = np.float32) -> NDArray
     """
     if not dat_file_path.exists():
         error_msg = f"dat_file_path {dat_file_path} does not exist"
+        logger.error(error_msg)
         raise ValueError(error_msg)
 
     sim_result = np.fromfile(dat_file_path, dtype=dtype)
     if np.isnan(sim_result).any():
-        warnings.warn(
-            ("The simulation contains NaN values. Check the simulation domains or PML settings."),
-            UserWarning,
-            stacklevel=2,
+        message = (
+            "The simulation contains NaN values. Check the simulation domains or PML settings."
+        )
+        logger.warning(
+            message,
         )
     if np.isinf(sim_result).any():
-        warnings.warn(
-            ("The simulation contains Inf values. Check the simulation domains or PML settings."),
-            UserWarning,
-            stacklevel=2,
+        message = (
+            "The simulation contains Inf values. Check the simulation domains or PML settings."
         )
+        logger.warning(message)
 
     return sim_result
 

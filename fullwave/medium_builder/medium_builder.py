@@ -1,5 +1,6 @@
 """medium builder module."""
 
+import logging
 from collections import OrderedDict
 from pathlib import Path
 
@@ -10,6 +11,8 @@ from fullwave.constants import MaterialProperties
 from fullwave.grid import Grid
 from fullwave.medium_builder.domain import Domain
 from fullwave.utils import check_functions
+
+logger = logging.getLogger("__main__." + __name__)
 
 
 class MediumBuilder:
@@ -123,12 +126,15 @@ class MediumBuilder:
     def _check_registered_domain(self) -> None:
         if "background" not in self.registered_domain_dict:
             error_msg = "Background domain is not registered."
+            logger.error(error_msg)
             raise ValueError(error_msg)
         if len(self.registered_domain_dict) == 0:
             error_msg = "No domain is registered."
+            logger.error(error_msg)
             raise ValueError(error_msg)
         if next(iter(self.registered_domain_dict.keys())) != "background":
             error_msg = "The first domain must be background domain."
+            logger.error(error_msg)
             raise ValueError(error_msg)
 
     def run(self) -> Medium:

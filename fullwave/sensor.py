@@ -47,12 +47,14 @@ class Sensor:
             # self.outcoords = np.stack([outcoords[:, 1], outcoords[:, 0]]).T
             self.outcoords = outcoords
         super().__init__()
+        logger.debug("Sensor instance created.")
 
     def validate(self, grid_shape: NDArray[np.int64] | tuple) -> None:
         """Check if the source mask has the correct shape."""
         grid_shape = tuple(grid_shape) if isinstance(grid_shape, np.ndarray) else grid_shape
         assert self.mask.shape == grid_shape, f"{self.mask.shape} != {grid_shape}"
         assert np.any(self.mask), "No active sensor found."
+        logger.debug("Sensor mask validated against grid shape.")
 
     @property
     def mask(self) -> NDArray[np.int64]:
