@@ -1,5 +1,6 @@
 """Simple plane wave transmit example."""
 
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +12,9 @@ from fullwave.utils.coordinates import map_to_coords
 
 def main() -> None:
     """Run Simple plane wave transmit example."""
+    # overwrite the logging level, DEBGUG, INFO, WARNING, ERROR
+    logging.getLogger("__main__").setLevel(logging.INFO)
+
     #
     # define the working directory
     #

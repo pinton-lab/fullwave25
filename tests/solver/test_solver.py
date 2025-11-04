@@ -42,11 +42,11 @@ def test_make_cuda_version_option_no_cuda():
 def test_make_cuda_version_option_unverified_version_warning():
     """Test _make_cuda_version_option with unverified but compatible CUDA version."""
     with (
-        patch("fullwave.solver.solver.retrieve_cuda_version", return_value=12.4),
+        patch("fullwave.solver.solver.retrieve_cuda_version", return_value=11.8),
         patch("fullwave.solver.solver.logger") as mock_logger,
     ):
         result = _make_cuda_version_option(use_gpu=True)
-        assert result == ("cuda124", 12.4)
+        assert result == ("cuda118", 11.8)
         mock_logger.warning.assert_called_once()
         assert "is not in the verified versions" in str(mock_logger.warning.call_args)
 
@@ -112,12 +112,12 @@ def test_make_cuda_arch_option_unverified_architecture_warning():
     with (
         patch(
             "fullwave.solver.solver.get_cuda_architecture",
-            return_value=[{"compute_capability": (7, 5)}],
+            return_value=[{"compute_capability": (7, 0)}],
         ),
         patch("fullwave.solver.solver.logger") as mock_logger,
     ):
         result = _make_cuda_arch_option(use_gpu=True)
-        assert result == "sm_75"
+        assert result == "sm_70"
         mock_logger.warning.assert_called_once()
         assert "is not verified" in str(mock_logger.warning.call_args)
 

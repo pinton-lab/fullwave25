@@ -4,6 +4,7 @@ adapted from
 https://github.com/mbello/memory-tempfile/commit/c06b5405672435d861ac1d47db77c8067a6de77a
 """
 
+import logging
 import os
 import platform
 import sys
@@ -13,6 +14,8 @@ from pathlib import Path
 
 MEM_BASED_FS = ["tmpfs", "ramfs"]
 SUITABLE_PATHS = ["/tmp", "/run/user/{uid}", "/run/shm", "/dev/shm"]  # noqa: S108
+
+logger = logging.getLogger("__main__." + __name__)
 
 
 class MemoryTempfile:
@@ -116,6 +119,7 @@ class MemoryTempfile:
                 self.tempdir = Path(self.fallback)
             else:
                 error_message = "No memory temporary dir found and fallback is disabled.\n"
+                logger.error(error_message)
                 raise RuntimeError(error_message)
 
     def found_mem_tempdir(self) -> bool:
