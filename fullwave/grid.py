@@ -1,8 +1,11 @@
 """Class to calculate the grid size, spacing, time step."""
 
+import logging
 from dataclasses import dataclass
 
 import numpy as np
+
+logger = logging.getLogger("__main__." + __name__)
 
 
 @dataclass
@@ -52,6 +55,7 @@ class Grid:
         """
         self._check_input()
         self.is_3d = len(self.domain_size) == 3
+        logger.debug("Grid instance created.")
 
     def _check_input(self) -> None:
         """Check the input parameters."""
@@ -63,6 +67,7 @@ class Grid:
         assert self.ppw > 5, "Points per wavelength must be greater than 5"
         assert self.cfl > 0.01, "CFL number must be greater than 0.01"
         assert self.cfl < 0.5, "CFL number must be less than 0.5"
+        logger.debug("Grid input parameters are valid.")
 
     @property
     def omega(self) -> float:

@@ -148,18 +148,6 @@ class PMLBuilder:
             PML layer thickness (default is 40).
         n_transition_layer : int, optional
             Number of transition layers (default is 40).
-        pml_alpha_target : float, optional
-            Target alpha value for PML (default is 0.5).
-            This value is used to calculate the transition layer values.
-        pml_alpha_power_target : float, optional
-            Target alpha power value for PML (default is 1.0).
-            This value is used to calculate the transition layer values.
-        pml_strength_factor : float, optional
-            Strength factor for PML (default is 2.0).
-            This value is used to calculate the PML target values.
-        use_2_relax_mechanisms : bool, optional
-            If True, use 2 relaxation mechanisms for PML for stability (default is False).
-            if True, pml_alpha_target, pml_alpha_power_target, and pml_strength_factor are ignored.
         use_isotropic_relaxation : bool, optional
             Whether to use isotropic relaxation mechanisms for attenuation modeling
             to reduce memory usage while retaining accuracy.
@@ -215,6 +203,8 @@ class PMLBuilder:
                 (self.medium_org.sound_speed.shape[1] + 2 * self.num_boundary_points)
                 * self.grid_org.dy,
             )
+
+        logger.debug("building extended grid for pml...")
         self.extended_grid = fullwave.Grid(
             domain_size=domain_size,
             f0=self.grid_org.f0,
@@ -224,6 +214,7 @@ class PMLBuilder:
             cfl=self.grid_org.cfl,
         )
 
+        logger.debug("building extended medium for pml...")
         self.extended_medium = fullwave.Medium(
             grid=self.extended_grid,
             sound_speed=self._extend_map_for_pml(self.medium_org.sound_speed),
@@ -237,10 +228,12 @@ class PMLBuilder:
             attenuation_builder=self.medium_org.attenuation_builder,
         )
 
+        logger.debug("building extended source for pml...")
         self.extended_source = fullwave.Source(
             p0=self.source_org.p0,
             mask=self._extend_map_for_pml(self.source_org.mask, fill_edge=False),
         )
+        logger.debug("building extended sensor for pml...")
         self.extended_sensor = fullwave.Sensor(
             mask=self._extend_map_for_pml(self.sensor_org.mask, fill_edge=False),
             sampling_modulus_time=self.sensor_org.sampling_modulus_time,
@@ -1265,6 +1258,7 @@ class PMLBuilder:
                 "Both transit_within_transition_layer and transit_within_pml_layer "
                 "cannot be True at the same time."
             )
+            logger.error(error_msg)
             raise ValueError(error_msg)
 
         if disable_the_transition_and_pml:
@@ -1275,6 +1269,7 @@ class PMLBuilder:
                 "Transition layer is not defined. "
                 "Set transit_within_transition_layer to False or define n_transition_layer."
             )
+            logger.error(error_msg)
             raise ValueError(error_msg)
 
         if transit_within_transition_layer:
@@ -1325,6 +1320,7 @@ class PMLBuilder:
                 f"Invalid transition type: {transition_type}. "
                 "Choose from 'smooth', 'linear', or 'polynomial'."
             )
+            logger.error(error_msg)
             raise ValueError(error_msg)
 
         n_axis_extended = array_shape[axis]
@@ -1479,9 +1475,11 @@ class PMLBuilder:
                 error_msg = (
                     "axis=2 is not supported for 2D cases. Please set is_3d=True to use axis=2."
                 )
+                logger.error(error_msg)
                 raise ValueError(error_msg)
         else:
             error_msg = f"Invalid axis value. Expected 0, 1, but got {axis}."
+            logger.error(error_msg)
             raise ValueError(error_msg)
         return input_array
 

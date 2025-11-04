@@ -98,6 +98,7 @@ class MediumRelaxationMaps:
         )
         self.relaxation_param_dict_for_fw2 = self._calc_relaxation_param_dict_for_fw2()
         self.check_fields()
+        logger.debug("MediumRelaxationMaps instance created.")
 
     def __post_init__(self) -> None:
         """Post-initialization processing for Medium."""
@@ -753,6 +754,7 @@ class Medium:
         self.attenuation_builder = attenuation_builder
         self.__post_init__()
         self.check_fields()
+        logger.debug("Medium instance created.")
 
     def __post_init__(self) -> None:
         """Post-initialization processing for Medium."""
@@ -781,6 +783,7 @@ class Medium:
         assert self.alpha_coeff.shape == grid_shape, _error_msg(self.alpha_coeff, grid_shape)
         assert self.alpha_power.shape == grid_shape, _error_msg(self.alpha_power, grid_shape)
         assert self.beta.shape == grid_shape, _error_msg(self.beta, grid_shape)
+        logger.debug("All medium fields have correct shapes.")
 
     @property
     def bulk_modulus(self) -> NDArray[np.float64]:
@@ -932,6 +935,7 @@ class Medium:
             ValueError: If an unknown attenuation_builder is specified.
 
         """
+        logger.debug("Building MediumRelaxationMaps from alpha and power maps.")
         if self.attenuation_builder == "lookup":
             relaxation_param_dict = generate_relaxation_params(
                 n_relaxation_mechanisms=self.n_relaxation_mechanisms,
@@ -987,6 +991,7 @@ class Medium:
             built from the alpha and power maps.
 
         """
+        logger.debug("Building MediumExponentialAttenuation from alpha and power maps.")
         alpha_exp = self._db_mhz_cm_to_a_exp(
             self.alpha_coeff,
         )

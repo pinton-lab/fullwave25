@@ -3,7 +3,7 @@
 using a precomputed lookup table and input attenuation values.
 """
 
-import warnings
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +11,8 @@ from numpy.typing import NDArray
 from scipy.io import loadmat
 
 from fullwave.solver.utils import initialize_relaxation_param_dict
+
+logger = logging.getLogger("__main__." + __name__)
 
 
 def _map_parameters_search(
@@ -117,6 +119,7 @@ class RelaxationParametersGenerator:
         """
         if not path_database.exists():
             error_msg = f"Relaxation parameters database not found at {path_database}."
+            logger.error(error_msg)
             raise FileNotFoundError(error_msg)
 
         self.n_relaxation_mechanisms = n_relaxation_mechanisms
@@ -145,12 +148,15 @@ class RelaxationParametersGenerator:
         """
         if self.look_up_table.ndim != 3:
             error_msg = "look_up_table must have 3 dimensions."
+            logger.error(error_msg)
             raise ValueError(error_msg)
         if self.look_up_table.shape[2] != 4 * self.n_relaxation_mechanisms + 2:
             error_msg = "look_up_table must have 4 * n_relaxation_mechanisms + 2 columns."
+            logger.error(error_msg)
             raise ValueError(error_msg)
         if np.isnan(self.look_up_table).any():
             error_msg = "look_up_table must not contain NaN values."
+            logger.error(error_msg)
             raise ValueError(error_msg)
 
     def generate(
@@ -180,7 +186,7 @@ class RelaxationParametersGenerator:
                 f"alpha minimum: {self.alpha_min}, "
                 f"power minimum: {self.power_min}"
             )
-            warnings.warn(error_msg, UserWarning, stacklevel=2)
+            logger.warning(error_msg)
         if np.any(alpha_coeff > self.alpha_max) or np.any(alpha_power > self.power_max):
             error_msg = (
                 "attenuation is out of range."
@@ -188,7 +194,7 @@ class RelaxationParametersGenerator:
                 f"alpha maximum: {self.alpha_max}, "
                 f"power maximum: {self.power_max}"
             )
-            warnings.warn(error_msg, UserWarning, stacklevel=2)
+            logger.warning(error_msg)
 
         alpha_coeff = np.clip(alpha_coeff, self.alpha_min, self.alpha_max)
         alpha_power = np.clip(alpha_power, self.power_min, self.power_max)
