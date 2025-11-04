@@ -14,6 +14,15 @@ from .medium_builder import presets  # isort:skip
 from .solver.solver import Solver  # isort:skip
 from .medium_builder.domain import Domain  # isort:skip
 from .medium_builder import MediumBuilder  # isort:skip
+import logging
+import time
+
+logging.Formatter.converter = time.gmtime
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(filename)s | %(funcName)s | %(lineno)d - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S GMT",
+    level=logging.WARNING,
+)
 
 # check linux environment
 import platform

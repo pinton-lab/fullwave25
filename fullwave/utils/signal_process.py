@@ -1,9 +1,13 @@
 """Signal utilities."""
 
+import logging
+
 import numpy as np
 from numpy.typing import NDArray
 
 from fullwave.grid import Grid
+
+logger = logging.getLogger("__main__." + __name__)
 
 
 def signed_power_compression(x: NDArray[np.float64], power: float = 1 / 3) -> NDArray[np.float64]:
@@ -91,6 +95,7 @@ def reshape_whole_sensor_to_nt_nx_ny(
     """
     if grid is not None and (nx is not None or ny is not None):
         error_msg = "Either grid or both nx and ny must be provided, not both."
+        logger.error(error_msg)
         raise ValueError(error_msg)
 
     if use_grid:
@@ -98,6 +103,7 @@ def reshape_whole_sensor_to_nt_nx_ny(
         ny = grid.ny
     elif nx is None or ny is None:
         error_msg = "Either grid or both nx and ny must be provided."
+        logger.error(error_msg)
         raise ValueError(error_msg)
     else:
         nx = int(nx)
@@ -176,6 +182,7 @@ def reshape_whole_sensor_to_nt_nx_ny_nz(
     """
     if grid is not None and (nx is not None or ny is not None):
         error_msg = "Either grid or both nx and ny must be provided, not both."
+        logger.error(error_msg)
         raise ValueError(error_msg)
 
     if use_grid:
@@ -184,6 +191,7 @@ def reshape_whole_sensor_to_nt_nx_ny_nz(
         nz = grid.nz
     elif nx is None or ny is None:
         error_msg = "Either grid or both nx and ny must be provided."
+        logger.error(error_msg)
         raise ValueError(error_msg)
     else:
         nx = int(nx)

@@ -1,5 +1,6 @@
 """Simple plane wave transmit example."""
 
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -9,7 +10,10 @@ from fullwave.utils import plot_utils, signal_process
 
 
 def main() -> None:  # noqa: PLR0915
-    """Run Simple plane wave transmit example."""
+    """Run linear transducer example."""
+    # overwrite the logging level, DEBGUG, INFO, WARNING, ERROR
+    logging.getLogger("__main__").setLevel(logging.INFO)
+
     #
     # define the working directory
     #
@@ -174,7 +178,7 @@ def main() -> None:  # noqa: PLR0915
         work_dir=work_dir,
         grid=grid,
         medium=medium,
-        source=transducer.source,
+        transducer=transducer,
         sensor=sensor,
         run_on_memory=False,
     )

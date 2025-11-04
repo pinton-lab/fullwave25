@@ -1,8 +1,8 @@
 """input generator modules."""
 
 import logging
-import os
 import shutil
+import time
 from pathlib import Path
 
 import numpy as np
@@ -100,6 +100,7 @@ class InputFileWriter:
         self._set_d_mat()
         self._set_d_map(self._dim, self.medium.sound_speed)
         self._set_dc_map(self.medium.sound_speed)
+        logger.debug("InputFileWriter instance created.")
 
     def run(
         self,
@@ -141,8 +142,11 @@ class InputFileWriter:
         Path: The simulation directory.
 
         """
+        logger.info("Generating input files for simulation...")
+        time_start = time.time()
         simulation_dir = self._work_dir / simulation_dir_name
         simulation_dir.mkdir(parents=True, exist_ok=True)
+
         self._write_ic(
             simulation_dir / "icmat.dat",
             np.transpose(self.source.icmat),
@@ -169,6 +173,9 @@ class InputFileWriter:
                 simulation_dir=dat_output_dir,
                 dim=self._dim,
             )
+        end_file_writer_time = time.time()
+        message = f"Input files generated in {end_file_writer_time - time_start:.2e} seconds."
+        logger.info(message)
         return simulation_dir
 
     # --- constructor utils ---
@@ -704,7 +711,7 @@ class InputFileWriter:
             # generate the symlink even if the file already exists
             if dst_data.exists():
                 dst_data.unlink()
-            os.symlink(src_data, dst_data)
+            Path(dst_data).symlink_to(src_data)
 
     def _save_maps(
         self,
@@ -821,7 +828,15 @@ class InputFileWriter:
 
     @staticmethod
     def _write_ic(fname: str | Path, icmat: NDArray[np.float64]) -> None:
+        message = f"Writing initial condition matrix to {fname}"
+        logger.debug(message, stacklevel=2)
+
+        start_time = time.time()
         icmat.T.flatten().astype(np.float32).tofile(fname)
+        end_time = time.time()
+
+        message = f"Initial condition matrix written in {end_time - start_time:.2e} seconds"
+        logger.debug(message, stacklevel=2)
 
     @staticmethod
     def _write_coords(
@@ -834,7 +849,14 @@ class InputFileWriter:
         #     np.array([coords[:, 1], coords[:, 0]]).T.flatten().astype(np.int32).tofile(fname)
         # else:
         #     coords.T.flatten().astype(np.int32).tofile(fname)
+
+        message = f"Writing coordinates to {fname}"
+        logger.debug(message, stacklevel=2)
+        time_start = time.time()
         coords.flatten().astype(np.int32).tofile(fname)
+        time_end = time.time()
+        message = f"Coordinates written in {time_end - time_start:.2e} seconds"
+        logger.debug(message, stacklevel=2)
 
     @staticmethod
     def _write_v_abs(
@@ -850,4 +872,10 @@ class InputFileWriter:
         save_path: str | Path,
         variable_mat: NDArray[np.float64],
     ) -> None:
+        message = f"Writing matrix to {save_path}"
+        logger.debug(message, stacklevel=2)
+        start_time = time.time()
         variable_mat.astype(var_type).tofile(save_path)
+        end_time = time.time()
+        message = f"Matrix written in {end_time - start_time:.2e} seconds"
+        logger.debug(message, stacklevel=2)

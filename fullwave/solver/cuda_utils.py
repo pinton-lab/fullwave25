@@ -15,7 +15,6 @@ import logging
 from collections.abc import Callable
 from functools import wraps
 from typing import Any
-from warnings import warn
 
 logger = logging.getLogger("__main__." + __name__)
 
@@ -101,8 +100,11 @@ for libname in libnames:
     else:
         break
 else:
-    warning_msg = f"Could not load any of: {', '.join(libnames)}"
-    logger.warning(warning_msg)
+    message = (
+        f"Critical: Could not load any of: {', '.join(libnames)}\n"
+        "Please ensure that the CUDA toolkit is installed and accessible."
+    )
+    logger.critical(message)
 
 
 def cuda_api_call(func: Callable) -> Callable:
@@ -124,6 +126,7 @@ def cuda_api_call(func: Callable) -> Callable:
             cuda.cuGetErrorString(result, ctypes.byref(error_str))
             error_msg = error_str.value.decode() if error_str.value else "Unknown error"
             msg = f"{func.__name__} failed with error code {result}: {error_msg}"
+            logger.error(error_msg)
             raise RuntimeError(msg)
         return result
 
@@ -148,7 +151,7 @@ def cuda_api_call_warn(func: Callable) -> Callable:
             cuda.cuGetErrorString(result, ctypes.byref(error_str))
             error_msg = error_str.value.decode() if error_str.value else "Unknown error"
             msg = f"Warning: {func.__name__} failed with error code {result}: {error_msg}"
-            warn(msg, stacklevel=2)
+            logger.warning(msg, stacklevel=2)
         return result
 
     return wrapper
@@ -378,15 +381,15 @@ def retrieve_cuda_version() -> float:
 
 
 if __name__ == "__main__":
-    print(json.dumps(get_cuda_device_specs(), indent=2))  # noqa: T201
-    print(json.dumps(get_cuda_architecture(), indent=2))  # noqa: T201
+    print(json.dumps(get_cuda_device_specs(), indent=2))
+    print(json.dumps(get_cuda_architecture(), indent=2))
     cuda_archtecture_dict = get_cuda_architecture()[0]  # Get the first device's architecture
     arch_option = (
         "sm_"
         + str(cuda_archtecture_dict["compute_capability"][0])
         + str(cuda_archtecture_dict["compute_capability"][1])
     )
-    print(arch_option)  # noqa: T201
+    print(arch_option)
 
     cuda_version = retrieve_cuda_version()
-    print(f"CUDA Version: {cuda_version}")  # noqa: T201
+    print(f"CUDA Version: {cuda_version}")

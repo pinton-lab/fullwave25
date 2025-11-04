@@ -47,6 +47,7 @@ class Source:
             self.incoords = incoords
         super().__init__()
         self.__post_init__()
+        logger.debug("Source instance created.")
 
     def __post_init__(self) -> None:
         """Post-initialization processing for Source.
@@ -68,6 +69,7 @@ class Source:
         grid_shape = tuple(grid_shape) if isinstance(grid_shape, np.ndarray) else grid_shape
         assert self.mask.shape == grid_shape, f"{self.mask.shape} != {grid_shape}"
         assert np.any(self.mask), "No active source found."
+        logger.debug("Source mask validated against grid shape.")
 
     @property
     def icmat(self) -> NDArray[np.float64]:

@@ -1,5 +1,6 @@
 """abdominal wall domain."""
 
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +12,8 @@ from fullwave.constants import MaterialProperties
 from fullwave.medium_builder.domain import Domain
 from fullwave.utils import check_functions
 from fullwave.utils.numerical import matlab_interp2easy
+
+logger = logging.getLogger("__main__." + __name__)
 
 
 def _make_abdominal_property(
@@ -235,6 +238,7 @@ class AbdominalWallDomain(Domain):
         self.is_3d = grid.is_3d
         if self.is_3d:
             error_msg = "3D abdominal wall domain is not supported yet."
+            logger.error(error_msg)
             raise NotImplementedError(error_msg)
         self.path_relaxation_parameters_database = path_relaxation_parameters_database
         self.n_relaxation_mechanisms = n_relaxation_mechanisms

@@ -172,11 +172,12 @@ class TransducerGeometry:
                 f"ny: {self.stored_grid_size[1]}, "
                 f"transducer_width_px: {self.transducer_width_px}, "
             )
+            logger.error(error_msg)
             raise ValueError(error_msg)
         # if (self.position_px[2] + self.element_length_px) > self.stored_grid_size[2]:
-        #     logger.info(self.position_px[2])
-        #     logger.info(self.element_length_px)
-        #     logger.info(self.stored_grid_size[2])
+        #     logger.debug(self.position_px[2])
+        #     logger.debug(self.element_length_px)
+        #     logger.debug(self.stored_grid_size[2])
         #     error_msg = (
         #         "The defined transducer is too large or"
         #         " positioned outside the grid in the z-direction"
@@ -186,6 +187,7 @@ class TransducerGeometry:
         #     )
         if self.position_px[0] > self.stored_grid_size[0]:
             error_msg = "The defined transducer is positioned outside the grid in the x-direction"
+            logger.error(error_msg)
             raise ValueError(error_msg)
 
         # create the transducer mask
@@ -194,6 +196,7 @@ class TransducerGeometry:
         )
         self.element_mask_input = self.indexed_element_mask_input > 0
         self.element_mask_output = self.indexed_element_mask_output > 0
+        logger.debug("TransducerGeometry instance created.")
 
     def _init_dimensions(  # noqa: C901, PLR0912
         self,
@@ -217,6 +220,7 @@ class TransducerGeometry:
             self.use_px_in_width = True
         else:
             error_msg = "Either element_width_px or element_width_m must be provided"
+            logger.error(error_msg)
             raise ValueError(error_msg)
 
         if self.is_3d is True and element_height_px is None and element_height_m is not None:
@@ -228,16 +232,17 @@ class TransducerGeometry:
             self.use_px_in_width = True
         elif self.is_3d is True and (element_height_px is None and element_height_m is None):
             error_msg = "Either element_height_px or element_height_m must be provided"
+            logger.error(error_msg)
             raise ValueError(error_msg)
         elif self.is_3d is False and (
             element_height_px is not None or element_height_m is not None
         ):
-            warning_msg = (
+            message = (
                 "element_height_px and element_height_m are provided, "
                 "but the transducer is not 3D. "
                 "Ignoring element_height_px and element_height_m."
             )
-            logger.warning(warning_msg)
+            logger.info(message)
         else:
             element_height_px = 0
             element_height_m = 0.0
@@ -251,6 +256,7 @@ class TransducerGeometry:
             self.use_px_in_space = True
         else:
             error_msg = "Either element_spacing_px or element_spacing_m must be provided"
+            logger.error(error_msg)
             raise ValueError(error_msg)
 
         if element_layer_px is None and element_layer_m is not None:
@@ -260,6 +266,7 @@ class TransducerGeometry:
             element_layer_m = element_layer_px * grid.dy
         else:
             error_msg = "Either element_layer_px or element_layer_m must be provided"
+            logger.error(error_msg)
             raise ValueError(error_msg)
 
         return (
@@ -295,6 +302,7 @@ class TransducerGeometry:
             position_px = _make_pos_int(position_px)
         else:
             error_msg = "Either position_px or position_m must be provided"
+            logger.error(error_msg)
             raise ValueError(error_msg)
         if self.is_3d:
             assert len(position_px) == 3, "position_px must have 3 elements for 3D transducer"
@@ -356,6 +364,7 @@ class TransducerGeometry:
                     ] = element_index + 1
         elif self.is_3d:
             error_msg = "3D convex transducers are not implemented yet."
+            logger.error(error_msg)
             raise NotImplementedError(error_msg)
         else:
             radius_px = round(self.radius / self.grid.dx)
@@ -659,12 +668,15 @@ class Transducer:
     def _check_signal(self, signal: NDArray[np.float64]) -> None:
         if signal.shape[1] != self.grid.nt:
             error_msg = "Input signal has the wrong number of time points"
+            logger.error(error_msg)
             raise ValueError(error_msg)
         if (signal == 0).all():
             error_msg = "Input signal is all zeros"
+            logger.error(error_msg)
             raise ValueError(error_msg)
         if signal.shape[0] != self.source_mask.sum():
             error_msg = "Input signal has the wrong number of elements"
+            logger.error(error_msg)
             raise ValueError(error_msg)
 
     @property
@@ -679,6 +691,7 @@ class Transducer:
         """
         if self._signal is None:
             error_msg = "Input signal is not set. use set_signal() to set the signal."
+            logger.error(error_msg)
             raise ValueError(error_msg)
         return self._signal
 
@@ -760,6 +773,7 @@ class Transducer:
         # check if the signal is set
         if self._signal is None:
             error_msg = "Input signal is not set. use set_signal() to set the signal."
+            logger.error(error_msg)
             raise ValueError(error_msg)
         return fullwave.source.Source(self.signal, self.source_mask)
 

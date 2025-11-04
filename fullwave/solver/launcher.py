@@ -48,6 +48,7 @@ class Launcher:
         assert self._path_fullwave_simulation_bin.exists(), error_msg
         self.is_3d = is_3d
         self.use_gpu = use_gpu
+        logger.debug("Launcher instance created.")
 
     def run(
         self,
@@ -92,6 +93,7 @@ class Launcher:
                 "-oL",
                 str(self._path_fullwave_simulation_bin.resolve()),
             ]
+            logger.info("Running simulation...")
             with (simulation_dir / "fw2_execution.log").open("w", encoding="utf-8") as file:
                 time_start = time()
                 subprocess.run(  # noqa: S603
@@ -127,8 +129,18 @@ class Launcher:
                 "The log file is located at:\n"
                 f"{simulation_dir / 'fw2_execution.log'}"
             )
+            logger.exception(error_message)
             raise SimulationError(error_message) from e
 
         if load_results:
-            return load_dat_data(simulation_dir.absolute() / "genout.dat")
+            time_load_start = time()
+            logger.info("Loading simulation results from genout.dat...")
+
+            result = load_dat_data(simulation_dir.absolute() / "genout.dat")
+
+            time_load_passed = time() - time_load_start
+            logger.info("Loading completed in %.2e seconds.", time_load_passed)
+            return result
+
+        logger.info("Returning genout.dat file path.")
         return simulation_dir.absolute() / "genout.dat"
