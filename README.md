@@ -72,6 +72,7 @@ If you use Fullwave 2.5 in your research, please cite this repository as:
 ## Hardware prerequisite
 
 - This system operates in a Linux environment.
+  - If you need a Windows environment, please consider using [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) (Windows Subsystem for Linux 2).
 - This simulation requires an NVIDIA GPU to execute.
 - You may need multiple GPUs for 3D simulation.
 
