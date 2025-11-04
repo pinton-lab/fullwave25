@@ -264,6 +264,36 @@ Please see the following examples for more advanced usage.
 - Please write clear and concise commit messages.
 - please see [CONTRIBUTING.md](CONTRIBUTING.md) for more details.
 
+### Dockerfile usage
+
+- A Dockerfile is provided for easy setup of the Fullwave 2.5 environment.
+- To build the Docker image, run the following command in the terminal from the root directory of the repository:
+
+  ```sh
+  docker build -t fullwave25:latest .
+  ```
+
+- The command below runs pytest to verify the installation inside the Docker container:
+
+  ```sh
+  docker run --gpus all fullwave25:latest
+  ```
+
+- To run a container from the built image, use the following command:
+
+  ```sh
+  docker run --gpus all -it --rm --name fullwave_container fullwave25:latest /bin/bash
+  ```
+
+- Inside the container, you can run the example simulations. For instance, to run the simple plane wave example, execute:
+
+  ```sh
+  source /app/.venv/bin/activate
+  python3 /app/examples/simple_plane_wave/simple_plane_wave.py
+  ```
+
+- For a persistent container that retains data after exiting, please refer to [Dockerdocs: Persisting container data](https://docs.docker.com/get-started/docker-concepts/running-containers/persisting-container-data/)
+
 ---
 
 ## Maintainers
