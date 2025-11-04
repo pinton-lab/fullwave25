@@ -1,6 +1,8 @@
 """fullwave module."""
 
 import logging
+import platform
+import time
 
 from . import utils
 from .grid import Grid
@@ -14,8 +16,6 @@ from .medium_builder import presets  # isort:skip
 from .solver.solver import Solver  # isort:skip
 from .medium_builder.domain import Domain  # isort:skip
 from .medium_builder import MediumBuilder  # isort:skip
-import logging
-import time
 
 logging.Formatter.converter = time.gmtime
 logging.basicConfig(
@@ -23,9 +23,6 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S GMT",
     level=logging.WARNING,
 )
-
-# check linux environment
-import platform
 
 logger = logging.getLogger("__main__." + __name__)
 
@@ -47,6 +44,7 @@ __all__ = [
     "utils",
 ]
 
+# check linux environment
 if platform.system() != "Linux":
     message = (
         "Warning: fullwave is primarily developed for Linux environment.\n"
