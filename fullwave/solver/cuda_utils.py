@@ -100,12 +100,11 @@ for libname in libnames:
     else:
         break
 else:
-    warning_msg = f"Warning: Could not load any of: {', '.join(libnames)}"
-    logger.warning(warning_msg)
-
-    error_message = "Please ensure that the CUDA toolkit is installed and accessible."
-    logger.error(error_message)
-    raise OSError(error_message)
+    message = (
+        f"Critical: Could not load any of: {', '.join(libnames)}\n"
+        "Please ensure that the CUDA toolkit is installed and accessible."
+    )
+    logger.critical(message)
 
 
 def cuda_api_call(func: Callable) -> Callable:
