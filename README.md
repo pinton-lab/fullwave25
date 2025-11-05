@@ -14,6 +14,7 @@ Fullwave 2.5 is a Python package for high-fidelity ultrasound wave propagation s
   - Multiple GPU execution support.
 - Easy-to-use Python interface with CUDA/C backend
   - Python wrapper for easy usability and extensibility, with the core simulation engine implemented in CUDA/C for high performance on NVIDIA GPUs.
+  - It offers a user experience similar to [k-Wave](http://www.k-wave.org/) and [k-wave-python](https://github.com/waltsims/k-wave-python), while providing advanced attenuation modeling capabilities and multi-GPU support in FDTD simulations.
 
 | Computational medium                     | Wave propagation                                                           |
 | ---------------------------------------- | -------------------------------------------------------------------------- |
@@ -22,6 +23,14 @@ Fullwave 2.5 is a Python package for high-fidelity ultrasound wave propagation s
 Building upon the original Fullwave 2 simulator, Fullwave 2.5 enhances its capabilities to model ultrasound wave propagation in media where **both the attenuation coefficient and exponent can vary spatially**. This enables more accurate simulations of biological tissues, which often exhibit complex attenuation behaviours that cannot be captured by uniform exponent models.
 
 The library is designed with a Python wrapper for ease of use and extensibility, while the core simulation engine is implemented in CUDA/C to leverage high-performance computing on NVIDIA GPUs. Fullwave 2.5 supports 2D and 3D simulations, including multi-GPU execution for enhanced performance.
+
+## Special Thanks
+
+This repository design was inspired by [k-wave-python](https://github.com/waltsims/k-wave-python). We appreciate the great work of the k-wave-python development team.
+This repository would not have been possible without them.
+
+Please check their repository for additional ultrasound simulation tools and resources.
+Their comprehensive tools have significantly contributed to the ultrasound research community.
 
 ## Theoretical Background
 
