@@ -2,6 +2,8 @@
 
 import logging
 import os
+import re
+import shutil
 import subprocess
 from pathlib import Path
 from time import time
@@ -27,6 +29,7 @@ class Launcher:
         *,
         is_3d: bool = False,
         use_gpu: bool = True,
+        cuda_device_id: str | int | list | None = None,
     ) -> None:
         """Initialize a FullwaveLauncher instance.
 
@@ -41,6 +44,12 @@ class Launcher:
         use_gpu : bool, optional
             Whether to use GPU for the simulation.
             Defaults to True. If False, the simulation will be run on multi-core CPU version.
+        cuda_device_id : str | int | list | None, optional
+            The CUDA device ID(s) to use for the simulation.
+            Defaults to None. If None, the default device ID "0" will be used.
+            for multiple GPUs, provide a list of device IDs.
+            example 1: [0, 1] for using GPU 0 and GPU 1. or "0,1" as a string.
+            example 2: 2 for using GPU 2 or "2" as a string.
 
         """
         self._path_fullwave_simulation_bin = path_fullwave_simulation_bin
@@ -48,7 +57,105 @@ class Launcher:
         assert self._path_fullwave_simulation_bin.exists(), error_msg
         self.is_3d = is_3d
         self.use_gpu = use_gpu
+        self.cuda_device_id = self._configure_cuda_device_id(cuda_device_id)
         logger.debug("Launcher instance created.")
+
+    @staticmethod
+    def _parse_cuda_device_id(cuda_device_id: str | int | list | None) -> str:
+        """Parse the CUDA device ID input into a string format.
+
+        Parameters
+        ----------
+        cuda_device_id : str | int | list | None
+            The CUDA device ID to parse.
+
+        Returns
+        -------
+        str
+            The parsed CUDA device ID in string format.
+
+        Raises
+        ------
+        ValueError
+            If the input type is invalid or contains invalid values.
+
+        """
+        if cuda_device_id is None:
+            return "0"
+
+        if isinstance(cuda_device_id, int):
+            if cuda_device_id < 0:
+                message = "CUDA device ID must be a non-negative integer."
+                raise ValueError(message)
+            return str(cuda_device_id)
+
+        if isinstance(cuda_device_id, str):
+            if not cuda_device_id.isdigit() or int(cuda_device_id) < 0:
+                message = "CUDA device ID string must represent a non-negative integer."
+                raise ValueError(message)
+            return cuda_device_id
+
+        if isinstance(cuda_device_id, list):
+            if not all(isinstance(i, int) and i >= 0 for i in cuda_device_id):
+                message = "All CUDA device IDs in the list must be non-negative integers."
+                raise ValueError(message)
+            return ",".join(str(i) for i in cuda_device_id)
+
+        message = "CUDA device ID must be an integer, string, list, or None."
+        raise ValueError(message)
+
+    @staticmethod
+    def _verify_cuda_devices_exist(device_id_str: str) -> None:
+        """Verify that the specified CUDA devices exist on the system.
+
+        Parameters
+        ----------
+        device_id_str : str
+            The CUDA device ID(s) in string format.
+
+        Raises
+        ------
+        ValueError
+            If any of the specified CUDA device IDs do not exist.
+
+        """
+        nvidia_smi_path = shutil.which("nvidia-smi")
+        if nvidia_smi_path is None:
+            message = "nvidia-smi command not found. Please ensure NVIDIA drivers are installed."
+            raise ValueError(message)
+
+        result = subprocess.run(  # noqa: S603
+            [nvidia_smi_path, "-L"],
+            check=False,
+            stdout=subprocess.PIPE,
+            encoding="utf-8",
+            shell=False,
+        )
+
+        gpu_ids = re.findall(r"GPU (\d+):", result.stdout)
+        for device_id in device_id_str.split(","):
+            if device_id not in gpu_ids:
+                message = f"CUDA device ID {device_id} does not exist."
+                raise ValueError(message)
+
+    @staticmethod
+    def _configure_cuda_device_id(cuda_device_id: str | int | list | None) -> str:
+        """Verify and assign the CUDA device ID.
+
+        Parameters
+        ----------
+        cuda_device_id : str | int | None
+            The CUDA device ID to verify and assign.
+
+        Returns
+        -------
+        str
+            The verified and assigned CUDA device ID.
+
+        """
+        output = Launcher._parse_cuda_device_id(cuda_device_id)
+        Launcher._verify_cuda_devices_exist(output)
+        return output
 
     def run(
         self,
@@ -96,6 +203,7 @@ class Launcher:
             logger.info("Running simulation...")
             with (simulation_dir / "fw2_execution.log").open("w", encoding="utf-8") as file:
                 time_start = time()
+                os.environ["CUDA_VISIBLE_DEVICES"] = self.cuda_device_id
                 subprocess.run(  # noqa: S603
                     command,
                     check=True,
