@@ -300,6 +300,7 @@ class Solver:
         use_gpu: bool = True,
         use_exponential_attenuation: bool = False,
         use_isotropic_relaxation: bool = True,
+        cuda_device_id: str | int | list | None = None,
     ) -> None:
         """Initialize a Solver instance for the fullwave simulation.
 
@@ -369,6 +370,12 @@ class Solver:
             This option omits the anisotropic relaxation mechanisms to model the attenuation.
             We usually recommend using isotropic relaxation mechanisms
             unless the anisotropic attenuation is required for the simulation.
+        cuda_device_id : str | int | list | None, optional
+            The CUDA device ID(s) to use for the simulation.
+            Defaults to None. If None, the default device ID "0" will be used.
+            for multiple GPUs, provide a list of device IDs.
+            example 1: [0, 1] for using GPU 0 and GPU 1. or "0,1" as a string.
+            example 2: 2 for using GPU 2 or "2" as a string.
 
         Raises
         ------
@@ -478,11 +485,13 @@ class Solver:
         self.transducer: fullwave.Transducer | None = transducer
 
         self.path_fullwave_simulation_bin = path_fullwave_simulation_bin
+        self.cuda_device_id = cuda_device_id
 
         self.fullwave_launcher = Launcher(
             path_fullwave_simulation_bin,
             is_3d=self.is_3d,
             use_gpu=self.use_gpu,
+            cuda_device_id=self.cuda_device_id,
         )
 
         if use_exponential_attenuation:
