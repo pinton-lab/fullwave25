@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 import fullwave
+import fullwave.solver.solver as sovler_module
 from fullwave.solver.solver import (
     _check_compatible_set,
     _make_cuda_arch_option,
@@ -387,9 +388,29 @@ def test_use_isotropic_relaxation(
     use_isotropic_relaxation_medium,
     use_isotropic_relaxation_solver,
     warning_expected,
-    caplog,
+    monkeypatch,
 ):
     """Test Solver with and without isotropic relaxation medium and solver."""
+    fullwave_binary_path = (
+        Path(__file__).parent.parent.parent
+        / "fullwave"
+        / "solver"
+        / "bins"
+        / "gpu"
+        / "2d"
+        / "num_relax=2"
+        / "fullwave2_2d_2_relax_multi_gpu_sm_89_cuda126"
+    )
+    monkeypatch.setattr(
+        sovler_module,
+        "_retrieve_fullwave_simulation_path",
+        lambda use_gpu,  # noqa: ARG005
+        is_3d,  # noqa: ARG005# noqa: ARG005
+        use_exponential_attenuation,  # noqa: ARG005
+        use_isotropic_relaxation,  # noqa: ARG005
+        n_relax_mechanisms:  # noqa: ARG005
+        fullwave_binary_path,
+    )
     with (
         patch("fullwave.solver.solver.logger") as mock_logger,
     ):
