@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+import fullwave.medium as medium_module
 from fullwave.medium import Medium, MediumRelaxationMaps
 from fullwave.solver.utils import initialize_relaxation_param_dict
 
@@ -18,9 +19,6 @@ def test_post_init_conversion(monkeypatch):
 
     grid_shape = (1, 1)
     grid = DummyGrid2D(nx=grid_shape[0], ny=grid_shape[1], dt=1e-4)
-
-    # Bypass instance and path checks in Medium.__init__.
-    import fullwave.medium as medium_module
 
     dummy_check = type(
         "dummy",
@@ -56,9 +54,6 @@ def test_check_fields_valid(monkeypatch):
 
     grid = DummyGrid2D(nx=grid_shape[0], ny=grid_shape[1], dt=1e-4)
 
-    # Bypass instance and path checks in Medium.__init__.
-    import fullwave.medium as medium_module
-
     dummy_check = type(
         "dummy",
         (),
@@ -87,9 +82,6 @@ def test_check_fields_invalid(monkeypatch):
     grid_shape = (2, 2)
     grid = DummyGrid2D(nx=grid_shape[0], ny=grid_shape[1], dt=1e-4)
 
-    # Bypass instance and path checks in Medium.__init__.
-    import fullwave.medium as medium_module
-
     dummy_check = type(
         "dummy",
         (),
@@ -117,9 +109,6 @@ def test_plot_exports_file(tmp_path, monkeypatch):
     # Create a medium with 2D arrays.
     grid_shape = (2, 2)
     grid = DummyGrid2D(nx=grid_shape[0], ny=grid_shape[1], dt=1e-4)
-
-    # Bypass instance and path checks in Medium.__init__.
-    import fullwave.medium as medium_module
 
     dummy_check = type(
         "dummy",
@@ -155,9 +144,6 @@ def test_plot_show(monkeypatch, tmp_path):
 
     grid_shape = (2, 2)
     grid = DummyGrid2D(nx=grid_shape[0], ny=grid_shape[1], dt=1e-4)
-
-    # Bypass instance and path checks in Medium.__init__.
-    import fullwave.medium as medium_module
 
     dummy_check = type(
         "dummy",
@@ -201,9 +187,6 @@ def test_bulk_modulus(monkeypatch):
     grid_shape = (2, 2)
     grid = DummyGrid2D(nx=grid_shape[0], ny=grid_shape[1], dt=1e-4)
 
-    # Bypass instance and path checks in Medium.__init__.
-    import fullwave.medium as medium_module
-
     dummy_check = type(
         "dummy",
         (),
@@ -233,9 +216,6 @@ def test_bulk_modulus(monkeypatch):
 def test_n_air_with_provided_air_map(monkeypatch):
     grid_shape = (2, 2)
     grid = DummyGrid2D(nx=grid_shape[0], ny=grid_shape[1], dt=1e-4)
-
-    # Bypass instance and path checks in Medium.__init__.
-    import fullwave.medium as medium_module
 
     dummy_check = type(
         "dummy",
@@ -286,9 +266,6 @@ def test_medium_relaxation_post_init_conversion(monkeypatch):
     grid_shape = (1, 1)
     grid = DummyGrid2D(nx=grid_shape[0], ny=grid_shape[1], dt=1e-4)
 
-    # Bypass instance and path checks in Medium.__init__.
-    import fullwave.medium as medium_module
-
     dummy_check = type(
         "dummy",
         (),
@@ -321,9 +298,6 @@ def test_medium_relaxation_check_fields_valid(monkeypatch):
     grid_shape = (2, 2)
 
     grid = DummyGrid2D(nx=grid_shape[0], ny=grid_shape[1], dt=1e-4)
-
-    # Bypass instance and path checks in Medium.__init__.
-    import fullwave.medium as medium_module
 
     dummy_check = type(
         "dummy",
@@ -402,9 +376,6 @@ def test_build_creates_medium_relaxation_maps(monkeypatch, tmp_path):
     grid_shape = (2, 2)
     grid = DummyGrid2D(nx=grid_shape[0], ny=grid_shape[1], dt=1e-4)
 
-    # Bypass instance and path checks in Medium.__init__.
-    import fullwave.medium as medium_module
-
     dummy_check = type(
         "dummy",
         (),
@@ -473,3 +444,38 @@ def test_build_creates_medium_relaxation_maps(monkeypatch, tmp_path):
     relax_keys = initialize_relaxation_param_dict(medium_relax.n_relaxation_mechanisms).keys()
     for key in relax_keys:
         np.testing.assert_allclose(medium_relax.relaxation_param_dict[key], np.ones(grid_shape))
+
+
+def test_medium_relaxation_maps_build_returns_self(monkeypatch):
+    """Test that MediumRelaxationMaps.build() returns self."""
+    grid_shape = (2, 2)
+    grid = DummyGrid2D(nx=grid_shape[0], ny=grid_shape[1], dt=1e-4)
+
+    dummy_check = type(
+        "dummy",
+        (),
+        {
+            "check_instance": lambda _, instance, cls: None,  # noqa: ARG005
+            "check_path_exists": lambda _, path: None,  # noqa: ARG005
+            "check_compatible_value": lambda _,
+            value,  # noqa: ARG005
+            compatible_values,  # noqa: ARG005
+            error_message_template: None,  # noqa: ARG005
+        },
+    )()
+    monkeypatch.setattr(medium_module, "check_functions", dummy_check)
+
+    sound_speed = np.ones(grid_shape) * 1500
+    density = np.ones(grid_shape) * 1000
+    beta = np.ones(grid_shape) * 0.8
+    relaxation_dict = get_dummy_relaxation_dict(grid_shape, n_relaxation_mechanisms=2)
+    medium_relax = MediumRelaxationMaps(grid, sound_speed, density, beta, relaxation_dict)
+
+    # Call build and verify it returns the same instance
+    result = medium_relax.build()
+
+    assert result is medium_relax
+    assert isinstance(result, MediumRelaxationMaps)
+
+    for key in relaxation_dict:
+        np.testing.assert_allclose(result.relaxation_param_dict[key], relaxation_dict[key])

@@ -564,7 +564,7 @@ class Solver:
 
         # validate the instances
         check_functions.check_instance(grid, fullwave.Grid)
-        check_functions.check_instance(medium, fullwave.Medium)
+        check_functions.check_instance(medium, [fullwave.Medium, fullwave.MediumRelaxationMaps])
 
         if source is not None:
             grid_shape = (grid.nx, grid.ny, grid.nz) if grid.is_3d else (grid.nx, grid.ny)
