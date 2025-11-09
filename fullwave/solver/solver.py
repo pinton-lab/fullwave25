@@ -455,6 +455,26 @@ class Solver:
         )
 
         self.medium = medium
+        if use_isotropic_relaxation:
+            if self.medium.use_isotropic_relaxation is False:
+                message = (
+                    "Solver is set to use isotropic relaxation, "
+                    "but the provided medium is using anisotropic relaxation. "
+                    "Overriding the medium to use isotropic relaxation. "
+                )
+                # warning
+                logger.warning(message, UserWarning)
+            self.medium.use_isotropic_relaxation = True
+        else:
+            if self.medium.use_isotropic_relaxation is True:
+                message = (
+                    "Solver is set to use anisotropic relaxation, "
+                    "but the provided medium is using isotropic relaxation. "
+                    "Overriding the medium to use anisotropic relaxation. "
+                )
+                logger.warning(message, UserWarning)
+            self.medium.use_isotropic_relaxation = False
+
         self.use_pml = use_pml
         if not use_pml:
             pml_layer_thickness_px = 0
