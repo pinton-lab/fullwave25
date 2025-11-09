@@ -479,3 +479,284 @@ def test_medium_relaxation_maps_build_returns_self(monkeypatch):
 
     for key in relaxation_dict:
         np.testing.assert_allclose(result.relaxation_param_dict[key], relaxation_dict[key])
+
+
+def test_calc_relaxation_param_dict_for_fw2_isotropic_2d(monkeypatch):
+    """Test _calc_relaxation_param_dict_for_fw2 with isotropic relaxation in 2D."""
+    grid_shape = (3, 3)
+    grid = DummyGrid2D(nx=grid_shape[0], ny=grid_shape[1], dt=1e-4)
+
+    dummy_check = type(
+        "dummy",
+        (),
+        {
+            "check_instance": lambda _, instance, cls: None,  # noqa: ARG005
+            "check_path_exists": lambda _, path: None,  # noqa: ARG005
+            "check_compatible_value": lambda _,
+            value,  # noqa: ARG005
+            compatible_values,  # noqa: ARG005
+            error_message_template: None,  # noqa: ARG005
+        },
+    )()
+    monkeypatch.setattr(medium_module, "check_functions", dummy_check)
+
+    sound_speed = np.ones(grid_shape) * 1500
+    density = np.ones(grid_shape) * 1000
+    beta = np.ones(grid_shape) * 0.8
+    relaxation_dict = get_dummy_relaxation_dict(grid_shape, n_relaxation_mechanisms=2)
+
+    medium_relax = MediumRelaxationMaps(
+        grid,
+        sound_speed,
+        density,
+        beta,
+        relaxation_dict,
+        use_isotropic_relaxation=True,
+    )
+
+    fw2_dict = medium_relax.relaxation_param_dict_for_fw2
+
+    # Check that isotropic keys are present
+    assert "kappa_u" in fw2_dict
+    assert "kappa_x" in fw2_dict
+    assert "a_pml_u1" in fw2_dict
+    assert "b_pml_u1" in fw2_dict
+    assert "a_pml_x1" in fw2_dict
+    assert "b_pml_x1" in fw2_dict
+
+    # Check that anisotropic keys are NOT present for 2D isotropic
+    assert "kappa_y" not in fw2_dict
+    assert "kappa_w" not in fw2_dict
+
+    # Verify shapes
+    for value in fw2_dict.values():
+        assert value.shape == grid_shape
+
+
+def test_calc_relaxation_param_dict_for_fw2_anisotropic_2d(monkeypatch):
+    """Test _calc_relaxation_param_dict_for_fw2 with anisotropic relaxation in 2D."""
+    grid_shape = (3, 3)
+    grid = DummyGrid2D(nx=grid_shape[0], ny=grid_shape[1], dt=1e-4)
+
+    dummy_check = type(
+        "dummy",
+        (),
+        {
+            "check_instance": lambda _, instance, cls: None,  # noqa: ARG005
+            "check_path_exists": lambda _, path: None,  # noqa: ARG005
+            "check_compatible_value": lambda _,
+            value,  # noqa: ARG005
+            compatible_values,  # noqa: ARG005
+            error_message_template: None,  # noqa: ARG005
+        },
+    )()
+    monkeypatch.setattr(medium_module, "check_functions", dummy_check)
+
+    sound_speed = np.ones(grid_shape) * 1500
+    density = np.ones(grid_shape) * 1000
+    beta = np.ones(grid_shape) * 0.8
+    relaxation_dict = get_dummy_relaxation_dict(grid_shape, n_relaxation_mechanisms=2)
+
+    medium_relax = MediumRelaxationMaps(
+        grid,
+        sound_speed,
+        density,
+        beta,
+        relaxation_dict,
+        use_isotropic_relaxation=False,
+    )
+
+    fw2_dict = medium_relax.relaxation_param_dict_for_fw2
+
+    # Check that anisotropic keys are present for 2D
+    assert "kappa_x" in fw2_dict
+    assert "kappa_y" in fw2_dict
+    assert "kappa_u" in fw2_dict
+    assert "kappa_w" in fw2_dict
+    assert "a_pml_x1" in fw2_dict
+    assert "b_pml_x1" in fw2_dict
+    assert "a_pml_y1" in fw2_dict
+    assert "b_pml_y1" in fw2_dict
+    assert "a_pml_u1" in fw2_dict
+    assert "b_pml_u1" in fw2_dict
+    assert "a_pml_w1" in fw2_dict
+    assert "b_pml_w1" in fw2_dict
+
+    # Verify shapes
+    for value in fw2_dict.values():
+        assert value.shape == grid_shape
+
+
+def test_calc_relaxation_param_dict_for_fw2_values(monkeypatch):
+    """Test that _calc_relaxation_param_dict_for_fw2 calculates correct a and b values."""
+    grid_shape = (2, 2)
+    dt = 1e-4
+    grid = DummyGrid2D(nx=grid_shape[0], ny=grid_shape[1], dt=dt)
+
+    dummy_check = type(
+        "dummy",
+        (),
+        {
+            "check_instance": lambda _, instance, cls: None,  # noqa: ARG005
+            "check_path_exists": lambda _, path: None,  # noqa: ARG005
+            "check_compatible_value": lambda _,
+            value,  # noqa: ARG005
+            compatible_values,  # noqa: ARG005
+            error_message_template: None,  # noqa: ARG005
+        },
+    )()
+    monkeypatch.setattr(medium_module, "check_functions", dummy_check)
+
+    sound_speed = np.ones(grid_shape) * 1500
+    density = np.ones(grid_shape) * 1000
+    beta = np.ones(grid_shape) * 0.8
+
+    # Create relaxation dict with known values
+    kappa_x1 = np.ones(grid_shape) * 2.0
+    kappa_x2 = np.ones(grid_shape) * 3.0
+    d_x1_nu1 = np.ones(grid_shape) * 0.1
+    alpha_x1_nu1 = np.ones(grid_shape) * 0.2
+    d_x2_nu1 = np.ones(grid_shape) * 0.15
+    alpha_x2_nu1 = np.ones(grid_shape) * 0.25
+
+    relaxation_dict = {
+        "kappa_x1": kappa_x1,
+        "kappa_x2": kappa_x2,
+        "d_x1_nu1": d_x1_nu1,
+        "alpha_x1_nu1": alpha_x1_nu1,
+        "d_x1_nu2": d_x1_nu1 * 1.1,
+        "alpha_x1_nu2": alpha_x1_nu1 * 1.1,
+        "d_x2_nu1": d_x2_nu1,
+        "alpha_x2_nu1": alpha_x2_nu1,
+        "d_x2_nu2": d_x2_nu1 * 1.1,
+        "alpha_x2_nu2": alpha_x2_nu1 * 1.1,
+    }
+
+    medium_relax = MediumRelaxationMaps(
+        grid,
+        sound_speed,
+        density,
+        beta,
+        relaxation_dict,
+        use_isotropic_relaxation=True,
+    )
+
+    fw2_dict = medium_relax.relaxation_param_dict_for_fw2
+
+    # Manually calculate expected a and b for nu1
+    expected_b = np.exp(-(d_x1_nu1 / kappa_x1 + alpha_x1_nu1) * dt)
+    eps = 1e-10
+    expected_a = (
+        d_x1_nu1 / (kappa_x1 * (d_x1_nu1 + kappa_x1 * alpha_x1_nu1) + eps) * (expected_b - 1)
+    )
+
+    np.testing.assert_allclose(fw2_dict["b_pml_u1"], expected_b, rtol=1e-10)
+    np.testing.assert_allclose(fw2_dict["a_pml_u1"], expected_a, rtol=1e-10)
+
+
+def test_calc_relaxation_param_dict_for_fw2_kappa_mapping(monkeypatch):
+    """Test that kappa values are correctly mapped in fw2_dict."""
+    grid_shape = (2, 2)
+    grid = DummyGrid2D(nx=grid_shape[0], ny=grid_shape[1], dt=1e-4)
+
+    dummy_check = type(
+        "dummy",
+        (),
+        {
+            "check_instance": lambda _, instance, cls: None,  # noqa: ARG005
+            "check_path_exists": lambda _, path: None,  # noqa: ARG005
+            "check_compatible_value": lambda _,
+            value,  # noqa: ARG005
+            compatible_values,  # noqa: ARG005
+            error_message_template: None,  # noqa: ARG005
+        },
+    )()
+    monkeypatch.setattr(medium_module, "check_functions", dummy_check)
+
+    sound_speed = np.ones(grid_shape) * 1500
+    density = np.ones(grid_shape) * 1000
+    beta = np.ones(grid_shape) * 0.8
+
+    # Create relaxation dict with distinct kappa values
+    kappa_x1_val = np.ones(grid_shape) * 5.0
+    kappa_x2_val = np.ones(grid_shape) * 7.0
+
+    relaxation_dict = get_dummy_relaxation_dict(grid_shape, n_relaxation_mechanisms=2)
+    relaxation_dict["kappa_x1"] = kappa_x1_val
+    relaxation_dict["kappa_x2"] = kappa_x2_val
+
+    # Test isotropic
+    medium_relax = MediumRelaxationMaps(
+        grid,
+        sound_speed,
+        density,
+        beta,
+        relaxation_dict,
+        use_isotropic_relaxation=True,
+    )
+    fw2_dict = medium_relax.relaxation_param_dict_for_fw2
+
+    np.testing.assert_allclose(fw2_dict["kappa_u"], kappa_x1_val)
+    np.testing.assert_allclose(fw2_dict["kappa_x"], kappa_x2_val)
+
+    # Test anisotropic
+    medium_relax_aniso = MediumRelaxationMaps(
+        grid,
+        sound_speed,
+        density,
+        beta,
+        relaxation_dict,
+        use_isotropic_relaxation=False,
+    )
+    fw2_dict_aniso = medium_relax_aniso.relaxation_param_dict_for_fw2
+
+    np.testing.assert_allclose(fw2_dict_aniso["kappa_u"], kappa_x1_val)
+    np.testing.assert_allclose(fw2_dict_aniso["kappa_w"], kappa_x1_val)
+    np.testing.assert_allclose(fw2_dict_aniso["kappa_x"], kappa_x2_val)
+    np.testing.assert_allclose(fw2_dict_aniso["kappa_y"], kappa_x2_val)
+
+
+def test_calc_relaxation_param_dict_for_fw2_multiple_nu(monkeypatch):
+    """Test that multiple relaxation mechanisms (nu) are handled correctly."""
+    grid_shape = (2, 2)
+    grid = DummyGrid2D(nx=grid_shape[0], ny=grid_shape[1], dt=1e-4)
+
+    dummy_check = type(
+        "dummy",
+        (),
+        {
+            "check_instance": lambda _, instance, cls: None,  # noqa: ARG005
+            "check_path_exists": lambda _, path: None,  # noqa: ARG005
+            "check_compatible_value": lambda _,
+            value,  # noqa: ARG005
+            compatible_values,  # noqa: ARG005
+            error_message_template: None,  # noqa: ARG005
+        },
+    )()
+    monkeypatch.setattr(medium_module, "check_functions", dummy_check)
+
+    sound_speed = np.ones(grid_shape) * 1500
+    density = np.ones(grid_shape) * 1000
+    beta = np.ones(grid_shape) * 0.8
+    relaxation_dict = get_dummy_relaxation_dict(grid_shape, n_relaxation_mechanisms=2)
+
+    medium_relax = MediumRelaxationMaps(
+        grid,
+        sound_speed,
+        density,
+        beta,
+        relaxation_dict,
+        use_isotropic_relaxation=True,
+    )
+
+    fw2_dict = medium_relax.relaxation_param_dict_for_fw2
+
+    # Check that both nu1 and nu2 are present
+    assert "a_pml_u1" in fw2_dict
+    assert "b_pml_u1" in fw2_dict
+    assert "a_pml_u2" in fw2_dict
+    assert "b_pml_u2" in fw2_dict
+    assert "a_pml_x1" in fw2_dict
+    assert "b_pml_x1" in fw2_dict
+    assert "a_pml_x2" in fw2_dict
+    assert "b_pml_x2" in fw2_dict

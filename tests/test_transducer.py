@@ -116,23 +116,6 @@ class DummyGridWithTime:
         self.is_3d = False
 
 
-# Dummy classes for fullwave.Sensor and fullwave.Source to use in tests.
-class DummySensor:
-    def __init__(self, mask):
-        self.mask = mask
-
-
-class DummySource:
-    def __init__(self, signal, mask):
-        self.signal = signal
-        self.mask = mask
-
-
-# Override fullwave.Sensor and fullwave.Source for testing.
-fullwave.Sensor = DummySensor
-fullwave.Source = DummySource
-
-
 def test_valid_general_transducer():
     # Use a grid where the number of grid points in x equals the number of elements,
     # so that boolean indexing in sensor_mask/source_mask works.

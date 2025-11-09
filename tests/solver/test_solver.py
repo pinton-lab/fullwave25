@@ -1,8 +1,10 @@
 from pathlib import Path
 from unittest.mock import patch
 
+import numpy as np
 import pytest
 
+import fullwave
 from fullwave.solver.solver import (
     _check_compatible_set,
     _make_cuda_arch_option,
@@ -312,3 +314,96 @@ def test_retrieve_fullwave_simulation_path_different_arch_versions():
                 / f"fullwave2_3d_2_relax_multi_gpu_{arch}_{version_str}"
             )
             assert result == expected_path
+
+
+def _get_solver(
+    tmp_path,
+    use_isotropic_relaxation_medium,
+    use_isotropic_relaxation_solver,
+):
+    work_dir = tmp_path / "test_solver_use_isotropic_relaxation"
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    domain_size = (1e-2, 1e-2)  # meters
+    f0 = 1e6 / 10
+    c0 = 1540
+    duration = domain_size[0] / c0 * 2
+
+    grid = fullwave.Grid(
+        domain_size=domain_size,
+        f0=f0,
+        duration=duration,
+        c0=c0,
+    )
+
+    sound_speed_map = 1540 * np.ones((grid.nx, grid.ny))  # m/s
+    density_map = 1000 * np.ones((grid.nx, grid.ny))  # kg/m^3
+    alpha_coeff_map = 0.5 * np.ones((grid.nx, grid.ny))  # dB/(MHz^y cm)
+    alpha_power_map = 1.0 * np.ones((grid.nx, grid.ny))  # power law exponent
+    beta_map = 0.0 * np.ones((grid.nx, grid.ny))  # nonlinearity parameter
+
+    medium = fullwave.Medium(
+        grid=grid,
+        sound_speed=sound_speed_map,
+        density=density_map,
+        alpha_coeff=alpha_coeff_map,
+        alpha_power=alpha_power_map,
+        beta=beta_map,
+        use_isotropic_relaxation=use_isotropic_relaxation_medium,
+    )
+    p_mask = np.zeros((grid.nx, grid.ny), dtype=bool)
+    p_mask[grid.nx // 2, :] = True
+    p0 = np.ones((p_mask.sum(), grid.nt))  # [n_sources, nt]
+
+    source = fullwave.Source(p0, p_mask)
+
+    sensor_mask = np.zeros((grid.nx, grid.ny), dtype=bool)
+    sensor_mask[:, :] = True
+
+    sensor = fullwave.Sensor(mask=sensor_mask, sampling_modulus_time=7)
+
+    fw_solver = fullwave.Solver(
+        work_dir=work_dir,
+        grid=grid,
+        medium=medium,
+        source=source,
+        sensor=sensor,
+        use_isotropic_relaxation=use_isotropic_relaxation_solver,
+    )
+    return fw_solver
+
+
+@pytest.mark.parametrize(
+    ("use_isotropic_relaxation_medium", "use_isotropic_relaxation_solver", "warning_expected"),
+    [
+        (True, True, False),
+        (False, False, False),
+        (True, False, True),
+        (False, True, True),
+    ],
+)
+def test_use_isotropic_relaxation(
+    tmp_path,
+    use_isotropic_relaxation_medium,
+    use_isotropic_relaxation_solver,
+    warning_expected,
+    caplog,
+):
+    """Test Solver with and without isotropic relaxation medium and solver."""
+    with (
+        patch("fullwave.solver.solver.logger") as mock_logger,
+    ):
+        if warning_expected:
+            _ = _get_solver(
+                tmp_path,
+                use_isotropic_relaxation_medium=use_isotropic_relaxation_medium,
+                use_isotropic_relaxation_solver=use_isotropic_relaxation_solver,
+            )
+            mock_logger.warning.assert_called_once()
+        else:
+            _ = _get_solver(
+                tmp_path,
+                use_isotropic_relaxation_medium=use_isotropic_relaxation_medium,
+                use_isotropic_relaxation_solver=use_isotropic_relaxation_solver,
+            )
+            mock_logger.warning.assert_not_called()
