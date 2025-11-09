@@ -104,7 +104,7 @@ class PMLBuilder:
     n_transition_layer: int
 
     extended_grid: fullwave.Grid = field(init=False)
-    extended_medium: fullwave.Medium = field(init=False)
+    extended_medium: fullwave.Medium | fullwave.MediumRelaxationMaps = field(init=False)
     extended_source: fullwave.Source = field(init=False)
     extended_sensor: fullwave.Sensor = field(init=False)
 
@@ -164,7 +164,7 @@ class PMLBuilder:
         )
         check_functions.check_instance(
             medium,
-            fullwave.Medium,
+            [fullwave.Medium, fullwave.MediumRelaxationMaps],
         )
         check_functions.check_instance(
             source,
@@ -215,18 +215,32 @@ class PMLBuilder:
         )
 
         logger.debug("building extended medium for pml...")
-        self.extended_medium = fullwave.Medium(
-            grid=self.extended_grid,
-            sound_speed=self._extend_map_for_pml(self.medium_org.sound_speed),
-            density=self._extend_map_for_pml(self.medium_org.density),
-            beta=self._extend_map_for_pml(self.medium_org.beta),
-            alpha_coeff=self._extend_map_for_pml(self.medium_org.alpha_coeff),
-            alpha_power=self._extend_map_for_pml(self.medium_org.alpha_power),
-            air_map=self._extend_map_for_pml(self.medium_org.air_map, fill_edge=False),
-            n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
-            path_relaxation_parameters_database=self.medium_org.path_relaxation_parameters_database,
-            attenuation_builder=self.medium_org.attenuation_builder,
-        )
+        if isinstance(self.medium_org, fullwave.MediumRelaxationMaps):
+            self.extended_medium = fullwave.MediumRelaxationMaps(
+                grid=self.extended_grid,
+                sound_speed=self._extend_map_for_pml(self.medium_org.sound_speed),
+                density=self._extend_map_for_pml(self.medium_org.density),
+                beta=self._extend_map_for_pml(self.medium_org.beta),
+                relaxation_param_dict={
+                    key: self._extend_map_for_pml(value)
+                    for key, value in self.medium_org.relaxation_param_dict.items()
+                },
+                air_map=self._extend_map_for_pml(self.medium_org.air_map, fill_edge=False),
+                n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
+            )
+        else:
+            self.extended_medium = fullwave.Medium(
+                grid=self.extended_grid,
+                sound_speed=self._extend_map_for_pml(self.medium_org.sound_speed),
+                density=self._extend_map_for_pml(self.medium_org.density),
+                beta=self._extend_map_for_pml(self.medium_org.beta),
+                alpha_coeff=self._extend_map_for_pml(self.medium_org.alpha_coeff),
+                alpha_power=self._extend_map_for_pml(self.medium_org.alpha_power),
+                air_map=self._extend_map_for_pml(self.medium_org.air_map, fill_edge=False),
+                n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
+                path_relaxation_parameters_database=self.medium_org.path_relaxation_parameters_database,
+                attenuation_builder=self.medium_org.attenuation_builder,
+            )
 
         logger.debug("building extended source for pml...")
         self.extended_source = fullwave.Source(

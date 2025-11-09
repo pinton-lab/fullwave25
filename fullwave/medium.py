@@ -40,6 +40,7 @@ class MediumRelaxationMaps:
         *,
         air_map: NDArray[np.int64] | None = None,
         n_relaxation_mechanisms: int = 2,
+        use_isotropic_relaxation: bool = True,
     ) -> None:
         """Medium class for Fullwave.
 
@@ -67,6 +68,14 @@ class MediumRelaxationMaps:
             shape: [nx, ny] for 2D, [nx, ny, nz] for 3D
         n_relaxation_mechanisms : int, optional
             Number of relaxation mechanisms, by default 2
+        use_isotropic_relaxation : bool, optional
+            Whether to use isotropic relaxation mechanisms for attenuation modeling
+            to reduce memory usage while retaining accuracy.
+            For 2D it will reduce the memory usage by approximately 15%.
+            For 3D it will reduce the memory usage by approximately 25%.
+            This option omits the anisotropic relaxation mechanisms to model the attenuation.
+            We usually recommend using isotropic relaxation mechanisms
+            unless the anisotropic attenuation is required for the simulation.
 
         """
         check_functions.check_compatible_value(
@@ -96,7 +105,10 @@ class MediumRelaxationMaps:
         self._update_relaxation_param_dict(
             relaxation_param_updates=relaxation_param_dict,
         )
-        self.relaxation_param_dict_for_fw2 = self._calc_relaxation_param_dict_for_fw2()
+        self.use_isotropic_relaxation = use_isotropic_relaxation
+        self.relaxation_param_dict_for_fw2 = self._calc_relaxation_param_dict_for_fw2(
+            use_isotropic_relaxation=self.use_isotropic_relaxation,
+        )
         self.check_fields()
         logger.debug("MediumRelaxationMaps instance created.")
 
@@ -284,14 +296,81 @@ class MediumRelaxationMaps:
     ) -> NDArray[np.float64]:
         return dx / kappa + alpha
 
-    def _calc_relaxation_param_dict_for_fw2(self) -> dict[str, NDArray[np.float64]]:
+    def _calculate_relaxation_coefficients(self) -> dict[str, NDArray[np.float64]]:
+        """Calculate relaxation coefficients for all mechanisms.
+
+        Returns
+        -------
+            dict[str, NDArray[np.float64]]: Dictionary with calculated coefficients.
+
+        """
+        relaxation_coefficients = {}
+        relaxation_coefficients["kappa_x1"] = self.relaxation_param_dict["kappa_x1"]
+        relaxation_coefficients["kappa_x2"] = self.relaxation_param_dict["kappa_x2"]
+
+        for nu in range(1, self.n_relaxation_mechanisms + 1):
+            (
+                relaxation_coefficients[f"a_pml_x1_nu{nu}"],
+                relaxation_coefficients[f"b_pml_x1_nu{nu}"],
+            ) = self._calc_a_and_b(
+                dx=self.relaxation_param_dict[f"d_x1_nu{nu}"],
+                kappa_x=self.relaxation_param_dict["kappa_x1"],
+                alpha_x=self.relaxation_param_dict[f"alpha_x1_nu{nu}"],
+                dt=self.grid.dt,
+            )
+            (
+                relaxation_coefficients[f"a_pml_x2_nu{nu}"],
+                relaxation_coefficients[f"b_pml_x2_nu{nu}"],
+            ) = self._calc_a_and_b(
+                dx=self.relaxation_param_dict[f"d_x2_nu{nu}"],
+                kappa_x=self.relaxation_param_dict["kappa_x2"],
+                alpha_x=self.relaxation_param_dict[f"alpha_x2_nu{nu}"],
+                dt=self.grid.dt,
+            )
+        return relaxation_coefficients
+
+    def _calc_relaxation_param_dict_for_fw2(
+        self,
+        *,
+        use_isotropic_relaxation: bool = True,
+    ) -> dict[str, NDArray[np.float64]]:
         """Return the relaxation parameter dict for Fullwave2.
 
-        Returns:
+        Parameters
+        ----------
+        use_isotropic_relaxation : bool, optional
+            Whether to use isotropic relaxation mechanisms for attenuation modeling
+            to reduce memory usage while retaining accuracy.
+            For 2D it will reduce the GPU memory usage by approximately 15%.
+            For 3D it will reduce the GPU memory usage by approximately 30%
+            and CPU memory usage by approximately 20%.
+            This option omits the anisotropic relaxation mechanisms to model the attenuation.
+            We usually recommend using isotropic relaxation mechanisms
+            unless the anisotropic attenuation is required for the simulation.
+
+        Returns
+        -------
             dict[str, NDArray[np.float64]]: A dictionary with the calculated relaxation parameters
             formatted for Fullwave2.
 
         """
+        if use_isotropic_relaxation:
+            rename_dict = {
+                "kappa_x": "kappa_x2",
+                "kappa_u": "kappa_x1",
+            }
+            for nu in range(1, self.n_relaxation_mechanisms + 1):
+                rename_dict[f"a_pml_u{nu}"] = f"a_pml_x1_nu{nu}"
+                rename_dict[f"b_pml_u{nu}"] = f"b_pml_x1_nu{nu}"
+                rename_dict[f"a_pml_x{nu}"] = f"a_pml_x2_nu{nu}"
+                rename_dict[f"b_pml_x{nu}"] = f"b_pml_x2_nu{nu}"
+
+            relaxation_coefficients = self._calculate_relaxation_coefficients()
+            out_dict = {}
+            for new_key, key in rename_dict.items():
+                out_dict[new_key] = relaxation_coefficients[key].copy()
+            return out_dict
+
         rename_dict = {
             "kappa_x": "kappa_x2",
             "kappa_y": "kappa_x2",
@@ -318,29 +397,7 @@ class MediumRelaxationMaps:
                 rename_dict[f"a_pml_z{nu}"] = f"a_pml_x2_nu{nu}"
                 rename_dict[f"b_pml_z{nu}"] = f"b_pml_x2_nu{nu}"
 
-        relaxation_coefficients = {}
-        relaxation_coefficients["kappa_x1"] = self.relaxation_param_dict["kappa_x1"]
-        relaxation_coefficients["kappa_x2"] = self.relaxation_param_dict["kappa_x2"]
-
-        for nu in range(1, self.n_relaxation_mechanisms + 1):
-            (
-                relaxation_coefficients[f"a_pml_x1_nu{nu}"],
-                relaxation_coefficients[f"b_pml_x1_nu{nu}"],
-            ) = self._calc_a_and_b(
-                dx=self.relaxation_param_dict[f"d_x1_nu{nu}"],
-                kappa_x=self.relaxation_param_dict["kappa_x1"],
-                alpha_x=self.relaxation_param_dict[f"alpha_x1_nu{nu}"],
-                dt=self.grid.dt,
-            )
-            (
-                relaxation_coefficients[f"a_pml_x2_nu{nu}"],
-                relaxation_coefficients[f"b_pml_x2_nu{nu}"],
-            ) = self._calc_a_and_b(
-                dx=self.relaxation_param_dict[f"d_x2_nu{nu}"],
-                kappa_x=self.relaxation_param_dict["kappa_x2"],
-                alpha_x=self.relaxation_param_dict[f"alpha_x2_nu{nu}"],
-                dt=self.grid.dt,
-            )
+        relaxation_coefficients = self._calculate_relaxation_coefficients()
 
         # extend it to x and y directions and rename the keys to Fullwave2 format
         out_dict = {}
@@ -374,25 +431,39 @@ class MediumRelaxationMaps:
         *,
         show: bool = False,
         dpi: int = 300,
+        plot_fw2_params: bool = False,
     ) -> None:
         """Plot the medium fields using matplotlib."""
         if self.is_3d:
             error_msg = "3D plotting is not implemented yet."
             raise NotImplementedError(error_msg)
-        relaxation_param_dict_keys = initialize_relaxation_param_dict(
-            n_relaxation_mechanisms=self.n_relaxation_mechanisms,
-        ).keys()
 
-        target_map_dict: OrderedDict = OrderedDict(
-            [
-                ("Sound speed", self.sound_speed),
-                ("Density", self.density),
-                ("Beta", self.beta),
-                ("Air map", self.air_map),
-            ],
-        )
-        for key in relaxation_param_dict_keys:
-            target_map_dict[key] = self.relaxation_param_dict[key]
+        if plot_fw2_params:
+            target_map_dict: OrderedDict = OrderedDict(
+                [
+                    ("Sound speed", self.sound_speed),
+                    ("Density", self.density),
+                    ("Beta", self.beta),
+                    ("Air map", self.air_map),
+                ],
+            )
+            for key in self.relaxation_param_dict_for_fw2:
+                target_map_dict[key] = self.relaxation_param_dict_for_fw2[key]
+        else:
+            relaxation_param_dict_keys = initialize_relaxation_param_dict(
+                n_relaxation_mechanisms=self.n_relaxation_mechanisms,
+            ).keys()
+
+            target_map_dict: OrderedDict = OrderedDict(
+                [
+                    ("Sound speed", self.sound_speed),
+                    ("Density", self.density),
+                    ("Beta", self.beta),
+                    ("Air map", self.air_map),
+                ],
+            )
+            for key in relaxation_param_dict_keys:
+                target_map_dict[key] = self.relaxation_param_dict[key]
 
         num_plots = len(target_map_dict)
         # calculate subplot shape to make a square
@@ -448,6 +519,12 @@ class MediumRelaxationMaps:
             f"  Beta: min {np.min(self.beta):.2f}, max {np.max(self.beta):.2f}\n"
             f"  Number of air coordinates: {self.n_air}\n"
             f"  Number of relaxation mechanisms: {self.n_relaxation_mechanisms}\n"
+            f"  Relaxation parameters:\n"
+        ) + "".join(
+            [
+                f"    {key}: min {np.min(value):.4e}, max {np.max(value):.4e}\n"
+                for key, value in self.relaxation_param_dict.items()
+            ],
         )
 
     def __repr__(self) -> str:
@@ -460,6 +537,24 @@ class MediumRelaxationMaps:
 
         """
         return str(self)
+
+    def build(self) -> "MediumRelaxationMaps":
+        """Build the MediumRelaxationMaps instance.
+
+        It returns self for compatibility with Solver class.
+
+        We can pass the MediumRelaxationMaps instance
+        directly to Solver instead of Medium.
+
+        We can pass the relaxation_param_dict directly to the simulation
+        bypassing the Medium.build() step.
+
+        Returns
+        -------
+        MediumRelaxationMaps
+
+        """
+        return self
 
 
 @dataclass
@@ -685,6 +780,7 @@ class Medium:
         / "relaxation_params_database_num_relax=2_20251027_1437.mat",
         n_relaxation_mechanisms: int = 2,
         attenuation_builder: str = "lookup",
+        use_isotropic_relaxation: bool = True,
     ) -> None:
         """Medium class for Fullwave.
 
@@ -719,6 +815,14 @@ class Medium:
         attenuation_builder : str, optional
             Attenuation builder method, by default "lookup".
             Options are "lookup", "interpolation", and "regression".
+        use_isotropic_relaxation : bool, optional
+            Whether to use isotropic relaxation mechanisms for attenuation modeling
+            to reduce memory usage while retaining accuracy.
+            For 2D it will reduce the memory usage by approximately 15%.
+            For 3D it will reduce the memory usage by approximately 25%.
+            This option omits the anisotropic relaxation mechanisms to model the attenuation.
+            We usually recommend using isotropic relaxation mechanisms
+            unless the anisotropic attenuation is required for the simulation.
 
         """
         check_functions.check_compatible_value(
@@ -742,6 +846,7 @@ class Medium:
             self.air_map = air_map
         self.path_relaxation_parameters_database = path_relaxation_parameters_database
         self.n_relaxation_mechanisms = n_relaxation_mechanisms
+        self.use_isotropic_relaxation = use_isotropic_relaxation
 
         if self.n_relaxation_mechanisms != 2 and self.air_map.sum() > 0:
             warning_msg = (
@@ -957,6 +1062,7 @@ class Medium:
             relaxation_param_dict=relaxation_param_dict,
             air_map=self.air_map,
             n_relaxation_mechanisms=self.n_relaxation_mechanisms,
+            use_isotropic_relaxation=self.use_isotropic_relaxation,
         )
 
     def _db_mhz_cm_to_a_exp(

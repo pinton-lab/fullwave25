@@ -455,6 +455,26 @@ class Solver:
         )
 
         self.medium = medium
+        if use_isotropic_relaxation:
+            if self.medium.use_isotropic_relaxation is False:
+                message = (
+                    "Solver is set to use isotropic relaxation, "
+                    "but the provided medium is using anisotropic relaxation. "
+                    "Overriding the medium to use isotropic relaxation. "
+                )
+                # warning
+                logger.warning(message, UserWarning)
+            self.medium.use_isotropic_relaxation = True
+        else:
+            if self.medium.use_isotropic_relaxation is True:
+                message = (
+                    "Solver is set to use anisotropic relaxation, "
+                    "but the provided medium is using isotropic relaxation. "
+                    "Overriding the medium to use anisotropic relaxation. "
+                )
+                logger.warning(message, UserWarning)
+            self.medium.use_isotropic_relaxation = False
+
         self.use_pml = use_pml
         if not use_pml:
             pml_layer_thickness_px = 0
@@ -564,7 +584,7 @@ class Solver:
 
         # validate the instances
         check_functions.check_instance(grid, fullwave.Grid)
-        check_functions.check_instance(medium, fullwave.Medium)
+        check_functions.check_instance(medium, [fullwave.Medium, fullwave.MediumRelaxationMaps])
 
         if source is not None:
             grid_shape = (grid.nx, grid.ny, grid.nz) if grid.is_3d else (grid.nx, grid.ny)

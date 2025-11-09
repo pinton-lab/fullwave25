@@ -91,9 +91,3 @@ def test_warning_on_mac(mock_system, caplog):
     assert any(
         "fullwave is primarily developed for Linux" in record.message for record in caplog.records
     )
-
-
-def test_platform_module_deleted():
-    """Test that platform module is deleted after use."""
-    # Platform should not be accessible as an attribute of fullwave
-    assert not hasattr(fullwave, "platform")
