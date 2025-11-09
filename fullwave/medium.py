@@ -374,25 +374,39 @@ class MediumRelaxationMaps:
         *,
         show: bool = False,
         dpi: int = 300,
+        plot_fw2_params: bool = False,
     ) -> None:
         """Plot the medium fields using matplotlib."""
         if self.is_3d:
             error_msg = "3D plotting is not implemented yet."
             raise NotImplementedError(error_msg)
-        relaxation_param_dict_keys = initialize_relaxation_param_dict(
-            n_relaxation_mechanisms=self.n_relaxation_mechanisms,
-        ).keys()
 
-        target_map_dict: OrderedDict = OrderedDict(
-            [
-                ("Sound speed", self.sound_speed),
-                ("Density", self.density),
-                ("Beta", self.beta),
-                ("Air map", self.air_map),
-            ],
-        )
-        for key in relaxation_param_dict_keys:
-            target_map_dict[key] = self.relaxation_param_dict[key]
+        if plot_fw2_params:
+            target_map_dict: OrderedDict = OrderedDict(
+                [
+                    ("Sound speed", self.sound_speed),
+                    ("Density", self.density),
+                    ("Beta", self.beta),
+                    ("Air map", self.air_map),
+                ],
+            )
+            for key in self.relaxation_param_dict_for_fw2:
+                target_map_dict[key] = self.relaxation_param_dict_for_fw2[key]
+        else:
+            relaxation_param_dict_keys = initialize_relaxation_param_dict(
+                n_relaxation_mechanisms=self.n_relaxation_mechanisms,
+            ).keys()
+
+            target_map_dict: OrderedDict = OrderedDict(
+                [
+                    ("Sound speed", self.sound_speed),
+                    ("Density", self.density),
+                    ("Beta", self.beta),
+                    ("Air map", self.air_map),
+                ],
+            )
+            for key in relaxation_param_dict_keys:
+                target_map_dict[key] = self.relaxation_param_dict[key]
 
         num_plots = len(target_map_dict)
         # calculate subplot shape to make a square
@@ -448,6 +462,12 @@ class MediumRelaxationMaps:
             f"  Beta: min {np.min(self.beta):.2f}, max {np.max(self.beta):.2f}\n"
             f"  Number of air coordinates: {self.n_air}\n"
             f"  Number of relaxation mechanisms: {self.n_relaxation_mechanisms}\n"
+            f"  Relaxation parameters:\n"
+        ) + "".join(
+            [
+                f"    {key}: min {np.min(value):.4e}, max {np.max(value):.4e}\n"
+                for key, value in self.relaxation_param_dict.items()
+            ],
         )
 
     def __repr__(self) -> str:
@@ -460,6 +480,24 @@ class MediumRelaxationMaps:
 
         """
         return str(self)
+
+    def build(self) -> "MediumRelaxationMaps":
+        """Build the MediumRelaxationMaps instance.
+
+        It returns self for compatibility with Solver class.
+
+        We can pass the MediumRelaxationMaps instance
+        directly to Solver instead of Medium.
+
+        We can pass the relaxation_param_dict directly to the simulation
+        bypassing the Medium.build() step.
+
+        Returns
+        -------
+        MediumRelaxationMaps
+
+        """
+        return self
 
 
 @dataclass

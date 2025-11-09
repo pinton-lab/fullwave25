@@ -4,15 +4,17 @@ from pathlib import Path
 from typing import Any
 
 
-def check_instance(target_var: Any, instance: Any) -> None:  # noqa: ANN401
+def check_instance(target_var: Any, instances: list[Any] | Any) -> None:  # noqa: ANN401
     """Check whether target_var is an instance of the specified type.
 
     Raises:
         TypeError: If target_var is not an instance of instance.
 
     """
-    if not isinstance(target_var, instance):
-        error_message = f"{target_var} is not a {instance} instance"
+    if not isinstance(instances, list):
+        instances = [instances]
+    if not any(isinstance(target_var, instance) for instance in instances):
+        error_message = f"{target_var} is not an instance of {instances}"
         raise TypeError(error_message)
 
 
