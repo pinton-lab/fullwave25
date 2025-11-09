@@ -44,8 +44,9 @@ __all__ = [
     "utils",
 ]
 
+PLATFORM = platform.system().lower()
 # check linux environment
-if platform.system() != "Linux":
+if PLATFORM != "linux":
     message = (
         "Warning: fullwave is primarily developed for Linux environment.\n"
         "Using it on other operating systems may lead to unexpected issues.\n"
@@ -54,7 +55,6 @@ if platform.system() != "Linux":
     logger.warning(
         message,
     )
-del platform
 
 VERSION = "1.0.10"
 __version__ = VERSION
