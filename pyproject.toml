@@ -1,17 +1,28 @@
 [project]
 name = "fullwave25"
 dynamic = ["version"]
-description = ""
+description = "Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "matplotlib>=3.10.0",
     "numpy>=2.0.0",
     "opencv-python>=4.11.0.86",
     "scipy>=1.16.3",
+    "matplotlib>=3.10.0",
     "tqdm>=4.67.1",
 ]
-authors = [{ name = "Masashi Sode", email = "masashi.sode@gmail.com" }]
+authors = [{ name = "Masashi Sode" }, { name = "Gianmarco Pinton" }]
+maintainers = [{ name = "Masashi Sode" }]
+keywords = ["simulation", "fdtd", "finite-difference", "ultrasound"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Intended Audience :: Developers",
+]
 
 [tool.hatch.version]
 path = "fullwave/__init__.py"
@@ -26,7 +37,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
-dev = ["pre-commit>=4.1.0", "pytest>=8.3.5", "ruff>=0.12.9"]
+dev = ["deptry>=0.24.0", "pre-commit>=4.1.0", "pytest>=8.3.5", "ruff>=0.12.9"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["fullwave", "fullwave.utils"]

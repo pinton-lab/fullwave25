@@ -78,16 +78,16 @@ If you use Fullwave 2.5 in your research, please cite this repository as:
 
 ---
 
-## Hardware prerequisite
+## Hardware prerequisites
 
 - This system operates in a Linux environment.
   - If you need a Windows environment, please consider using [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) (Windows Subsystem for Linux 2).
 - This simulation requires an NVIDIA GPU to execute.
 - You may need multiple GPUs for 3D simulation.
 
-## Technical recommendation
+## Technical recommendations
 
-- We recommend setting up an SSH key for GitHub, if you haven't done already. The repository changes over time to fix bugs and add new features. Cloning through SSH is more convenient than HTTPS in the long run.
+- We recommend setting up an SSH key for GitHub, if you haven't done already. The repository changes over time to fix bugs and add new features. You can keep your local repository up to date by pulling the latest changes from GitHub. Cloning through SSH is more convenient than HTTPS in the long run.
   - for ssh key generation
     - please see: [Generating a new SSH key and adding it to the ssh-agent](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent)
   - for ssh key registration to your github account
@@ -185,11 +185,11 @@ Please see the following examples for more advanced usage.
     - [Simple plane wave](https://github.com/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/simple_plane_wave.py) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/153Sx9D_5zTlF7UtlKHlyz_CTJnLIAI6s)
       - <img src="figs/simple_plane_wave.gif" width="200"/>
     - [Simple plane wave with air](https://github.com/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/simple_plane_wave.py) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1AnTaT6ZtwyIEcOvGgpn5srB4LWPfYKh0)
-      - <img src="figs/simple_plane_wave_with_air.gif" width="200"/>
+      <!-- - <img src="figs/simple_plane_wave_with_air.gif" width="200"/> -->
   - Linear transducer
     - [Linear transducer](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer.py)
     - [Linear transducer (plane wave transmit) with animation settings](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer_animation.py)
-      - <img src="figs/linear_transducer.gif" width="200"/>
+      <!-- - <img src="figs/linear_transducer.gif" width="200"/> -->
     - [Linear transducer (focused transmit) with animation settings](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer_animation.py)
       - <img src="figs/linear_transducer_focused.gif" width="200"/>
     - [Linear transducer (focused transmit) with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer.py) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1zlviYe0qBy0JLifFuA2MqUkavJKUQrNb)
@@ -276,7 +276,11 @@ Please see the following examples for more advanced usage.
 
 ---
 
-## Maintainers
+## Authors
 
 - Masashi Sode (GitHub: [MasashiSode](https://github.com/MasashiSode))
 - Gianmarco Pinton (GitHub: [gfpinton](https://github.com/gfpinton))
+
+## Maintainers
+
+- Masashi Sode (GitHub: [MasashiSode](https://github.com/MasashiSode))
