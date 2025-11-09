@@ -20,6 +20,7 @@ def _map_parameters_search(
     look_up_table: NDArray[np.float64],
     alpha_list: NDArray[np.float64],
     power_list: NDArray[np.float64],
+    invalid_matrix: NDArray[np.bool_],
 ) -> NDArray[np.float64]:
     """Map (nx, ny, 2) input tensor to (nx, ny, 11) using LUT.
 
@@ -33,6 +34,8 @@ def _map_parameters_search(
         List of alpha values for the lookup table.
     power_list: NDArray[np.float64]
         List of power values for the lookup table.
+    invalid_matrix: NDArray[np.bool_]
+        Matrix indicating invalid (alpha, power) combinations.
 
     Returns
     -------
@@ -49,6 +52,25 @@ def _map_parameters_search(
     # Clip indices to valid range
     alpha_index = np.clip(alpha_index, 0, len(alpha_list[0]) - 1)
     power_index = np.clip(power_index, 0, len(power_list[0]) - 1)
+    # check invalid indices
+    invalid_indices = invalid_matrix[alpha_index, power_index]
+    if np.any(invalid_indices):
+        invalid_alpha_power = np.unique(
+            input_tensor[:, :, [0, 1]][np.where(invalid_indices)],
+            axis=0,
+        )
+        invalid_attenuation = ", ".join(
+            [f"({a:.4f}, {p:.4f})" for a, p in invalid_alpha_power],
+        )
+        message = (
+            "Warning: Some attenuation values correspond to invalid relaxation parameters. "
+            "This is due to the limitations of the precomputed lookup table. "
+            "Please change the attenuation values.\n"
+            f"Number of invalid points: {np.sum(invalid_indices)}.\n"
+            f"Invalid attenuation values (alpha, power): {invalid_attenuation}\n"
+        )
+        logger.warning(message)
+
     # Advanced indexing for 2D parameter space
     return look_up_table[alpha_index, power_index, :]
 
@@ -129,6 +151,7 @@ class RelaxationParametersGenerator:
         self.look_up_table = self.database["database"]
         self.alpha_list = self.database["alpha_0_list"]
         self.power_list = self.database["power_list"]
+        self.invalid_matrix = self.database["invalid_matrix"]
         self.alpha_min = self.alpha_list.min()
         self.alpha_max = self.alpha_list.max()
         self.power_min = self.power_list.min()
@@ -210,6 +233,7 @@ class RelaxationParametersGenerator:
             self.look_up_table,
             self.alpha_list,
             self.power_list,
+            self.invalid_matrix,
         )
 
         relaxation_param_dict = initialize_relaxation_param_dict(self.n_relaxation_mechanisms)
