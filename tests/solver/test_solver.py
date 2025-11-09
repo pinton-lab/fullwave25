@@ -1,4 +1,3 @@
-import shutil
 from pathlib import Path
 from unittest.mock import patch
 
@@ -6,7 +5,6 @@ import numpy as np
 import pytest
 
 import fullwave
-import fullwave.solver.solver as sovler_module
 from fullwave.solver.solver import (
     _check_compatible_set,
     _make_cuda_arch_option,
@@ -392,6 +390,9 @@ def test_use_isotropic_relaxation(
     monkeypatch,
 ):
     """Test Solver with and without isotropic relaxation medium and solver."""
+    import fullwave.solver.solver as sovler_module
+    from fullwave.solver import launcher as launcher_module
+
     fullwave_binary_path = (
         Path(__file__).parent.parent.parent
         / "fullwave"
@@ -412,7 +413,7 @@ def test_use_isotropic_relaxation(
         n_relax_mechanisms:  # noqa: ARG005
         fullwave_binary_path,
     )
-    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/nvidia-smi")
+    monkeypatch.setattr(launcher_module.Launcher, "_verify_cuda_devices_exist", lambda x: "0")  # noqa: ARG005
 
     with (
         patch("fullwave.solver.solver.logger") as mock_logger,
