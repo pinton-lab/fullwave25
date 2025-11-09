@@ -1,3 +1,4 @@
+import shutil
 from pathlib import Path
 from unittest.mock import patch
 
@@ -411,6 +412,8 @@ def test_use_isotropic_relaxation(
         n_relax_mechanisms:  # noqa: ARG005
         fullwave_binary_path,
     )
+    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/nvidia-smi")
+
     with (
         patch("fullwave.solver.solver.logger") as mock_logger,
     ):
