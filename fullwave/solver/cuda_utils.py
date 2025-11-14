@@ -91,7 +91,7 @@ SEMVER_TO_ARCH = {
 
 
 # Attempt to load the CUDA library
-libnames = ("libcuda.so", "libcuda.dylib", "cuda.dll")
+libnames = ("libcuda.so", "libcuda.so.1", "libcuda.dylib", "cuda.dll")
 for libname in libnames:
     try:
         cuda = ctypes.CDLL(libname)
