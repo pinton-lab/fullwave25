@@ -56,5 +56,5 @@ if PLATFORM != "linux":
         message,
     )
 
-VERSION = "1.0.12"
+VERSION = "1.0.13rc1"
 __version__ = VERSION
