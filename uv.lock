@@ -658,7 +658,7 @@ wheels = [
 
 [[package]]
 name = "fullwave25"
-version = "1.0.13rc2"
+version = "1.0.14"
 source = { editable = "." }
 dependencies = [
     { name = "matplotlib" },
