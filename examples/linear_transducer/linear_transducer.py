@@ -80,7 +80,7 @@ def main() -> None:  # noqa: PLR0915
         ),
         # -
         radius=float("inf"),
-        record_only_center_element=False,
+        average_surface_signals=True,
     )
     transducer = fullwave.Transducer(
         transducer_geometry=transducer_geometry,
@@ -169,7 +169,7 @@ def main() -> None:  # noqa: PLR0915
 
     sensor_output = transducer.post_process_sensor_output(
         sensor_output,
-        average_surface_pixel=True,
+        average_surface_signals=True,
     )
 
     # --- visualization ---
