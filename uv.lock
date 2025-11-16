@@ -658,13 +658,14 @@ wheels = [
 
 [[package]]
 name = "fullwave25"
-version = "1.0.14"
+version = "1.0.15rc5"
 source = { editable = "." }
 dependencies = [
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "opencv-python-headless" },
     { name = "scipy" },
+    { name = "tomli" },
     { name = "tqdm" },
 ]
 
@@ -703,6 +704,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'test'" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12.9" },
     { name = "scipy", specifier = ">=1.13.1" },
+    { name = "tomli", specifier = ">=2.3.0" },
     { name = "tomli", marker = "extra == 'test'", specifier = ">=2.3.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
 ]
