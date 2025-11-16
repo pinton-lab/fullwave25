@@ -783,17 +783,17 @@ class Transducer:
         return self.transducer_geometry.n_sources
 
     @property
-    def tranducer_surface(self) -> NDArray[np.int64]:
+    def transducer_surface(self) -> NDArray[np.int64]:
         """Return the coordinates of the transducer surface."""
         return map_to_coordinates(self.sensor_mask == 1)[0]
 
     @property
-    def tranducer_mask(self) -> NDArray[np.bool]:
+    def transducer_mask(self) -> NDArray[np.bool]:
         """Return the coordinates of the transducer mask."""
         mask = np.zeros(self.transducer_geometry.stored_grid_size, dtype=bool)
-        tranducer_surface = self.tranducer_surface
-        for i in range(len(tranducer_surface)):
-            mask[: tranducer_surface[i].astype(int), i] = 1
+        transducer_surface = self.transducer_surface
+        for i in range(len(transducer_surface)):
+            mask[: transducer_surface[i].astype(int), i] = 1
         return mask
 
     def plot_source_mask(

@@ -161,7 +161,7 @@ def main() -> None:  # noqa: PLR0915
     abdominal_wall = presets.AbdominalWallDomain(
         grid=grid,
         start_depth=0,
-        tranducer_surface=transducer.tranducer_surface,
+        transducer_surface=transducer.transducer_surface,
     )
 
     # define scatterer
@@ -173,8 +173,8 @@ def main() -> None:  # noqa: PLR0915
 
     # scatterer will be applied to density directly, instead of registering as a domain
     csr = 0.035
-    background.density[np.logical_not(transducer.tranducer_mask)] -= (
-        scatterer.density[np.logical_not(transducer.tranducer_mask)] * csr
+    background.density[np.logical_not(transducer.transducer_mask)] -= (
+        scatterer.density[np.logical_not(transducer.transducer_mask)] * csr
     )
     abdominal_wall.density -= scatterer.density * csr
 
@@ -226,6 +226,9 @@ def main() -> None:  # noqa: PLR0915
         vmin=-p_max_plot,
         vmax=p_max_plot,
         turn_off_axes=True,
+        # extent=(-domain_size[1] * 1e3 / 2, domain_size[1] * 1e3 / 2, domain_size[0] * 1e3, 0),
+        # ylabel="Depth (mm)",
+        # xlabel="Lateral position (mm)",
     )
     plot_utils.plot_wave_propagation_with_map(
         propagation_map=propagation_map,
@@ -234,8 +237,12 @@ def main() -> None:  # noqa: PLR0915
         export_name=work_dir / "wave_propagation.mp4",
         vmin=-p_max_plot,
         vmax=p_max_plot,
-        figsize=(6, 4),
+        figsize=(4, 3.5),
+        extent=(-domain_size[1] * 1e3 / 2, domain_size[1] * 1e3 / 2, domain_size[0] * 1e3, 0),
+        ylabel="Depth (mm)",
+        xlabel="Lateral position (mm)",
     )
+    print()
 
 
 if __name__ == "__main__":
