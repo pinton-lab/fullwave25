@@ -55,6 +55,7 @@ def main() -> None:  # noqa: PLR0915
         ),
         radius=0.04957,
         # -
+        average_surface_signals=True,
     )
     p_max = 1e5
     sampling_modulus_time = 7
@@ -62,7 +63,6 @@ def main() -> None:  # noqa: PLR0915
         transducer_geometry=transducer_geometry,
         grid=grid,
         sampling_modulus_time=sampling_modulus_time,
-        average_surface_pixel=True,
     )
     air_map = transducer.make_suraface_reflective_with_air()
 
