@@ -1,0 +1,38 @@
+[tool.bumpversion]
+current_version = "1.0.15"
+parse = """(?x)
+    (?P<major>0|[1-9]\\d*)\\.
+    (?P<minor>0|[1-9]\\d*)\\.
+    (?P<patch>0|[1-9]\\d*)
+    (?:
+        -                             # dash separator for pre-release section
+        (?P<pre_l>[a-zA-Z-]+)         # pre-release label
+        (?:0|[1-9]\\d*)               # pre-release version number
+    )?                                # pre-release section is optional
+"""
+serialize = [
+    "{major}.{minor}.{patch}-{pre_l}{distance_to_latest_tag}",
+    "{major}.{minor}.{patch}",
+]
+commit = false
+allow_dirty = true
+commit_args = "--no-verify"
+tag = true
+tag_name = "v{new_version}"
+pre_commit_hooks = ["uv lock", "git add uv.lock"]
+
+[[tool.bumpversion.files]]
+# Where the version is stored
+filename = "pyproject.toml"
+search = 'version = "{current_version}"'
+replace = 'version = "{new_version}"'
+
+[[tool.bumpversion.files]]
+# Update version in __init__.py
+filename = "fullwave/__init__.py"
+search = '__version__ = "{current_version}"'
+replace = '__version__ = "{new_version}"'
+
+[tool.bumpversion.parts.pre_l]
+values = ["dev", "rc", "final"]
+optional_value = "final"
