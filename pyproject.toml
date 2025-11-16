@@ -1,6 +1,6 @@
 [project]
 name = "fullwave25"
-version = "1.0.15rc5"
+version = "1.0.15rc6"
 description = "Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities"
 readme = "README.md"
 requires-python = ">=3.10"
