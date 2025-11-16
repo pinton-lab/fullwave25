@@ -1,6 +1,6 @@
 [project]
 name = "fullwave25"
-dynamic = ["version"]
+version = "1.0.13rc2"
 description = "Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -23,20 +23,17 @@ classifiers = [
     "Intended Audience :: Developers",
 ]
 
-[tool.hatch.version]
-path = "fullwave/__init__.py"
-
 [project.optional-dependencies] # --extra
-test = ["pytest", "coverage==7.6.12"]
+test = ["pytest", "tomli>=2.3.0"]
 dev = ["pre-commit==4.1.0", "pytest>=8.3.5", "ruff>=0.12.9"]
 examples = ["jupyter>=1.0.0", "ipykernel>=6.28.0"]
+
+[dependency-groups]
+dev = ["deptry>=0.23.1", "pre-commit>=4.1.0", "pytest>=8.3.5", "ruff>=0.12.9"]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[dependency-groups]
-dev = ["deptry>=0.23.1", "pre-commit>=4.1.0", "pytest>=8.3.5", "ruff>=0.12.9"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["fullwave", "fullwave.utils"]

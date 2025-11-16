@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --extra test
       - name: Test with pytest
         run: |
           uv run pytest
@@ -40,11 +40,14 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --extra test
       - name: remove fullwave25
         run: uv pip uninstall fullwave25
-      - name: Install fullwave25
-        run: uv pip install fullwave25 --prerelease=allow
+      - name: Get package version
+        id: get_version
+        run: echo "version=$(uv version --short)" >> $GITHUB_OUTPUT
+      - name: Install package
+        run: uv pip install 'fullwave25==${{ steps.get_version.outputs.version }}' --prerelease=allow
       - name: Test with pytest
         run: |
           uv run pytest
