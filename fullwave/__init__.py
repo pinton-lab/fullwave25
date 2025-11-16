@@ -26,6 +26,23 @@ logging.basicConfig(
 
 logger = logging.getLogger("__main__." + __name__)
 
+try:
+    from importlib.metadata import version
+
+    __version__ = version("fullwave")
+except ImportError:
+    # Fallback for development/testing when package is not installed
+    from pathlib import Path
+
+    import tomli
+
+    pyproject_path = Path(__file__).parent.parent / "pyproject.toml"
+    with Path(pyproject_path).open("rb") as f:
+        pyproject_data = tomli.load(f)
+    __version__ = pyproject_data["project"]["version"]
+
+VERSION = __version__
+
 
 # "FullwaveSolver",
 __all__ = [
@@ -55,6 +72,3 @@ if PLATFORM != "linux":
     logger.warning(
         message,
     )
-
-VERSION = "1.0.13rc1"
-__version__ = VERSION
