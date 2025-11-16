@@ -1,6 +1,6 @@
 # Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities
 
-<a href="https://doi.org/10.5281/zenodo.17497689"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.17497689.svg" alt="DOI"></a>
+<a href="https://doi.org/10.5281/zenodo.17497689"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.17497689.svg" alt="DOI"></a> <a href="https://pepy.tech/projects/fullwave25"><img src="https://static.pepy.tech/personalized-badge/fullwave25?period=total&units=INTERNATIONAL_SYSTEM&left_color=GREY&right_color=BLUE&left_text=PyPI+Downloads" alt="PyPI Downloads"></a>
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/153Sx9D_5zTlF7UtlKHlyz_CTJnLIAI6s)
 
