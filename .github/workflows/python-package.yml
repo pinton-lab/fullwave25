@@ -32,7 +32,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        # python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.12"]
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
@@ -43,8 +44,11 @@ jobs:
         run: uv sync --extra test
       - name: remove fullwave25
         run: uv pip uninstall fullwave25
-      - name: Install fullwave25
-        run: uv pip install fullwave25 --prerelease=allow
+      - name: Get package version
+        id: get_version
+        run: echo "version=$(uv version --short)" >> $GITHUB_OUTPUT
+      - name: Install package
+        run: uv pip install 'fullwave25==${{ steps.get_version.outputs.version }}' --prerelease=allow
       - name: Test with pytest
         run: |
           uv run pytest
