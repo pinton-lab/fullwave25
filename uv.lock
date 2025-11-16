@@ -659,7 +659,7 @@ wheels = [
 [[package]]
 name = "fullwave25"
 version = "1.0.13rc1"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "matplotlib" },
     { name = "numpy" },
