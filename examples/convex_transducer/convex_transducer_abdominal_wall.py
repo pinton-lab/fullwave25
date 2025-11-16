@@ -25,7 +25,7 @@ def main() -> None:  # noqa: PLR0915
     # --- define the computational grid ---
     #
 
-    domain_size = (4.5e-2, 6e-2)  # meters
+    domain_size = (4.5e-2, 7e-2)  # meters
     f0 = 3.7e6
     c0 = 1540
     duration = domain_size[0] / c0 * 1.0
@@ -37,7 +37,7 @@ def main() -> None:  # noqa: PLR0915
     # --- define the convex transducer ---
     #
 
-    element_layer_px = 3
+    element_layer_px = grid.ppw * 3
     transducer_geometry = fullwave.TransducerGeometry(
         grid,
         number_elements=128,
@@ -50,18 +50,21 @@ def main() -> None:  # noqa: PLR0915
         # -
         # [axial, lateral]
         position_m=(
-            (42.5 - 37.5) / 2 * 1e-3,
-            (42.5 - 37.5) / 2 * 1e-3,
+            0,
+            0,
         ),
         radius=0.04957,
         # -
     )
     p_max = 1e5
-
+    sampling_modulus_time = 7
     transducer = fullwave.Transducer(
         transducer_geometry=transducer_geometry,
         grid=grid,
+        sampling_modulus_time=sampling_modulus_time,
+        average_surface_pixel=True,
     )
+    air_map = transducer.make_suraface_reflective_with_air()
 
     # make a sensor for whole domain to make an animation
     sensor_mask = np.zeros((grid.nx, grid.ny), dtype=bool)
@@ -190,6 +193,7 @@ def main() -> None:  # noqa: PLR0915
 
     # generate medium for simulation
     medium = mb.run()
+    medium.air_map = air_map  # to make transducer surface reflective
 
     #
     # --- run simulation ---

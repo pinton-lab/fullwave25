@@ -72,11 +72,23 @@ def _make_abdominal_property(
         abdominal_wall_properties = abdominal_wall_properties[: grid.nx - start_depth_index, :]
     if transducer_surface is not None:
         for i in range(abdominal_wall_properties.shape[1]):
-            abdominal_wall_properties[transducer_surface[i] - 3 :, i] = abdominal_wall_properties[
-                0 : -transducer_surface[i] + 3,
-                i,
-            ]
-            abdominal_wall_properties[0 : transducer_surface[i] - 3, i] = 0
+            does_transducer_surface_exist = i in transducer_surface[1]
+
+            if does_transducer_surface_exist:
+                j_indices = np.where(transducer_surface[1] == i)[0]
+                transducer_surface_part = transducer_surface[:, j_indices]
+                transducer_surface_value = transducer_surface_part[0, 0]
+                if transducer_surface_value - 3 <= 0:
+                    continue
+                abdominal_wall_properties[transducer_surface_value - 3 :, i] = (
+                    abdominal_wall_properties[
+                        0 : -transducer_surface_value + 3,
+                        i,
+                    ]
+                )
+                abdominal_wall_properties[0 : transducer_surface_value - 3, i] = 0
+            else:
+                continue
 
     base_map[
         start_depth_index : start_depth_index + abdominal_wall_properties.shape[0],
