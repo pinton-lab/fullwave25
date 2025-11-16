@@ -11,3 +11,4 @@ wheels/
 
 temp/*
 outputs
+.env
