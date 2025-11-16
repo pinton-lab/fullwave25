@@ -22,7 +22,7 @@ def main() -> None:  # noqa: PLR0915
 
     # --- define the computational grid ---
     domain_size = (42.5e-3 / 2, 42.5e-3)  # meters
-    f0 = 1e6
+    f0 = 3.7e6
     c0 = 1540
     duration = domain_size[0] / c0 * 2.5
     ppw = 12
@@ -80,6 +80,7 @@ def main() -> None:  # noqa: PLR0915
         ),
         # -
         radius=float("inf"),
+        average_surface_signals=True,
     )
     transducer = fullwave.Transducer(
         transducer_geometry=transducer_geometry,
@@ -166,6 +167,11 @@ def main() -> None:  # noqa: PLR0915
     )
     sensor_output = fw_solver.run()
 
+    sensor_output = transducer.post_process_sensor_output(
+        sensor_output,
+        average_surface_signals=True,
+    )
+
     # --- visualization ---
     plot_utils.plot_array(
         transducer.sensor.indexed_mask,
@@ -176,8 +182,8 @@ def main() -> None:  # noqa: PLR0915
     )
 
     plot_utils.plot_array(
-        sensor_output,
-        aspect=sensor_output.shape[1] / sensor_output.shape[0],
+        sensor_output.T,
+        aspect=sensor_output.shape[0] / sensor_output.shape[1],
         export_path=work_dir / "rf.svg",
     )
 

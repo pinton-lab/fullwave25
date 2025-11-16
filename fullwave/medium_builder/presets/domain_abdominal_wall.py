@@ -29,7 +29,7 @@ def _make_abdominal_property(
     compression_ratio: float = 0.655,
     use_center_region: bool = True,
     skip_background_definition: bool = True,
-    tranducer_surface: NDArray[np.float64] | None = None,
+    transducer_surface: NDArray[np.float64] | None = None,
 ) -> dict[str, np.ndarray]:
     mat_data = loadmat(abdominal_wall_mat_path)
     abdominal_wall_properties = mat_data["cut"].astype(float)
@@ -70,13 +70,25 @@ def _make_abdominal_property(
 
     if abdominal_wall_properties.shape[0] + start_depth_index > grid.nx:
         abdominal_wall_properties = abdominal_wall_properties[: grid.nx - start_depth_index, :]
-    if tranducer_surface is not None:
+    if transducer_surface is not None:
         for i in range(abdominal_wall_properties.shape[1]):
-            abdominal_wall_properties[tranducer_surface[i] - 3 :, i] = abdominal_wall_properties[
-                0 : -tranducer_surface[i] + 3,
-                i,
-            ]
-            abdominal_wall_properties[0 : tranducer_surface[i] - 3, i] = 0
+            does_transducer_surface_exist = i in transducer_surface[1]
+
+            if does_transducer_surface_exist:
+                j_indices = np.where(transducer_surface[1] == i)[0]
+                transducer_surface_part = transducer_surface[:, j_indices]
+                transducer_surface_value = transducer_surface_part[0, 0]
+                if transducer_surface_value - 3 <= 0:
+                    continue
+                abdominal_wall_properties[transducer_surface_value - 3 :, i] = (
+                    abdominal_wall_properties[
+                        0 : -transducer_surface_value + 3,
+                        i,
+                    ]
+                )
+                abdominal_wall_properties[0 : transducer_surface_value - 3, i] = 0
+            else:
+                continue
 
     base_map[
         start_depth_index : start_depth_index + abdominal_wall_properties.shape[0],
@@ -162,7 +174,7 @@ class AbdominalWallDomain(Domain):
         / "database"
         / "relaxation_params_database_num_relax=2_20251027_1437.mat",
         n_relaxation_mechanisms: int = 2,
-        tranducer_surface: NDArray[np.float64] | None = None,
+        transducer_surface: NDArray[np.float64] | None = None,
     ) -> None:
         """Define AbdominalWallDomain instance.
 
@@ -212,7 +224,7 @@ class AbdominalWallDomain(Domain):
         n_relaxation_mechanisms: int, optional
             The number of relaxation mechanisms.
             Defaults to 4.
-        tranducer_surface: NDArray[np.float64] | None, optional
+        transducer_surface: NDArray[np.float64] | None, optional
             The transducer surface.
             Defaults to None.
             the shape of this array should be (ny,).
@@ -242,7 +254,7 @@ class AbdominalWallDomain(Domain):
             raise NotImplementedError(error_msg)
         self.path_relaxation_parameters_database = path_relaxation_parameters_database
         self.n_relaxation_mechanisms = n_relaxation_mechanisms
-        self.tranducer_surface = tranducer_surface
+        self.transducer_surface = transducer_surface
         (
             self.base_geometry,
             self.sound_speed,
@@ -265,7 +277,7 @@ class AbdominalWallDomain(Domain):
             apply_tissue_compression=self.apply_tissue_compression,
             use_center_region=self.use_center_region,
             skip_background_definition=self.skip_background_definition,
-            tranducer_surface=self.tranducer_surface,
+            transducer_surface=self.transducer_surface,
         )
 
         return (

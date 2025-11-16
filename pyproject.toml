@@ -1,22 +1,21 @@
 [project]
 name = "fullwave25"
-dynamic = ["version"]
+version = "1.0.14"
 description = "Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 dependencies = [
     "numpy>=2.0.0",
-    "opencv-python>=4.11.0.86",
-    "scipy>=1.16.3",
-    "matplotlib>=3.10.0",
+    "scipy>=1.13.1",
+    "matplotlib>=3.10.7",
     "tqdm>=4.67.1",
+    "opencv-python-headless>=4.12.0.88",
 ]
 authors = [{ name = "Masashi Sode" }, { name = "Gianmarco Pinton" }]
 maintainers = [{ name = "Masashi Sode" }]
 keywords = ["simulation", "fdtd", "finite-difference", "ultrasound"]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -24,20 +23,17 @@ classifiers = [
     "Intended Audience :: Developers",
 ]
 
-[tool.hatch.version]
-path = "fullwave/__init__.py"
-
 [project.optional-dependencies] # --extra
-test = ["pytest", "coverage==7.6.12"]
+test = ["pytest", "tomli>=2.3.0"]
 dev = ["pre-commit==4.1.0", "pytest>=8.3.5", "ruff>=0.12.9"]
 examples = ["jupyter>=1.0.0", "ipykernel>=6.28.0"]
+
+[dependency-groups]
+dev = ["deptry>=0.23.1", "pre-commit>=4.1.0", "pytest>=8.3.5", "ruff>=0.12.9"]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[dependency-groups]
-dev = ["deptry>=0.24.0", "pre-commit>=4.1.0", "pytest>=8.3.5", "ruff>=0.12.9"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["fullwave", "fullwave.utils"]
