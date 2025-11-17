@@ -1,5 +1,5 @@
 [tool.bumpversion]
-current_version = "1.0.16-dev26"
+current_version = "1.0.16-dev4"
 parse = """(?x)
     (?P<major>0|[1-9]\\d*)\\.
     (?P<minor>0|[1-9]\\d*)\\.
@@ -14,12 +14,20 @@ serialize = [
     "{major}.{minor}.{patch}-{pre_l}{pre_n}",
     "{major}.{minor}.{patch}",
 ]
-commit = false
+
+commit = true
+message = "Bump version: {current_version} → {new_version}"
 allow_dirty = true
 commit_args = "--no-verify"
+
 tag = true
 tag_name = "v{new_version}"
-pre_commit_hooks = ["uv lock", "git add uv.lock"]
+tag_message = "Bump version: {current_version} → {new_version}"
+
+pre_commit_hooks = [
+    "uv lock",
+    "git add uv.lock .bumpversion.toml fullwave/__init__.py pyproject.toml",
+]
 
 [[tool.bumpversion.files]]
 # Where the version is stored
