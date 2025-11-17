@@ -8,6 +8,7 @@ from matplotlib import animation
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from numpy.typing import NDArray
 from tqdm import tqdm
 
@@ -193,7 +194,7 @@ def plot_array_on_ax(
         The axes object containing the plot.
 
     """
-    ax.imshow(
+    im = ax.imshow(
         x,
         vmin=vmin,
         vmax=vmax,
@@ -212,8 +213,11 @@ def plot_array_on_ax(
     ax.set_title(title)
 
     ax.set_aspect(aspect)
+
     # set color bar for this ax
-    ax.figure.colorbar(ax.get_images()[0], ax=ax, shrink=0.75)
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.1)
+    ax.figure.colorbar(im, cax=cax)
 
     return ax
 
