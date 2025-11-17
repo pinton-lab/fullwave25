@@ -7,11 +7,11 @@ parse = """(?x)
     (?:
         -                             # dash separator for pre-release section
         (?P<pre_l>[a-zA-Z-]+)         # pre-release label
-        (?:0|[1-9]\\d*)               # pre-release version number
+        (?P<pre_n>0|[1-9]\\d*)        # pre-release version number
     )?                                # pre-release section is optional
 """
 serialize = [
-    "{major}.{minor}.{patch}-{pre_l}{distance_to_latest_tag}",
+    "{major}.{minor}.{patch}-{pre_l}{pre_n}",
     "{major}.{minor}.{patch}",
 ]
 commit = false
