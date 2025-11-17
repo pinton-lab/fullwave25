@@ -1,9 +1,9 @@
 """fullwave module."""
 
-import importlib.metadata
 import logging
 import platform
 import time
+from importlib.metadata import PackageNotFoundError, version
 
 from . import utils
 from .grid import Grid
@@ -56,24 +56,11 @@ if PLATFORM != "linux":
         message,
     )
 
-# Versioning only after package is fully installed
-
-__version__ = "unknown"
-
 try:
-    # First, try getting version from installed package metadata
-    __version__ = importlib.metadata.version(__package__ or __name__)
-except importlib.metadata.PackageNotFoundError:
-    # Fallback: read from pyproject.toml for local development
-    try:
-        import tomllib  # Python 3.11+
-    except ModuleNotFoundError:
-        import tomli as tomllib  # For Python < 3.11, requires install tomli
+    __version__ = version("fullwave")
+except PackageNotFoundError:
+    # Update via bump-my-version, not manually
+    __version__ = "1.0.16"
 
-    from pathlib import Path
-
-    pyproject_path = Path(__file__).parent.parent / "pyproject.toml"
-    if pyproject_path.exists():
-        with Path(pyproject_path).open("rb") as f:
-            pyproject_data = tomllib.load(f)
-            __version__ = pyproject_data["project"]["version"]
+VERSION = __version__  # for convenience
+logger.info("Fullwave version: %s", __version__)
