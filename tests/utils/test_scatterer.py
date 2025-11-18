@@ -108,6 +108,7 @@ def test_generate_scatterer_different_seeds():
 
 
 def test_generate_scatterer_rng_reproducibility():
+    """Test that using the same rng produces the same result."""
     grid = DummyGrid2D(nx=10, ny=10, dt=0.1, ppw=12)
     ratio_scatterer_num_to_wavelength = 0.3
 
@@ -130,6 +131,7 @@ def test_generate_scatterer_rng_reproducibility():
 
 
 def test_generate_scatterer_rng_different():
+    """Test that different rngs produce different results."""
     grid = DummyGrid2D(nx=10, ny=10, dt=0.1, ppw=12)
     ratio_scatterer_num_to_wavelength = 0.3
 
@@ -153,6 +155,7 @@ def test_generate_scatterer_rng_different():
 
 
 def test_generate_scatterer_same_rng_different_result():
+    """Test that using the same rng twice produces different results."""
     grid = DummyGrid2D(nx=10, ny=10, dt=0.1, ppw=12)
     ratio_scatterer_num_to_wavelength = 0.3
 
