@@ -294,7 +294,11 @@ def generate_scatterer_from_ratio_num_scatterer_to_wavelength(
             grid.nx * grid.ny / grid.ppw**2 * num_scatterer_per_wavelength**2,
         )
     )
-    ratio_scatterer_to_total_grid = num_scatterer_total / (grid.shape[0] * grid.shape[1])
+    ratio_scatterer_to_total_grid = (
+        num_scatterer_total / (grid.shape[0] * grid.shape[1] * grid.shape[2])
+        if grid.is_3d
+        else num_scatterer_total / (grid.shape[0] * grid.shape[1])
+    )
 
     scatterer = _generate_scatterer_from_num_scatterer(
         grid,
@@ -368,7 +372,11 @@ def generate_scatterer_from_num_scatterer_per_wavelength(
             grid.nx * grid.ny / grid.ppw**2 * num_scatterer_per_wavelength**2,
         )
     )
-    scatterer_ratio = num_scatterer_total / (grid.shape[0] * grid.shape[1])
+    scatterer_ratio = (
+        num_scatterer_total / (grid.shape[0] * grid.shape[1] * grid.shape[2])
+        if grid.is_3d
+        else num_scatterer_total / (grid.shape[0] * grid.shape[1])
+    )
 
     scatterer = _generate_scatterer_from_num_scatterer(
         grid,
