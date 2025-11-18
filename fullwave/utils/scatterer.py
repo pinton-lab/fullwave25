@@ -94,7 +94,16 @@ def generate_scatterer(
     Returns
     -------
     tuple[NDArray[np.float64], dict]
-        Tuple containing the scatterer map and scatterer information dictionary.
+        Tuple containing:
+        - scatterer_map (NDArray[np.float64]): The generated scatterer map.
+        - scatterer_info (dict):
+            Dictionary containing information
+            about the scatterer distribution with the following keys:
+            - "num_scatterer_total": Total number of scatterers placed in the grid.
+            - "num_scatterer_per_wavelength": Number of scatterers per wavelength.
+            - "ratio_scatterer_num_to_wavelength":
+                Ratio of scatterers per wavelength to points per wavelength.
+            - "ratio_scatterer_to_total_grid": Ratio of scatterers to total grid points.
 
     Raises
     ------
@@ -180,8 +189,17 @@ def generate_scatterer_from_ratio_num_scatterer_to_total_grid(
 
     Returns
     -------
-    tuple[NDArray[np.float64], int]
-        Tuple containing the scatterer map,
+    tuple[NDArray[np.float64], dict]
+        Tuple containing:
+        - scatterer_map (NDArray[np.float64]): The generated scatterer map.
+        - scatterer_info (dict):
+            Dictionary containing information
+            about the scatterer distribution with the following keys:
+            - "num_scatterer_total": Total number of scatterers placed in the grid.
+            - "num_scatterer_per_wavelength": Number of scatterers per wavelength.
+            - "ratio_scatterer_num_to_wavelength":
+                Ratio of scatterers per wavelength to points per wavelength.
+            - "ratio_scatterer_to_total_grid": Ratio of scatterers to total grid points.
 
     """
     rng = _verify_seed(rng, seed)
@@ -248,9 +266,17 @@ def generate_scatterer_from_ratio_num_scatterer_to_wavelength(
 
     Returns
     -------
-    tuple[NDArray[np.float64], int]
-        Tuple containing the scatterer map,
-        and number of scatterers per wavelength.
+    tuple[NDArray[np.float64], dict]
+        Tuple containing:
+        - scatterer_map (NDArray[np.float64]): The generated scatterer map.
+        - scatterer_info (dict):
+            Dictionary containing information
+            about the scatterer distribution with the following keys:
+            - "num_scatterer_total": Total number of scatterers placed in the grid.
+            - "num_scatterer_per_wavelength": Number of scatterers per wavelength.
+            - "ratio_scatterer_num_to_wavelength":
+                Ratio of scatterers per wavelength to points per wavelength.
+            - "ratio_scatterer_to_total_grid": Ratio of scatterers to total grid points.
 
     """
     rng = _verify_seed(rng, seed)
@@ -313,9 +339,17 @@ def generate_scatterer_from_num_scatterer_per_wavelength(
 
     Returns
     -------
-    tuple[NDArray[np.float64], int]
-        Tuple containing the scatterer map,
-        and number of scatterers per wavelength.
+    tuple[NDArray[np.float64], dict]
+        Tuple containing:
+        - scatterer_map (NDArray[np.float64]): The generated scatterer map.
+        - scatterer_info (dict):
+            Dictionary containing information
+            about the scatterer distribution with the following keys:
+            - "num_scatterer_total": Total number of scatterers placed in the grid.
+            - "num_scatterer_per_wavelength": Number of scatterers per wavelength.
+            - "ratio_scatterer_num_to_wavelength":
+                Ratio of scatterers per wavelength to points per wavelength.
+            - "ratio_scatterer_to_total_grid": Ratio of scatterers to total grid points.
 
     """
     _check_value_within_limit(num_scatterer_per_wavelength, (0.0, grid.ppw))
@@ -393,9 +427,18 @@ def generate_resolution_based_scatterer(
 
     Returns
     -------
-    tuple[NDArray[np.float64], int, float]
-        Tuple containing the scatterer map, total number of scatterers,
-        and scatterer percentage.
+    tuple[NDArray[np.float64], dict]
+        Tuple containing:
+        - scatterer_map (NDArray[np.float64]): The generated scatterer map.
+        - scatterer_info (dict):
+            Dictionary containing information
+            about the scatterer distribution with the following keys:
+            - "num_scatterer_total": Total number of scatterers placed in the grid.
+            - "num_scatterer_per_wavelength": Number of scatterers per wavelength.
+            - "ratio_scatterer_num_to_wavelength":
+                Ratio of scatterers per wavelength to points per wavelength.
+            - "ratio_scatterer_to_total_grid": Ratio of scatterers to total grid points.
+
 
     """
     rng = _verify_seed(rng, seed)
@@ -419,5 +462,11 @@ def generate_resolution_based_scatterer(
 
     scatterer_count = (scatter_map != 1).sum().item()
     grid_num_points = grid.nx * grid.ny * (grid.nz if grid.is_3d else 1)
-    scatterer_percent = 100 * scatterer_count / grid_num_points
-    return scatter_map, scatterer_count, scatterer_percent
+
+    scatterer_info = {
+        "num_scatterer_total": scatterer_count,
+        "num_scatterer_per_wavelength": scat_density * grid.ppw,
+        "ratio_scatterer_num_to_wavelength": scat_density,
+        "ratio_scatterer_to_total_grid": scatterer_count / grid_num_points,
+    }
+    return scatter_map, scatterer_info
