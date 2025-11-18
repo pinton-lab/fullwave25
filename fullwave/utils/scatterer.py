@@ -440,12 +440,8 @@ def generate_resolution_based_scatterer(
         - scatterer_info (dict):
             Dictionary containing information
             about the scatterer distribution with the following keys:
-            - "num_scatterer_total": Total number of scatterers placed in the grid.
-            - "num_scatterer_per_wavelength": Number of scatterers per wavelength.
-            - "ratio_scatterer_num_to_wavelength":
-                Ratio of scatterers per wavelength to points per wavelength.
-            - "ratio_scatterer_to_total_grid": Ratio of scatterers to total grid points.
-
+            - "scatterer_count": Total number of scatterers placed in the grid.
+            - "scatterer_percent": Percentage of scatterers in the grid.
 
     """
     rng = _verify_seed(rng, seed)
@@ -460,20 +456,18 @@ def generate_resolution_based_scatterer(
         dy=grid.dx,
         dz=grid.dy,
     )
-    scat_density = num_scatterer / resolution_cell
+    scatter_density = num_scatterer / resolution_cell
     scatter_map = rng.random(grid.shape)
 
-    scatter_map /= scat_density
+    scatter_map /= scatter_density
     scatter_map[scatter_map > 1] = 0.5
     scatter_map -= 0.5
 
     scatterer_count = (scatter_map != 1).sum().item()
-    grid_num_points = grid.nx * grid.ny * (grid.nz if grid.is_3d else 1)
+    scatterer_percent = 100 * scatterer_count / (grid.nx * grid.ny * (grid.nz if grid.is_3d else 1))
 
     scatterer_info = {
-        "num_scatterer_total": scatterer_count,
-        "num_scatterer_per_wavelength": scat_density * grid.ppw,
-        "ratio_scatterer_num_to_wavelength": scat_density,
-        "ratio_scatterer_to_total_grid": scatterer_count / grid_num_points,
+        "scatterer_count": scatterer_count,
+        "ratio_scatterer_to_total_grid": scatterer_percent,
     }
     return scatter_map, scatterer_info

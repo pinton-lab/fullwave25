@@ -224,12 +224,14 @@ def test_generate_resolution_based_scatterer():
     num_scatterer = 100
     ncycles = 5
 
-    scatter_map, scatterer_count, scatterer_percent = generate_resolution_based_scatterer(
+    scatter_map, scatter_info = generate_resolution_based_scatterer(
         grid,
         num_scatterer,
         ncycles,
         seed=42,
     )
+    scatterer_count = scatter_info["scatterer_count"]
+    scatterer_percent = scatter_info["ratio_scatterer_to_total_grid"]
     assert scatter_map.shape == (50, 50)
     assert isinstance(scatterer_count, int)
     assert isinstance(scatterer_percent, float)
