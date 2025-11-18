@@ -1,7 +1,10 @@
 import numpy as np
 import pytest
 
-from fullwave.utils import generate_resolution_based_scatterer, generate_wave_length_based_scatterer
+from fullwave.utils.scatterer import (
+    generate_resolution_based_scatterer,
+    generate_scatterer_from_ratio_num_scatterer_to_wavelength,
+)
 
 
 class DummyGrid2D:
@@ -39,16 +42,17 @@ def test_generate_scatterer_with_seed():
     grid = DummyGrid2D(nx=10, ny=10, dt=0.1, ppw=12)
 
     ratio_scatterer_num_to_wavelength = 0.3
-    scatterer, num_per_wl = generate_wave_length_based_scatterer(
+    scatterer, scatterer_info = generate_scatterer_from_ratio_num_scatterer_to_wavelength(
         grid,
         ratio_scatterer_num_to_wavelength=ratio_scatterer_num_to_wavelength,
         scatter_value_std=0.08,
         seed=42,
     )
+    num_per_wl = scatterer_info["num_scatterer_per_wavelength"]
 
     assert scatterer.shape == (10, 10)
-    assert isinstance(num_per_wl, int)
-    assert num_per_wl == int(ratio_scatterer_num_to_wavelength * grid.ppw)
+    assert isinstance(num_per_wl, float)
+    assert num_per_wl == ratio_scatterer_num_to_wavelength * grid.ppw
 
 
 def test_generate_scatterer_with_rng():
@@ -57,16 +61,17 @@ def test_generate_scatterer_with_rng():
     ratio_scatterer_num_to_wavelength = 0.3
 
     rng = np.random.default_rng(seed=42)
-    scatterer, num_per_wl = generate_wave_length_based_scatterer(
+    scatterer, scatterer_info = generate_scatterer_from_ratio_num_scatterer_to_wavelength(
         grid,
         ratio_scatterer_num_to_wavelength=ratio_scatterer_num_to_wavelength,
         scatter_value_std=0.08,
         rng=rng,
     )
+    num_per_wl = scatterer_info["num_scatterer_per_wavelength"]
 
     assert scatterer.shape == (10, 10)
-    assert isinstance(num_per_wl, int)
-    assert num_per_wl == int(ratio_scatterer_num_to_wavelength * grid.ppw)
+    assert isinstance(num_per_wl, float)
+    assert num_per_wl == ratio_scatterer_num_to_wavelength * grid.ppw
 
 
 def test_generate_scatterer_raises_when_both_seed_and_rng():
@@ -76,7 +81,7 @@ def test_generate_scatterer_raises_when_both_seed_and_rng():
     rng = np.random.default_rng(seed=42)
 
     with pytest.raises(ValueError, match="Provide either seed or rng, not both"):
-        generate_wave_length_based_scatterer(grid, seed=42, rng=rng)
+        generate_scatterer_from_ratio_num_scatterer_to_wavelength(grid, seed=42, rng=rng)
 
 
 def test_generate_scatterer_raises_when_neither_seed_nor_rng():
@@ -84,15 +89,15 @@ def test_generate_scatterer_raises_when_neither_seed_nor_rng():
     grid = DummyGrid2D(nx=100, ny=100, dt=0.1, ppw=10)
 
     with pytest.raises(ValueError, match="Provide either seed or rng"):
-        generate_wave_length_based_scatterer(grid)
+        generate_scatterer_from_ratio_num_scatterer_to_wavelength(grid)
 
 
 def test_generate_scatterer_reproducibility():
     """Test that using the same seed produces the same result."""
     grid = DummyGrid2D(nx=50, ny=50, dt=0.1, ppw=10)
 
-    scatterer1, _ = generate_wave_length_based_scatterer(grid, seed=123)
-    scatterer2, _ = generate_wave_length_based_scatterer(grid, seed=123)
+    scatterer1, _ = generate_scatterer_from_ratio_num_scatterer_to_wavelength(grid, seed=123)
+    scatterer2, _ = generate_scatterer_from_ratio_num_scatterer_to_wavelength(grid, seed=123)
 
     np.testing.assert_array_equal(scatterer1, scatterer2)
 
@@ -101,8 +106,8 @@ def test_generate_scatterer_different_seeds():
     """Test that different seeds produce different results."""
     grid = DummyGrid2D(nx=50, ny=50, dt=0.1, ppw=10)
 
-    scatterer1, _ = generate_wave_length_based_scatterer(grid, seed=123)
-    scatterer2, _ = generate_wave_length_based_scatterer(grid, seed=456)
+    scatterer1, _ = generate_scatterer_from_ratio_num_scatterer_to_wavelength(grid, seed=123)
+    scatterer2, _ = generate_scatterer_from_ratio_num_scatterer_to_wavelength(grid, seed=456)
 
     assert not np.array_equal(scatterer1, scatterer2)
 
@@ -113,7 +118,7 @@ def test_generate_scatterer_rng_reproducibility():
     ratio_scatterer_num_to_wavelength = 0.3
 
     rng = np.random.default_rng(seed=42)
-    scatterer1, _ = generate_wave_length_based_scatterer(
+    scatterer1, _ = generate_scatterer_from_ratio_num_scatterer_to_wavelength(
         grid,
         ratio_scatterer_num_to_wavelength=ratio_scatterer_num_to_wavelength,
         scatter_value_std=0.08,
@@ -121,7 +126,7 @@ def test_generate_scatterer_rng_reproducibility():
     )
 
     rng = np.random.default_rng(seed=42)
-    scatterer2, _ = generate_wave_length_based_scatterer(
+    scatterer2, _ = generate_scatterer_from_ratio_num_scatterer_to_wavelength(
         grid,
         ratio_scatterer_num_to_wavelength=ratio_scatterer_num_to_wavelength,
         scatter_value_std=0.08,
@@ -136,7 +141,7 @@ def test_generate_scatterer_rng_different():
     ratio_scatterer_num_to_wavelength = 0.3
 
     rng1 = np.random.default_rng(seed=42)
-    scatterer1, _ = generate_wave_length_based_scatterer(
+    scatterer1, _ = generate_scatterer_from_ratio_num_scatterer_to_wavelength(
         grid,
         ratio_scatterer_num_to_wavelength=ratio_scatterer_num_to_wavelength,
         scatter_value_std=0.08,
@@ -144,7 +149,7 @@ def test_generate_scatterer_rng_different():
     )
 
     rng2 = np.random.default_rng(seed=43)
-    scatterer2, _ = generate_wave_length_based_scatterer(
+    scatterer2, _ = generate_scatterer_from_ratio_num_scatterer_to_wavelength(
         grid,
         ratio_scatterer_num_to_wavelength=ratio_scatterer_num_to_wavelength,
         scatter_value_std=0.08,
@@ -160,13 +165,13 @@ def test_generate_scatterer_same_rng_different_result():
     ratio_scatterer_num_to_wavelength = 0.3
 
     rng1 = np.random.default_rng(seed=42)
-    scatterer1, _ = generate_wave_length_based_scatterer(
+    scatterer1, _ = generate_scatterer_from_ratio_num_scatterer_to_wavelength(
         grid,
         ratio_scatterer_num_to_wavelength=ratio_scatterer_num_to_wavelength,
         scatter_value_std=0.08,
         rng=rng1,
     )
-    scatterer2, _ = generate_wave_length_based_scatterer(
+    scatterer2, _ = generate_scatterer_from_ratio_num_scatterer_to_wavelength(
         grid,
         ratio_scatterer_num_to_wavelength=ratio_scatterer_num_to_wavelength,
         scatter_value_std=0.08,
@@ -180,18 +185,25 @@ def test_generate_scatterer_3d():
     """Test generate_scatterer with a 3D grid."""
     grid = DummyGrid3D(nx=50, ny=50, nz=50, dt=0.1, ppw=12)
 
-    scatterer, num_per_wl = generate_wave_length_based_scatterer(grid, seed=42)
+    ratio_scatterer_num_to_wavelength = 0.3
+    scatterer, scatterer_info = generate_scatterer_from_ratio_num_scatterer_to_wavelength(
+        grid,
+        ratio_scatterer_num_to_wavelength=ratio_scatterer_num_to_wavelength,
+        seed=42,
+    )
+
+    num_per_wl = scatterer_info["num_scatterer_per_wavelength"]
 
     assert scatterer.shape == (50, 50, 50)
-    assert isinstance(num_per_wl, int)
-    assert num_per_wl == int(0.3 * grid.ppw)
+    assert isinstance(num_per_wl, float)
+    assert num_per_wl == 0.3 * grid.ppw
 
 
 def test_generate_scatterer_values_distribution():
     """Test that scatterer values follow expected distribution."""
     grid = DummyGrid2D(nx=100, ny=100, dt=0.1, ppw=10)
 
-    scatterer, _ = generate_wave_length_based_scatterer(
+    scatterer, _ = generate_scatterer_from_ratio_num_scatterer_to_wavelength(
         grid,
         ratio_scatterer_num_to_wavelength=0.5,
         scatter_value_std=0.1,
