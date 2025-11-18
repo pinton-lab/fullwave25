@@ -86,7 +86,7 @@ def generate_wave_length_based_scatterer(
 
 def _resolution_cell(
     wavelength: float,
-    dy2: float,  # ?
+    dy2: float,
     ay: float,
     n_cycles: int,
     dy: float,
