@@ -169,7 +169,7 @@ def generate_scatterer_from_ratio_num_scatterer_to_total_grid(
     scatter_value_std: float = 0.08,
     seed: int | None = None,
     rng: np.random.Generator | None = None,
-) -> tuple[NDArray[np.float64], int]:
+) -> tuple[NDArray[np.float64], dict]:
     """Generate a scatterer map with random values.
 
     Parameters
@@ -246,7 +246,7 @@ def generate_scatterer_from_ratio_num_scatterer_to_wavelength(
     scatter_value_std: float = 0.08,
     seed: int | None = None,
     rng: np.random.Generator | None = None,
-) -> tuple[NDArray[np.float64], int]:
+) -> tuple[NDArray[np.float64], dict]:
     """Generate a scatterer map with random values from ratio of scatterer number to wavelength.
 
     Parameters
@@ -319,7 +319,7 @@ def generate_scatterer_from_num_scatterer_per_wavelength(
     scatter_value_std: float = 0.08,
     seed: int | None = None,
     rng: np.random.Generator | None = None,
-) -> tuple[NDArray[np.float64], int]:
+) -> tuple[NDArray[np.float64], dict]:
     """Generate a scatterer map with random values.
 
     Parameters
@@ -406,7 +406,7 @@ def generate_resolution_based_scatterer(
     ncycles: int,
     seed: int | None = None,
     rng: np.random.Generator | None = None,
-) -> tuple[NDArray[np.float64], int, float]:
+) -> tuple[NDArray[np.float64], dict]:
     """Generate a scatterer map based on resolution cell.
 
     based on
