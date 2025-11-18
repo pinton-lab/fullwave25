@@ -28,7 +28,7 @@ def generate_wave_length_based_scatterer(
     scatter_value_std: float = 0.08,
     seed: int | None = None,
     rng: np.random.Generator | None = None,
-) -> tuple[NDArray[np.float64], int, float]:
+) -> tuple[NDArray[np.float64], int]:
     """Generate a scatterer map with random values.
 
     Parameters
@@ -47,8 +47,8 @@ def generate_wave_length_based_scatterer(
 
     Returns
     -------
-    tuple[NDArray[np.float64], int, float]
-        Tuple containing the scatterer map, total number of scatterers,
+    tuple[NDArray[np.float64], int]
+        Tuple containing the scatterer map,
         and number of scatterers per wavelength.
 
     """
