@@ -141,7 +141,7 @@ def generate_resolution_based_scatterer(
 
     scatter_map /= scat_density
     scatter_map[scatter_map > 1] = 0.5
-    scatter_map -= -0.5
+    scatter_map -= 0.5
 
     scatterer_count = (scatter_map != 1).sum().item()
     grid_num_points = grid.nx * grid.ny * (grid.nz if grid.is_3d else 1)
