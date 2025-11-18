@@ -319,7 +319,7 @@ def generate_scatterer_from_ratio_num_scatterer_to_wavelength(
 
 def generate_scatterer_from_num_scatterer_per_wavelength(
     grid: Grid,
-    num_scatterer_per_wavelength: int = 6,
+    num_scatterer_per_wavelength: float = 6,
     scatter_value_std: float = 0.08,
     seed: int | None = None,
     rng: np.random.Generator | None = None,
@@ -330,7 +330,7 @@ def generate_scatterer_from_num_scatterer_per_wavelength(
     ----------
     grid : Grid
         Grid object from fullwave.
-    num_scatterer_per_wavelength : int, optional
+    num_scatterer_per_wavelength : int | float, optional
         Number of scatterers per wavelength, by default 6.
         It indicates how many pixels are placed in a wavelength.
         0 <= num_scatterer_per_wavelength <= grid.ppw
@@ -356,7 +356,7 @@ def generate_scatterer_from_num_scatterer_per_wavelength(
             - "ratio_scatterer_to_total_grid": Ratio of scatterers to total grid points.
 
     """
-    _check_value_within_limit(num_scatterer_per_wavelength, (0.0, grid.ppw))
+    _check_value_within_limit(num_scatterer_per_wavelength, (0, grid.ppw))
     _check_value_within_limit(scatter_value_std, (0.0, 1.0))
 
     rng = _verify_seed(rng, seed)
