@@ -255,7 +255,7 @@ def generate_scatterer_from_ratio_num_scatterer_to_wavelength(
         Grid object from fullwave.
     ratio_scatterer_num_to_wavelength : float, optional
         Ratio of scatterer number to wavelength, by default 0.6.
-        It indicates how dense the scatterers are place in a wavelength.
+        It indicates how dense the scatterers are placed in a wavelength.
         0 <= ratio <= 1
     scatter_value_std : float, optional
         Standard deviation of scatterer values, by default 0.08.
