@@ -4,18 +4,24 @@ This module provides functionality to create random scatterer distributions
 for acoustic wave simulations using the fullwave package.
 """
 
+import logging
+
 import numpy as np
 from numpy.typing import NDArray
 
 from fullwave import Grid
 
+logger = logging.getLogger("__main__." + __name__)
+
 
 def _verify_seed(rng: np.random.Generator | None, seed: int | None) -> np.random.Generator:
     if seed is not None and rng is not None:
         message = "Provide either seed or rng, not both."
+        logger.error(message)
         raise ValueError(message)
     elif seed is None and rng is None:  # noqa: RET506
         message = "Provide either seed or rng."
+        logger.error(message)
         raise ValueError(message)
     elif seed is not None and rng is None:
         rng = np.random.default_rng(seed=seed)
@@ -25,6 +31,7 @@ def _verify_seed(rng: np.random.Generator | None, seed: int | None) -> np.random
 def _check_value_within_limit(value: float, limit: tuple) -> None:
     if value <= limit[0] or value >= limit[1]:
         message = f"value {value} must be between {limit[0]} and {limit[1]}."
+        logger.error(message)
         raise ValueError(message)
 
 
@@ -109,6 +116,7 @@ def generate_scatterer(
             "ratio_scatterer_to_total_grid, ratio_scatterer_num_to_wavelength,"
             "or num_scatterer_per_wavelength"
         )
+        logger.error(message)
         raise ValueError(message)
     if params_provided > 1:
         message = (
@@ -116,6 +124,7 @@ def generate_scatterer(
             "ratio_scatterer_to_total_grid, ratio_scatterer_num_to_wavelength,"
             "or num_scatterer_per_wavelength"
         )
+        logger.error(message)
         raise ValueError(message)
 
     if ratio_scatterer_to_total_grid is not None:
