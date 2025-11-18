@@ -106,6 +106,9 @@ def generate_resolution_based_scatterer(
 ) -> tuple[NDArray[np.float64], int, float]:
     """Generate a scatterer map based on resolution cell.
 
+    based on
+    https://github.com/gfpinton/fullwave2/blob/f00c4bcbf031897c748bea2ffabe1ca636234fa1/rescell2d.m
+
     Parameters
     ----------
     grid : Grid
