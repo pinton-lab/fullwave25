@@ -29,7 +29,7 @@ def _verify_seed(rng: np.random.Generator | None, seed: int | None) -> np.random
 
 
 def _check_value_within_limit(value: float, limit: tuple) -> None:
-    if value <= limit[0] or value >= limit[1]:
+    if value < limit[0] or value > limit[1]:
         message = f"value {value} must be between {limit[0]} and {limit[1]}."
         logger.error(message)
         raise ValueError(message)
@@ -362,7 +362,6 @@ def generate_scatterer_from_num_scatterer_per_wavelength(
     rng = _verify_seed(rng, seed)
     ratio_scatterer_num_to_wavelength = num_scatterer_per_wavelength / grid.ppw
 
-    # num_scatterer_per_wavelength = int(ratio_scatterer_num_to_wavelength * grid.ppw)
     num_scatterer_total = (
         int(
             grid.nx * grid.ny * grid.nz / grid.ppw**3 * num_scatterer_per_wavelength**3,
