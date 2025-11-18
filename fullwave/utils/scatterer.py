@@ -144,7 +144,7 @@ def generate_scatterer(
             rng=rng,
         )
 
-    # ratio_scatterer_num_to_wavelength is not None
+    # num_scatterer_per_wavelength is not None
     return generate_scatterer_from_num_scatterer_per_wavelength(
         grid=grid,
         num_scatterer_per_wavelength=num_scatterer_per_wavelength,
