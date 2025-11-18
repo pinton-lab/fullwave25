@@ -449,8 +449,8 @@ def generate_resolution_based_scatterer(
 
     """
     rng = _verify_seed(rng, seed)
-    _check_value_within_limit(num_scatterer, (0.0, np.inf))
-    _check_value_within_limit(ncycles, (0, np.inf))
+    _check_value_within_limit(num_scatterer, (0.0, 1_000_000))
+    _check_value_within_limit(ncycles, (0, 1_000_000))
 
     resolution_cell = _resolution_cell(
         wavelength=grid.wavelength,
