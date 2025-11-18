@@ -112,16 +112,16 @@ def generate_scatterer(
 
     if params_provided == 0:
         message = (
-            "Must provide exactly one of:"
-            "ratio_scatterer_to_total_grid, ratio_scatterer_num_to_wavelength,"
+            "Must provide exactly one of: "
+            "ratio_scatterer_to_total_grid, ratio_scatterer_num_to_wavelength, "
             "or num_scatterer_per_wavelength"
         )
         logger.error(message)
         raise ValueError(message)
     if params_provided > 1:
         message = (
-            "Must provide only one of:"
-            "ratio_scatterer_to_total_grid, ratio_scatterer_num_to_wavelength,"
+            "Must provide only one of: "
+            "ratio_scatterer_to_total_grid, ratio_scatterer_num_to_wavelength, "
             "or num_scatterer_per_wavelength"
         )
         logger.error(message)
