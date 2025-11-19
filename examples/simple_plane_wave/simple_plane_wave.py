@@ -12,7 +12,7 @@ from fullwave.utils.coordinates import map_to_coords
 
 def main() -> None:
     """Run Simple plane wave transmit example."""
-    # overwrite the logging level, DEBGUG, INFO, WARNING, ERROR
+    # overwrite the logging level, DEBUG, INFO, WARNING, ERROR
     logging.getLogger("__main__").setLevel(logging.INFO)
 
     #
