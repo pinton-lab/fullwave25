@@ -1,6 +1,6 @@
 # Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities
 
-<a href="https://doi.org/10.5281/zenodo.17625780"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.17625780.svg" alt="DOI"></a> 
+<a href="https://doi.org/10.5281/zenodo.17625780"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.17625780.svg" alt="DOI"></a>
 <a href="https://pepy.tech/projects/fullwave25"><img src="https://static.pepy.tech/personalized-badge/fullwave25?period=total&units=INTERNATIONAL_SYSTEM&left_color=GREY&right_color=BLUE&left_text=PyPI+Downloads" alt="PyPI Downloads"></a>
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/153Sx9D_5zTlF7UtlKHlyz_CTJnLIAI6s)
@@ -118,6 +118,34 @@ If you use Fullwave 2.5 in your research, please cite this repository as:
 
 ```sh
 pip install fullwave25
+```
+
+## Troubleshooting
+
+If `ffmpeg` is not installed on your system, please install it using the package manager of your Linux distribution.
+`ffmpeg` is used for video writing in plotting functions.
+
+please see the installation guide below.
+reference: [FFmpeg Installation Guide](https://ffmpeg.org/download.html)
+
+```sh
+# for Ubuntu/Debian
+sudo apt install ffmpeg
+```
+
+Additionally, if you encounter any issues related to `cv2` (OpenCV) during the installation, please install it separately using linux package manager or pip.
+
+please see the installation guide below.
+`cv2` is used fro video writing in plotting functions.
+
+reference: [Installing OpenCV on Linux: A Comprehensive Guide](https://linuxvox.com/blog/install-opencv-linux/)
+
+```sh
+# using apt for Ubuntu/Debian
+sudo apt install python3-opencv
+
+# using pip
+pip install opencv-python
 ```
 
 ## installation for development
