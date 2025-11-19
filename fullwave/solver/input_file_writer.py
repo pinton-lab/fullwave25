@@ -164,10 +164,18 @@ class InputFileWriter:
                 )
             if is_static_map:
                 self._build_symbolic_links_for_dat_files(
-                    src_dir=self._work_dir,
-                    dst_dir=simulation_dir,
+                    src_dir=self._work_dir.resolve(),
+                    dst_dir=simulation_dir.resolve(),
                 )
         else:
+            if is_static_map:
+                message = (
+                    "Using exponential attenuation with static map is not supported. "
+                    "Setting is_static_map to False."
+                )
+                logger.warning(message)
+                is_static_map = False
+
             dat_output_dir = self._work_dir if is_static_map else simulation_dir
             self._save_variables_into_dat_file_exponential_attenuation(
                 simulation_dir=dat_output_dir,
@@ -668,40 +676,50 @@ class InputFileWriter:
             "ndmap",
             "dcmap",
             "kappax",
-            "kappay",
             "kappau",
-            "kappaw",
             "apmlu1",
             "bpmlu1",
-            "apmlw1",
-            "bpmlw1",
             "apmlx1",
             "bpmlx1",
-            "apmly1",
-            "bpmly1",
             "apmlu2",
             "bpmlu2",
-            "apmlw2",
-            "bpmlw2",
             "apmlx2",
             "bpmlx2",
-            "apmly2",
-            "bpmly2",
         ]
-        if self.is_3d:
+        if not self.use_isotropic_relaxation:
+            var_name_list.extend(
+                [
+                    "kappay",
+                    "kappaw",
+                    # --
+                    "apmlw1",
+                    "apmly1",
+                    "bpmlw1",
+                    "bpmly1",
+                    # --
+                    "apmlw2",
+                    "apmly2",
+                    "bpmlw2",
+                    "bpmly2",
+                ],
+            )
+        if self.is_3d and not self.use_isotropic_relaxation:
             var_name_list.extend(
                 [
                     "nZ",
                     "dZ",
+                    # --
                     "kappaz",
                     "kappav",
+                    # --
                     "apmlz1",
-                    "bpmlz1",
                     "apmlv1",
+                    "bpmlz1",
                     "bpmlv1",
+                    # --
                     "apmlz2",
-                    "bpmlz2",
                     "apmlv2",
+                    "bpmlz2",
                     "bpmlv2",
                 ],
             )
