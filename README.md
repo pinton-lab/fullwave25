@@ -95,7 +95,7 @@ If you use Fullwave 2.5 in your research, please cite this repository as:
 - after that, you can clone the repository through
 
   ```sh
-  git clone git@github.com:pinton-lab/fullwave-python.git
+  git clone git@github.com:pinton-lab/fullwave25.git
   ```
 
 ## Technical references
