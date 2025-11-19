@@ -35,6 +35,7 @@ COMPATIBLE_CUDA_ARCHITECTURES = [
 
 VERIFIED_CUDA_ARCHITECTURES = [
     "sm_80",  # Ampere: A100
+    "sm_86",  # Ampere: RTX 3080, RTX 3090, etc
     "sm_89",  # Ada: RTX 4090, L40, RTX6000
     "sm_120",  # Blackwell: RTX 50 series
     "sm_75",  # Turing: RTX 20*0, T4
