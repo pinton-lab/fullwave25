@@ -1,4 +1,4 @@
-"""Simple plane wave transmit example."""
+"""Full synthetic aperture example."""
 
 import logging
 from pathlib import Path
