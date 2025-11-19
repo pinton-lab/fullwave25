@@ -394,6 +394,7 @@ class Solver:
         self.grid: fullwave.Grid
         self.input_file_writer: InputFileWriter
 
+        self.run_on_memory = run_on_memory
         if run_on_memory:
             message = (
                 "\nrun_on_memory is set to True."
@@ -681,6 +682,14 @@ class Solver:
         -------
             NDArray[np.float64]: The simulation output data as a NumPy array.
 
+        Raises
+        ------
+        ValueError
+            If run_on_memory is True when is_static_map is True.
+            Static map simulations require input files to be stored on a disk.
+            run_on_memory, on the other hand, removes the input files
+            after the simulation is complete.
+
         """
         # self._save_data_for_beamforming()
 
@@ -690,6 +699,16 @@ class Solver:
 
         message = f"simulation settings overview: \n{self!s}"
         logger.debug(message)
+
+        if self.run_on_memory and is_static_map:
+            error_msg = (
+                "run_on_memory cannot be True when is_static_map is True. "
+                "Static map simulations require input files to be stored on a disk. run_on_memory, "
+                "on the other hand, removes the input files after the simulation is complete. "
+                "Please set run_on_memory to False when using static map."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
 
         start_time = time.time()
         extended_medium = self.pml_builder.run(use_pml=self.use_pml)
