@@ -1,4 +1,4 @@
-"""Simple plane wave transmit example."""
+"""Plane wave compounding example."""
 
 import logging
 from pathlib import Path
