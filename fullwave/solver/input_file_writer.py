@@ -176,7 +176,9 @@ class InputFileWriter:
                 logger.warning(message)
                 is_static_map = False
 
-            dat_output_dir = self._work_dir if is_static_map else simulation_dir
+            dat_output_dir = (
+                self._work_dir if is_static_map else simulation_dir
+            )  # retain this if for future use. currently is_static_map is forced to False
             self._save_variables_into_dat_file_exponential_attenuation(
                 simulation_dir=dat_output_dir,
                 dim=self._dim,
