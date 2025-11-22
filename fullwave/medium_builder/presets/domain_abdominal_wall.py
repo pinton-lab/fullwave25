@@ -30,7 +30,11 @@ def _make_abdominal_property(
     use_center_region: bool = True,
     skip_background_definition: bool = True,
     transducer_surface: NDArray[np.float64] | None = None,
+    material_properties: MaterialProperties | None = None,
 ) -> dict[str, np.ndarray]:
+    material_properties = (
+        material_properties if material_properties is not None else MaterialProperties()
+    )
     mat_data = loadmat(abdominal_wall_mat_path)
     abdominal_wall_properties = mat_data["cut"].astype(float)
 
@@ -94,8 +98,6 @@ def _make_abdominal_property(
         start_depth_index : start_depth_index + abdominal_wall_properties.shape[0],
         : abdominal_wall_properties.shape[1],
     ] = abdominal_wall_properties
-
-    material_properties = MaterialProperties()
 
     density = np.ones_like(base_map) * -1
     sound_speed = np.ones_like(base_map) * -1
@@ -278,6 +280,7 @@ class AbdominalWallDomain(Domain):
             use_center_region=self.use_center_region,
             skip_background_definition=self.skip_background_definition,
             transducer_surface=self.transducer_surface,
+            material_properties=self.material_properties,
         )
 
         return (
