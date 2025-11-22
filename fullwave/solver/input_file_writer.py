@@ -151,6 +151,7 @@ class InputFileWriter:
             simulation_dir / "icmat.dat",
             np.transpose(self.source.icmat),
         )
+        self._write_coords(simulation_dir / "icc.dat", self.source.incoords)
         self._copy_simulation_bin_file(simulation_dir)
 
         if not self.use_exponential_attenuation:
@@ -664,7 +665,7 @@ class InputFileWriter:
             "dY",
             "dT",
             "c0",
-            "icc",
+            # "icc",
             "outc",
             "nY",
             "nX",
@@ -771,7 +772,7 @@ class InputFileWriter:
             )
 
     def _save_coords(self, simulation_dir: Path) -> None:
-        self._write_coords(simulation_dir / "icc.dat", self.source.incoords)
+        # self._write_coords(simulation_dir / "icc.dat", self.source.incoords)
         self._write_coords(
             simulation_dir / "outc.dat",
             self.sensor.outcoords,
