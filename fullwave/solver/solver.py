@@ -814,6 +814,11 @@ class Solver:
             A formatted string containing the Solver's attributes.
 
         """
+        n_transition_layer = (
+            self.pml_builder.n_transition_layer
+            if hasattr(self.pml_builder, "n_transition_layer")
+            else 0
+        )
         return (
             f"\nSolver(\n"
             f"  version={fullwave.__version__}\n"
@@ -825,7 +830,7 @@ class Solver:
             f"  path_fullwave_simulation_bin={self.path_fullwave_simulation_bin}\n"
             f"  use_pml={self.use_pml}\n"
             f"  pml_thickness_px={self.pml_builder.n_pml_layer}\n"
-            f"  n_transition_layer={self.pml_builder.n_transition_layer}\n"
+            f"  n_transition_layer={n_transition_layer}\n"
             f"  is_3d={self.is_3d}\n"
             f"  use_gpu={self.use_gpu}\n"
             f"  use_exponential_attenuation={self.use_exponential_attenuation}\n"
