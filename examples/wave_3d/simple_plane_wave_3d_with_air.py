@@ -11,7 +11,7 @@ from fullwave.utils import plot_utils
 
 def main() -> None:  # noqa: PLR0915
     """Run 3D Simple plane wave transmit example."""
-    # overwrite the logging level, DEBGUG, INFO, WARNING, ERROR
+    # overwrite the logging level, DEBUG, INFO, WARNING, ERROR
     logging.getLogger("__main__").setLevel(logging.INFO)
 
     #

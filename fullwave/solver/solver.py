@@ -35,6 +35,7 @@ COMPATIBLE_CUDA_ARCHITECTURES = [
 
 VERIFIED_CUDA_ARCHITECTURES = [
     "sm_80",  # Ampere: A100
+    "sm_86",  # Ampere: RTX 3080, RTX 3090, etc
     "sm_89",  # Ada: RTX 4090, L40, RTX6000
     "sm_120",  # Blackwell: RTX 50 series
     "sm_75",  # Turing: RTX 20*0, T4
@@ -393,6 +394,7 @@ class Solver:
         self.grid: fullwave.Grid
         self.input_file_writer: InputFileWriter
 
+        self.run_on_memory = run_on_memory
         if run_on_memory:
             message = (
                 "\nrun_on_memory is set to True."
@@ -680,6 +682,14 @@ class Solver:
         -------
             NDArray[np.float64]: The simulation output data as a NumPy array.
 
+        Raises
+        ------
+        ValueError
+            If run_on_memory is True when is_static_map is True.
+            Static map simulations require input files to be stored on a disk.
+            run_on_memory, on the other hand, removes the input files
+            after the simulation is complete.
+
         """
         # self._save_data_for_beamforming()
 
@@ -689,6 +699,16 @@ class Solver:
 
         message = f"simulation settings overview: \n{self!s}"
         logger.debug(message)
+
+        if self.run_on_memory and is_static_map:
+            error_msg = (
+                "run_on_memory cannot be True when is_static_map is True. "
+                "Static map simulations require input files to be stored on a disk. run_on_memory, "
+                "on the other hand, removes the input files after the simulation is complete. "
+                "Please set run_on_memory to False when using static map."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
 
         start_time = time.time()
         extended_medium = self.pml_builder.run(use_pml=self.use_pml)
@@ -794,6 +814,11 @@ class Solver:
             A formatted string containing the Solver's attributes.
 
         """
+        n_transition_layer = (
+            self.pml_builder.n_transition_layer
+            if hasattr(self.pml_builder, "n_transition_layer")
+            else 0
+        )
         return (
             f"\nSolver(\n"
             f"  version={fullwave.__version__}\n"
@@ -805,7 +830,7 @@ class Solver:
             f"  path_fullwave_simulation_bin={self.path_fullwave_simulation_bin}\n"
             f"  use_pml={self.use_pml}\n"
             f"  pml_thickness_px={self.pml_builder.n_pml_layer}\n"
-            f"  n_transition_layer={self.pml_builder.n_transition_layer}\n"
+            f"  n_transition_layer={n_transition_layer}\n"
             f"  is_3d={self.is_3d}\n"
             f"  use_gpu={self.use_gpu}\n"
             f"  use_exponential_attenuation={self.use_exponential_attenuation}\n"

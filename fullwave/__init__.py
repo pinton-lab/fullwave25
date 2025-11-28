@@ -5,7 +5,6 @@ import platform
 import time
 from importlib.metadata import PackageNotFoundError, version
 
-from . import utils
 from .grid import Grid
 from .medium import Medium, MediumExponentialAttenuation, MediumRelaxationMaps
 from .sensor import Sensor
@@ -17,6 +16,7 @@ from .medium_builder import presets  # isort:skip
 from .solver.solver import Solver  # isort:skip
 from .medium_builder.domain import Domain  # isort:skip
 from .medium_builder import MediumBuilder  # isort:skip
+from . import utils  # isort:skip
 
 logging.Formatter.converter = time.gmtime
 logging.basicConfig(
@@ -60,7 +60,7 @@ try:
     __version__ = version("fullwave")
 except PackageNotFoundError:
     # Update via bump-my-version, not manually
-    __version__ = "1.0.16"
+    __version__ = "1.0.18"
 
 VERSION = __version__  # for convenience
 logger.info("Fullwave version: %s", __version__)
