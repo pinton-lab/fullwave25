@@ -131,7 +131,7 @@ def main() -> None:
     # execute the solver
     sensor_output_path = fw_solver.run(load_results=False)
 
-    # with load_results=True, the sensor_output is returned as a result file path.
+    # with load_results=False, the sensor_output is returned as a result file path.
     # Therefore, we will load and reshape the data manually.
     # With load_data_with_time_step function, we can load the data at a specific time step
     # without loading the whole data into memory.
