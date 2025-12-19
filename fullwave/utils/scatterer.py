@@ -35,11 +35,142 @@ def _check_value_within_limit(value: float, limit: tuple) -> None:
         raise ValueError(message)
 
 
+def _expand_scatterer_pixels(
+    scatterer: NDArray,
+    radius: int = 1,
+    *,
+    use_rectangle_expansion: bool = True,
+    background_value: float = 1.0,
+) -> NDArray:
+    """Expand scatterers by expanding each scatterer pixel into a block of pixels.
+
+    Parameters
+    ----------
+    scatterer : NDArray[np.float64]
+        2D array representing the scatterer map.
+    radius : int, optional
+        Radius of the block to expand each scatterer pixel, by default 1.
+    use_rectangle_expansion : bool, optional
+        Whether to use rectangular expansion or circular expansion, by default True.
+    background_value : float, optional
+        Value to assign to background pixels, by default 1.0.
+
+    Returns
+    -------
+    NDArray[np.float64]
+        Fattened scatterer map.
+
+    """
+    message = "scatterer expansion is experimental. May be slow for large grids. May lose accuracy."
+    logger.warning(message)
+
+    height, width = scatterer.shape
+    out = np.zeros_like(scatterer)
+
+    ys, xs = np.where(scatterer != 1.0)
+    if use_rectangle_expansion:
+        for y, x in zip(ys, xs, strict=True):
+            v = scatterer[y, x]
+            y0 = max(0, y - radius)
+            y1 = min(height, y + radius + 1)
+            x0 = max(0, x - radius)
+            x1 = min(width, x + radius + 1)
+
+            # write a block with value v, combine with max to avoid overwriting with smaller values
+            block = out[y0:y1, x0:x1]
+            np.maximum(block, v, out=block)
+        # put median value as background
+        out[out == 0.0] = background_value
+    else:
+        for y, x in zip(ys, xs, strict=True):
+            v = scatterer[y, x]
+            for dy in range(-radius, radius + 1):
+                for dx in range(-radius, radius + 1):
+                    if dy**2 + dx**2 <= radius**2:
+                        y_new = y + dy
+                        x_new = x + dx
+                        if 0 <= y_new < height and 0 <= x_new < width:
+                            out[y_new, x_new] = max(out[y_new, x_new], v)
+        # put median value as background
+        out[out == 0.0] = background_value
+
+    return out
+
+
+def _expand_scatterer_pixels_3d(
+    scatterer: NDArray,
+    radius: int = 1,
+    *,
+    use_rectangle_expansion: bool = True,
+    background_value: float = 1.0,
+) -> NDArray:
+    """Expand scatterers in 3D by expanding each scatterer voxel into a block of voxels.
+
+    Parameters
+    ----------
+    scatterer : NDArray[np.float64]
+        3D array representing the scatterer map.
+    radius : int, optional
+        Radius of the block to expand each scatterer voxel, by default 1.
+    use_rectangle_expansion : bool, optional
+        Whether to use rectangular expansion or spherical expansion, by default True.
+    background_value : float, optional
+        Value to assign to background pixels, by default 1.0.
+
+    Returns
+    -------
+    NDArray[np.float64]
+        Fattened scatterer map.
+
+    """
+    message = "scatterer expansion is experimental. May be slow for large grids. May lose accuracy."
+    logger.warning(message)
+
+    depth, height, width = scatterer.shape
+    out = np.zeros_like(scatterer)
+
+    zs, ys, xs = np.where(scatterer != 1.0)
+    if use_rectangle_expansion:
+        for z, y, x in zip(zs, ys, xs, strict=True):
+            v = scatterer[z, y, x]
+            z0 = max(0, z - radius)
+            z1 = min(depth, z + radius + 1)
+            y0 = max(0, y - radius)
+            y1 = min(height, y + radius + 1)
+            x0 = max(0, x - radius)
+            x1 = min(width, x + radius + 1)
+
+            # write a block with value v, combine with max to avoid overwriting with smaller values
+            block = out[z0:z1, y0:y1, x0:x1]
+            np.maximum(block, v, out=block)
+        # put median value as background
+        out[out == 0.0] = background_value
+    else:
+        for z, y, x in zip(zs, ys, xs, strict=True):
+            v = scatterer[z, y, x]
+            for dz in range(-radius, radius + 1):
+                for dy in range(-radius, radius + 1):
+                    for dx in range(-radius, radius + 1):
+                        if dz**2 + dy**2 + dx**2 <= radius**2:
+                            z_new = z + dz
+                            y_new = y + dy
+                            x_new = x + dx
+                            if 0 <= z_new < depth and 0 <= y_new < height and 0 <= x_new < width:
+                                out[z_new, y_new, x_new] = max(out[z_new, y_new, x_new], v)
+        # put median value as background
+        out[out == 0.0] = background_value
+
+    return out
+
+
 def _generate_scatterer_from_num_scatterer(
     grid: Grid,
     rng: np.random.Generator,
     num_scatterer_total: float,
     scatter_value_std: float,
+    scatterer_diameter_px: float | None = None,
+    *,
+    use_rectangle_expansion: bool = True,
 ) -> NDArray[np.float64]:
     scatterer = np.ones(grid.shape, dtype=float)
 
@@ -55,6 +186,22 @@ def _generate_scatterer_from_num_scatterer(
         size=int(num_scatterer_total),
     )
     scatterer.flat[scatterer_indices] = scatterer_values
+    if scatterer_diameter_px is not None and scatterer_diameter_px > 1.0:
+        if grid.is_3d:
+            radius = int((scatterer_diameter_px - 1) / 2)
+            scatterer = _expand_scatterer_pixels_3d(
+                scatterer,
+                radius=radius,
+                use_rectangle_expansion=use_rectangle_expansion,
+            )
+        else:
+            radius = int((scatterer_diameter_px - 1) / 2)
+            scatterer = _expand_scatterer_pixels(
+                scatterer,
+                radius=radius,
+                use_rectangle_expansion=use_rectangle_expansion,
+            )
+
     scatterer[scatterer < 0] = 0.0
     return scatterer
 
@@ -68,6 +215,8 @@ def generate_scatterer(
     ratio_scatterer_to_total_grid: float | None = None,
     ratio_scatterer_num_to_wavelength: float | None = None,
     num_scatterer_per_wavelength: int | None = None,
+    scatterer_diameter_px: float | None = None,
+    use_rectangle_expansion: bool = True,
 ) -> tuple[NDArray[np.float64], dict]:
     """Generate a scatterer map with random values.
 
@@ -90,6 +239,10 @@ def generate_scatterer(
         Ratio of scatterer number to wavelength (0 < ratio < 1), by default None.
     num_scatterer_per_wavelength : int | None, optional
         Number of scatterers per wavelength (0 < num < grid.ppw), by default None.
+    scatterer_diameter_px : float | None, optional
+        Diameter of each scatterer in pixels, by default None.
+    use_rectangle_expansion : bool, optional
+        Whether to use rectangular expansion or spherical expansion, by default True.
 
     Returns
     -------
@@ -143,6 +296,8 @@ def generate_scatterer(
             scatter_value_std=scatter_value_std,
             seed=seed,
             rng=rng,
+            scatterer_diameter_px=scatterer_diameter_px,
+            use_rectangle_expansion=use_rectangle_expansion,
         )
     if ratio_scatterer_num_to_wavelength is not None:
         return generate_scatterer_from_ratio_num_scatterer_to_wavelength(
@@ -151,6 +306,8 @@ def generate_scatterer(
             scatter_value_std=scatter_value_std,
             seed=seed,
             rng=rng,
+            scatterer_diameter_px=scatterer_diameter_px,
+            use_rectangle_expansion=use_rectangle_expansion,
         )
 
     # num_scatterer_per_wavelength is not None
@@ -160,6 +317,8 @@ def generate_scatterer(
         scatter_value_std=scatter_value_std,
         seed=seed,
         rng=rng,
+        scatterer_diameter_px=scatterer_diameter_px,
+        use_rectangle_expansion=use_rectangle_expansion,
     )
 
 
@@ -169,6 +328,9 @@ def generate_scatterer_from_ratio_num_scatterer_to_total_grid(
     scatter_value_std: float = 0.08,
     seed: int | None = None,
     rng: np.random.Generator | None = None,
+    scatterer_diameter_px: float | None = None,
+    *,
+    use_rectangle_expansion: bool = True,
 ) -> tuple[NDArray[np.float64], dict]:
     """Generate a scatterer map with random values.
 
@@ -186,6 +348,10 @@ def generate_scatterer_from_ratio_num_scatterer_to_total_grid(
         Random seed for reproducibility, by default None.
     rng : np.random.Generator | None, optional
         Random number generator, by default None.
+    scatterer_diameter_px : float | None, optional
+        Diameter of each scatterer in pixels, by default None.
+    use_rectangle_expansion : bool, optional
+        Whether to use rectangular expansion or spherical expansion, by default True.
 
     Returns
     -------
@@ -228,6 +394,8 @@ def generate_scatterer_from_ratio_num_scatterer_to_total_grid(
         rng,
         num_scatterer_total,
         scatter_value_std,
+        scatterer_diameter_px,
+        use_rectangle_expansion=use_rectangle_expansion,
     )
 
     scatterer_info = {
@@ -246,6 +414,9 @@ def generate_scatterer_from_ratio_num_scatterer_to_wavelength(
     scatter_value_std: float = 0.08,
     seed: int | None = None,
     rng: np.random.Generator | None = None,
+    scatterer_diameter_px: float | None = None,
+    *,
+    use_rectangle_expansion: bool = True,
 ) -> tuple[NDArray[np.float64], dict]:
     """Generate a scatterer map with random values from ratio of scatterer number to wavelength.
 
@@ -263,6 +434,10 @@ def generate_scatterer_from_ratio_num_scatterer_to_wavelength(
         Random seed for reproducibility, by default None.
     rng : np.random.Generator | None, optional
         Random number generator, by default None.
+    scatterer_diameter_px : float | None, optional
+        Diameter of each scatterer in pixels, by default None.
+    use_rectangle_expansion : bool, optional
+        Whether to use rectangular expansion or spherical expansion, by default True.
 
     Returns
     -------
@@ -305,6 +480,8 @@ def generate_scatterer_from_ratio_num_scatterer_to_wavelength(
         rng,
         num_scatterer_total,
         scatter_value_std,
+        scatterer_diameter_px,
+        use_rectangle_expansion=use_rectangle_expansion,
     )
 
     scatterer_info = {
@@ -323,6 +500,9 @@ def generate_scatterer_from_num_scatterer_per_wavelength(
     scatter_value_std: float = 0.08,
     seed: int | None = None,
     rng: np.random.Generator | None = None,
+    scatterer_diameter_px: float | None = 1.0,
+    *,
+    use_rectangle_expansion: bool = True,
 ) -> tuple[NDArray[np.float64], dict]:
     """Generate a scatterer map with random values.
 
@@ -340,6 +520,10 @@ def generate_scatterer_from_num_scatterer_per_wavelength(
         Random seed for reproducibility, by default None.
     rng : np.random.Generator | None, optional
         Random number generator, by default None.
+    scatterer_diameter_px : float | None, optional
+        Diameter of each scatterer in pixels, by default None.
+    use_rectangle_expansion : bool, optional
+        Whether to use rectangular expansion or spherical expansion, by default True.
 
     Returns
     -------
@@ -382,6 +566,8 @@ def generate_scatterer_from_num_scatterer_per_wavelength(
         rng,
         num_scatterer_total,
         scatter_value_std,
+        scatterer_diameter_px,
+        use_rectangle_expansion=use_rectangle_expansion,
     )
 
     scatterer_info = {
