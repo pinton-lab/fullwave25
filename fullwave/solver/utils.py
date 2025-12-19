@@ -128,14 +128,14 @@ def load_data_with_sensor_index(
 ) -> NDArray[np.float64]:
     """Load data from a file using memory mapping with sensor index.
 
-    This function allows loading data for a specific time step
+    This function allows loading data for a specific sensor index
     without loading the entire dataset into memory.
 
     Args:
         file_path (Path): Path to the file.
         n_sensors: Number of sensors
-        dtype: Data type to use when reading the file.
         sensor_index: Sensor index to load.
+        dtype: Data type to use when reading the file.
 
     Returns:
         NDArray[np.float64]: Array of data read from the file.
