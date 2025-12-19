@@ -84,3 +84,71 @@ def initialize_relaxation_param_dict(
         out_dict[f"d_x2_nu{i_relax + 1}"] = value.copy() if value is not None else None
         out_dict[f"alpha_x2_nu{i_relax + 1}"] = value.copy() if value is not None else None
     return out_dict
+
+
+def load_data_with_time_step(
+    file_path: Path,
+    n_sensors: int,
+    time_step: int,
+    dtype: DTypeLike = np.float32,
+) -> NDArray[np.float64]:
+    """Load data from a file using memory mapping with a specific time step.
+
+    This function allows loading data for a specific time step
+    without loading the entire dataset into memory.
+
+    Args:
+        file_path (Path): Path to the file.
+        n_sensors: Number of sensors
+        dtype: Data type to use when reading the file.
+        time_step: Time step index to load.
+
+    Returns:
+        NDArray[np.float64]: Array of data read from the file.
+
+    Raises:
+        ValueError: if file_path does not exist.
+
+    """
+    if not file_path.exists():
+        error_msg = f"file_path {file_path} does not exist"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    sim_result_memmap = np.memmap(file_path, dtype=dtype, mode="r")
+    time_step_data = sim_result_memmap[time_step * n_sensors : (time_step + 1) * n_sensors]
+    return np.array(time_step_data)  # Convert memmap to ndarray
+
+
+def load_data_with_sensor_index(
+    file_path: Path,
+    n_sensors: int,
+    sensor_index: int,
+    dtype: DTypeLike = np.float32,
+) -> NDArray[np.float64]:
+    """Load data from a file using memory mapping with sensor index.
+
+    This function allows loading data for a specific time step
+    without loading the entire dataset into memory.
+
+    Args:
+        file_path (Path): Path to the file.
+        n_sensors: Number of sensors
+        dtype: Data type to use when reading the file.
+        sensor_index: Sensor index to load.
+
+    Returns:
+        NDArray[np.float64]: Array of data read from the file.
+
+    Raises:
+        ValueError: if file_path does not exist.
+
+    """
+    if not file_path.exists():
+        error_msg = f"file_path {file_path} does not exist"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    sim_result_memmap = np.memmap(file_path, dtype=dtype, mode="r")
+    sensor_data = sim_result_memmap[sensor_index::n_sensors]
+    return np.array(sensor_data)  # Convert memmap to ndarray
