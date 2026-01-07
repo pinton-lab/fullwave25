@@ -149,16 +149,22 @@ def main() -> None:  # noqa: PLR0915
     )
 
     # define scatterer
-    scatterer = presets.ScattererDomain(
+
+    rng = np.random.default_rng(seed=42)
+
+    csr = 0.05
+    ratio_scatterer_to_total_grid = 0.38
+
+    scatterer, _ = fullwave.utils.generate_scatterer(
         grid=grid,
-        num_scatterer=18,
-        ncycles=2,
+        # ratio_scatterer_to_total_grid=0.38,
+        ratio_scatterer_to_total_grid=ratio_scatterer_to_total_grid,
+        scatter_value_std=csr / 2,
+        rng=rng,
     )
 
-    # scatterer will be applied to density directly, instead of registering as a domain
-    csr = 0.035
-    background.density -= scatterer.density * csr
-    abdominal_wall.density -= scatterer.density * csr
+    background.density *= scatterer
+    abdominal_wall.density *= scatterer
 
     # register the domains to MediumBuilder
     mb = MediumBuilder(
@@ -170,7 +176,7 @@ def main() -> None:  # noqa: PLR0915
     # mb.register_domain(simple_domain_2)
 
     # we can plot to see the current registered domains
-    mb.plot_current_map(export_path=work_dir / "medium.png")
+    mb.plot_current_map(export_path=work_dir / "medium.svg")
 
     # generate medium for simulation
     medium = mb.run()
@@ -200,17 +206,18 @@ def main() -> None:  # noqa: PLR0915
     )
     propagation_map = np.nan_to_num(propagation_map, 0, posinf=p_max, neginf=-p_max)
 
-    p_max_plot = np.abs(propagation_map).max().item() / 2
+    p_max_plot = np.abs(propagation_map).max().item() / 8
 
-    time_step = propagation_map.shape[0] // 3 * 2
+    time_step = propagation_map.shape[0] // 50 * 37
     plot_utils.plot_wave_propagation_snapshot(
         propagation_map=propagation_map[time_step],
         c_map=medium.sound_speed,
         rho_map=medium.density,
-        export_name=work_dir / "wave_propagation_snapshot_1.png",
+        export_name=work_dir / "wave_propagation_snapshot_1.svg",
         vmin=-p_max_plot,
         vmax=p_max_plot,
         turn_off_axes=True,
+        figsize=(6, 6),
     )
 
     plot_utils.plot_wave_propagation_with_map(
