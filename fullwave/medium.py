@@ -12,6 +12,7 @@ from numpy.typing import NDArray
 from fullwave import Grid
 from fullwave.solver.utils import initialize_relaxation_param_dict
 from fullwave.utils import check_functions, plot_utils
+from fullwave.utils.numerical import matlab_gaussian_filter
 from fullwave.utils.relaxation_parameters import generate_relaxation_params
 
 logger = logging.getLogger("__main__." + __name__)
@@ -132,6 +133,7 @@ class MediumRelaxationMaps:
         # The sorting must be done between maps.
         # The order of the nu has no meaning because of the summation feature of Fullwave2.
 
+        relaxation_param_updates = self._blur_relaxation_param_updates(relaxation_param_updates)
         kappa_x1 = relaxation_param_updates["kappa_x1"]
         kappa_x2 = relaxation_param_updates["kappa_x2"]
 
@@ -220,6 +222,31 @@ class MediumRelaxationMaps:
 
         # for key, value in relaxation_param_updates.items():
         #     self.relaxation_param_dict[key] = np.atleast_2d(value)
+
+    def _blur_relaxation_param_updates(self, relaxation_param_dict: dict) -> dict:
+        """Blur the relaxation parameter updates to avoid numerical instability.
+
+        Parameters
+        ----------
+        relaxation_param_dict : dict
+            original relaxation parameters
+
+        Returns
+        -------
+            dict: Blurred relaxation parameter updates.
+
+        """
+        for key, value in relaxation_param_dict.items():
+            if key.startswith("kappa"):
+                relaxation_param_dict[key] = matlab_gaussian_filter(value, sigma=self.grid.ppw // 2)
+            else:
+                # blur in log10 scale
+                relaxation_param_dict[key] = 10 ** matlab_gaussian_filter(
+                    np.log10(value),
+                    sigma=self.grid.ppw // 2,
+                )
+
+        return relaxation_param_dict
 
     def check_relaxation_param_dict(
         self,

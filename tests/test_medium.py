@@ -12,6 +12,7 @@ class DummyGrid2D:
         self.ny = ny
         self.dt = dt
         self.is_3d = False
+        self.ppw = 16
 
 
 def test_post_init_conversion(monkeypatch):
