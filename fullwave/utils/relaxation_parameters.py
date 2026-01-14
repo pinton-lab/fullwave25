@@ -81,7 +81,7 @@ def generate_relaxation_params(
     n_relaxation_mechanisms: int = 2,
     path_database: Path = Path(__file__).parent
     / "bins"
-    / "relaxation_params_database_num_relax=2_20251027_1437.mat",
+    / "relaxation_params_database_num_relax=2_20260113_0957.mat",
 ) -> dict[str, NDArray[np.float64]]:
     """Generate relaxation parameters using a precomputed lookup table and input attenuation values.
 
@@ -122,7 +122,7 @@ class RelaxationParametersGenerator:
         path_database: Path = Path(__file__).parent
         / "bins"
         / "database"
-        / "relaxation_params_database_num_relax=2_20251027_1437.mat",
+        / "relaxation_params_database_num_relax=2_20260113_0957.mat",
     ) -> None:
         """Initialize the relaxation parameters generator.
 
