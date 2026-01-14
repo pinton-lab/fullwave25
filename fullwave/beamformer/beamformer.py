@@ -138,7 +138,7 @@ class Beamformer:
                     # we convert 2D indices to 1D indices
                     idp = (signals.shape[1] * (idx)) + (idt + dd)
 
-                    idp = idp[(idp > 0) & (idp <= signals.shape[0] * signals.shape[1])]
+                    idp = idp[(idp > 0) & (idp < signals.shape[0] * signals.shape[1])]
 
                     idps[i_axial, i_lat] = idp
 

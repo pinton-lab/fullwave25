@@ -6,12 +6,13 @@ from pathlib import Path
 import numpy as np
 
 import fullwave
+from fullwave import MediumBuilder, presets
 from fullwave.beamformer.beamformer import Beamformer
 from fullwave.utils import plot_utils
 
 
 def main() -> None:  # noqa: PLR0915
-    """Run linear transducer with focused transmit example."""
+    """Run linear transducer abdominal wall example."""
     # overwrite the logging level, DEBUG, INFO, WARNING, ERROR
     logging.getLogger("__main__").setLevel(logging.INFO)
 
@@ -21,88 +22,38 @@ def main() -> None:  # noqa: PLR0915
     work_dir = Path("./outputs/") / "linear_transducer"
     work_dir.mkdir(parents=True, exist_ok=True)
 
+    #
     # --- define the computational grid ---
-    domain_size = (42.5e-3, 42.5e-3)  # meters
+    #
+
+    domain_size = (6e-2, 6e-2)  # [axial, lateral] meters
     f0 = 2e6
     c0 = 1540
     duration = domain_size[0] / c0 * 2.5
-    ppw = 12
-    cfl = 0.4
-    grid = fullwave.Grid(domain_size, f0, duration, c0=c0, ppw=ppw, cfl=cfl)
+    grid = fullwave.Grid(domain_size, f0, duration, c0=c0)
 
-    # --- define the acoustic medium properties ---
-    sound_speed = 1540
-    density = 1000
-    alpha_coeff = 0.5
-    alpha_power = 1.0
-    beta = 0.0
-
-    sound_speed_map = sound_speed * np.ones((grid.nx, grid.ny))
-    # put point targetes
-    point_target_locations_m = [
-        (10e-3, domain_size[1] / 2),
-        (15e-3, domain_size[1] / 2),
-        (20e-3, domain_size[1] / 2),
-        (25e-3, domain_size[1] / 2),
-        (30e-3, domain_size[1] / 2),
-        (35e-3, domain_size[1] / 2),
-        (40e-3, domain_size[1] / 2),
-    ]
-    for loc in point_target_locations_m:
-        ix = int(loc[0] / grid.dx)
-        iy = int(loc[1] / grid.dx)
-        sound_speed_map[ix, iy] = sound_speed * 0.6
-
-    density_map = density * np.ones((grid.nx, grid.ny))
-
-    alpha_coeff_map = alpha_coeff * np.ones((grid.nx, grid.ny))
-    alpha_power_map = alpha_power * np.ones((grid.nx, grid.ny))
-    beta_map = beta * np.ones((grid.nx, grid.ny))
-
-    rng = np.random.default_rng(seed=42)
-    scatterer, _ = fullwave.utils.generate_scatterer(
-        grid=grid,
-        ratio_scatterer_to_total_grid=0.38,
-        scatter_value_std=0.035 / 2,
-        rng=rng,
-    )
-
-    density_map *= scatterer
-
-    medium = fullwave.Medium(
-        grid=grid,
-        sound_speed=sound_speed_map,
-        density=density_map,
-        alpha_coeff=alpha_coeff_map,
-        alpha_power=alpha_power_map,
-        beta=beta_map,
-    )
-    medium.plot(export_path=Path(work_dir / "medium.png"))
+    #
+    # --- define the linear transducer ---
+    #
 
     element_layer_px = 3
-    # --- define the linear transducer ---
     transducer_geometry = fullwave.TransducerGeometry(
         grid,
         number_elements=128,
         # -
         element_width_m=0.146484375e-3,
-        # element_width_px=6,  # depends on the ppw, cfl
         # -
         element_spacing_m=0.146484375e-3,
-        # element_spacing_px=6,
         # -
         element_layer_px=element_layer_px,
         # -
         # [axial, lateral]
-        # position_px=(0, 0),
         position_m=(
-            # (42.5 - 37.5) / 2 * 1e-3,
             0,
-            (42.5 - 37.5) / 2 * 1e-3,
+            (60 - 37.4) / 2 * 1e-3,
         ),
         # -
         radius=float("inf"),
-        average_surface_signals=True,
     )
     transducer = fullwave.Transducer(
         transducer_geometry=transducer_geometry,
@@ -176,32 +127,90 @@ def main() -> None:  # noqa: PLR0915
         input_signal[i_source_index, :] = p0_vec.copy()
 
     transducer.set_signal(input_signal)
-    transducer.plot_source_mask(work_dir / "source_transducer.svg")
-    transducer.plot_sensor_mask(work_dir / "sensor_transducer.svg")
 
+    # make a sensor for whole domain to make an animation
+    sensor_mask = np.zeros((grid.nx, grid.ny), dtype=bool)
+    sensor_mask[:, :] = True
+    sensor = fullwave.Sensor(mask=sensor_mask, sampling_modulus_time=1)
+    sensor.plot(export_path=work_dir / "sensor_whole.svg")
+
+    #
+    # --- define the acoustic medium properties ---
+    #
+
+    # define background
+    background_property_name = "liver"
+    background = presets.BackgroundDomain(
+        grid=grid,
+        background_property_name=background_property_name,
+    )
+    # define abdominal wall
+    abdominal_wall = presets.AbdominalWallDomain(
+        grid=grid,
+    )
+
+    # define scatterer
+
+    rng = np.random.default_rng(seed=42)
+
+    csr = 0.03
+    ratio_scatterer_to_total_grid = 0.38
+
+    scatterer, _ = fullwave.utils.generate_scatterer(
+        grid=grid,
+        # ratio_scatterer_to_total_grid=0.38,
+        ratio_scatterer_to_total_grid=ratio_scatterer_to_total_grid,
+        scatter_value_std=csr / 2,
+        rng=rng,
+    )
+
+    background.density *= scatterer
+    abdominal_wall.density *= scatterer
+    background.beta = np.zeros_like(background.beta)
+    abdominal_wall.beta = np.zeros_like(abdominal_wall.beta)
+
+    # register the domains to MediumBuilder
+    mb = MediumBuilder(
+        grid=grid,
+    )
+    mb.register_domain(background)
+    mb.register_domain(abdominal_wall)
+    # mb.register_domain(simple_domain_1)
+    # mb.register_domain(simple_domain_2)
+
+    # we can plot to see the current registered domains
+
+    # generate medium for simulation
+    medium = mb.run()
+
+    medium.plot(export_path=work_dir / "medium.svg")
+    #
     # --- run simulation ---
+    #
+
+    # input source and sensor separately for animation
     fw_solver = fullwave.Solver(
         work_dir=work_dir,
         grid=grid,
         medium=medium,
         transducer=transducer,
+        # sensor=sensor,
         run_on_memory=False,
     )
-
     sensor_output = fw_solver.run()
 
     sensor_output = transducer.post_process_sensor_output(
         sensor_output,
-        average_surface_signals=True,
+        average_surface_signals=False,
     )
 
     num_elements = 128
 
     lateral_position = np.arange(
-        -transducer_geometry.transducer_width_m / 2,
-        transducer_geometry.transducer_width_m / 2,
-        # -domain_size[1] / 2,
-        # domain_size[1] / 2,
+        # -transducer_geometry.transducer_width_m / 2,
+        # transducer_geometry.transducer_width_m / 2,
+        -domain_size[1] / 2,
+        domain_size[1] / 2,
         grid.wavelength / 8,
     )
     axial_position = np.arange(domain_size[0] * 1 / 100, domain_size[0], grid.wavelength / 8)
@@ -219,6 +228,7 @@ def main() -> None:  # noqa: PLR0915
         axial_position_m=axial_position,
         num_elements=num_elements,
         transducer_coordinates=transducer_coordinates,
+        f_number=1.0,
     )
     beamformed_image = beamformer.run(sensor_output)
 
