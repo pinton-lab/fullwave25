@@ -174,7 +174,7 @@ class AbdominalWallDomain(Domain):
         / "solver"
         / "bins"
         / "database"
-        / "relaxation_params_database_num_relax=2_20251027_1437.mat",
+        / "relaxation_params_database_num_relax=2_20260113_0957.mat",
         n_relaxation_mechanisms: int = 2,
         transducer_surface: NDArray[np.float64] | None = None,
     ) -> None:
@@ -222,7 +222,7 @@ class AbdominalWallDomain(Domain):
             Defaults to
             Path(__file__).parent.parent / "solver" / "bins"
             / "database"
-            / "relaxation_params_database_num_relax=2_20251027_1437.mat",
+            / "relaxation_params_database_num_relax=2_20260113_0957.mat",
         n_relaxation_mechanisms: int, optional
             The number of relaxation mechanisms.
             Defaults to 4.

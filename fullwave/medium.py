@@ -777,7 +777,7 @@ class Medium:
         / "solver"
         / "bins"
         / "database"
-        / "relaxation_params_database_num_relax=2_20251027_1437.mat",
+        / "relaxation_params_database_num_relax=2_20260113_0957.mat",
         n_relaxation_mechanisms: int = 2,
         attenuation_builder: str = "lookup",
         use_isotropic_relaxation: bool = True,
