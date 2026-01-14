@@ -22,7 +22,7 @@ def main() -> None:  # noqa: PLR0915
     work_dir.mkdir(parents=True, exist_ok=True)
 
     # --- define the computational grid ---
-    domain_size = (42.5e-3 / 2, 42.5e-3)  # meters
+    domain_size = (42.5e-3, 42.5e-3)  # meters
     f0 = 2e6
     c0 = 1540
     duration = domain_size[0] / c0 * 2.5
@@ -38,11 +38,20 @@ def main() -> None:  # noqa: PLR0915
     beta = 0.0
 
     sound_speed_map = sound_speed * np.ones((grid.nx, grid.ny))
-    # put a square with different sound speed
-    sound_speed_map[
-        grid.nx // 2 - int(grid.nx * 0.1) : grid.nx // 2 + int(grid.nx * 0.1),
-        grid.ny // 2 - int(grid.ny * 0.1) : grid.ny // 2 + int(grid.ny * 0.1),
-    ] = 1400
+    # put point targetes
+    point_target_locations_m = [
+        (10e-3, domain_size[1] / 2),
+        (15e-3, domain_size[1] / 2),
+        (20e-3, domain_size[1] / 2),
+        (25e-3, domain_size[1] / 2),
+        (30e-3, domain_size[1] / 2),
+        (35e-3, domain_size[1] / 2),
+        (40e-3, domain_size[1] / 2),
+    ]
+    for loc in point_target_locations_m:
+        ix = int(loc[0] / grid.dx)
+        iy = int(loc[1] / grid.dx)
+        sound_speed_map[ix, iy] = sound_speed * 0.6
 
     density_map = density * np.ones((grid.nx, grid.ny))
 
@@ -54,7 +63,7 @@ def main() -> None:  # noqa: PLR0915
     scatterer, _ = fullwave.utils.generate_scatterer(
         grid=grid,
         ratio_scatterer_to_total_grid=0.38,
-        scatter_value_std=0.05,
+        scatter_value_std=0.035 / 2,
         rng=rng,
     )
 
@@ -217,10 +226,20 @@ def main() -> None:  # noqa: PLR0915
 
     plot_utils.plot_array(
         20 * np.log10((np.abs(beamformed_image) + 1e-20) / np.abs(beamformed_image).max()),
-        vmin=-40,
+        vmin=-30,
         vmax=0,
         cmap="gray",
+        extent=[
+            lateral_position[0] * 1e3,
+            lateral_position[-1] * 1e3,
+            axial_position[-1] * 1e3,
+            axial_position[0] * 1e3,
+        ],
+        xlabel="Lateral position (mm)",
+        ylabel="Axial position (mm)",
+        colorbar=True,
     )
+    print()
 
 
 if __name__ == "__main__":

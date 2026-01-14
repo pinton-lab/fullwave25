@@ -27,7 +27,7 @@ def main() -> None:  # noqa: PLR0915
     #
 
     domain_size = (6e-2, 6e-2)  # [axial, lateral] meters
-    f0 = 1e6
+    f0 = 2e6
     c0 = 1540
     duration = domain_size[0] / c0 * 2.5
     grid = fullwave.Grid(domain_size, f0, duration, c0=c0)
@@ -228,7 +228,7 @@ def main() -> None:  # noqa: PLR0915
         axial_position_m=axial_position,
         num_elements=num_elements,
         transducer_coordinates=transducer_coordinates,
-        f_number=1.5,
+        f_number=1.0,
     )
     beamformed_image = beamformer.run(sensor_output)
 
@@ -236,9 +236,18 @@ def main() -> None:  # noqa: PLR0915
 
     plot_utils.plot_array(
         20 * np.log10((np.abs(beamformed_image) + 1e-20) / np.abs(beamformed_image).max()),
-        vmin=-40,
+        vmin=-30,
         vmax=0,
         cmap="gray",
+        extent=[
+            lateral_position[0] * 1e3,
+            lateral_position[-1] * 1e3,
+            axial_position[-1] * 1e3,
+            axial_position[0] * 1e3,
+        ],
+        xlabel="Lateral position (mm)",
+        ylabel="Axial position (mm)",
+        colorbar=True,
     )
     print()
 
