@@ -27,7 +27,13 @@ classifiers = [
 [project.optional-dependencies] # --extra
 test = ["pytest", "tomli>=2.3.0"]
 dev = ["pre-commit==4.1.0", "pytest>=8.3.5", "ruff>=0.12.9"]
-examples = ["jupyter>=1.0.0", "ipykernel>=6.28.0"]
+examples = [
+    "jupyter>=1.0.0",
+    "ipykernel>=6.28.0",
+    "mach-beamform>=0.0.4",
+    "cupy-cuda12x>=13.6.0",
+    "pymust>=0.1.8",
+]
 
 [tool.hatch.version]
 path = "fullwave/__init__.py"
