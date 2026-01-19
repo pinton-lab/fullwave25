@@ -666,12 +666,14 @@ class InputFileWriter:
             "dT",
             "c0",
             # "icc",
+            "icczero",
             "outc",
             "nY",
             "nX",
             "nT",
             "ncoords",
             "ncoordsout",
+            "ncoordszero",
             "nTic",
             "modT",
             "d",
@@ -729,6 +731,8 @@ class InputFileWriter:
         for var_name in var_name_list:
             src_data = src_dir / f"{var_name}.dat"
             dst_data = dst_dir / f"{var_name}.dat"
+            if src_data.exists() is False:
+                continue
             # generate the symlink even if the file already exists
             if dst_data.exists():
                 dst_data.unlink()
