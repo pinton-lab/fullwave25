@@ -243,29 +243,39 @@ def main() -> None:  # noqa: PLR0915
     beta_map = np.ones(grid.shape) * 0  # nonlinearity parameter
     air_map = np.zeros(grid.shape)  # no air bubbles
 
-    # define scatterer
-
     rng = np.random.default_rng(seed=42)
+
+    # put random air scatterers below 20 mm depth
+    air_scatterer_start_depth_m = 20e-3
+    air_scatterer_start_depth_px = int(air_scatterer_start_depth_m / grid.dx)
+
+    beads_diameter_m = 2.5e-3  # mm
+    air_scatterer, _ = fullwave.utils.generate_scatterer(
+        grid=grid,
+        ratio_scatterer_to_total_grid=0.0005,
+        scatter_value_std=0.035,
+        rng=rng,
+        scatterer_diameter_px=beads_diameter_m / grid.dx,
+        use_rectangle_expansion=False,
+    )
+    air_map[air_scatterer_start_depth_px:, :] = (
+        air_scatterer[
+            air_scatterer_start_depth_px:,
+            :,
+        ]
+        != 1.0
+    )
+
+    plot_utils.plot_array(air_map)
+    # define scatterer
 
     scatterer, _ = fullwave.utils.generate_scatterer(
         grid=grid,
         ratio_scatterer_to_total_grid=0.38,
-        scatter_value_std=0.035,
+        scatter_value_std=0.02 / 2,
         rng=rng,
     )
 
-    scatterer = make_echoic_targets(
-        scatterer=scatterer,
-        grid=grid,
-        target_radius_m=5e-3,
-        target_spacing_m=15e-3,
-        start_offset_x_m=10e-3,
-        start_offset_y_m=10e-3,
-        n_targets_axial=3,
-        n_targets_lateral=3,
-        centered=True,
-    )
-    plot_utils.plot_array(scatterer)
     # scatterer modulates the density map.
     # scatterer values are centered around 1.0 with small variations.
     density_map *= scatterer
@@ -286,8 +296,9 @@ def main() -> None:  # noqa: PLR0915
 
     active_source_element_id_list = list(range(128))
     active_source_element_id_list = active_source_element_id_list[32::32]  # for faster demo
+    # active_source_element_id_list = [63]
 
-    element_layer_px = 4
+    element_layer_px = 8
     transducer_width_m = 38e-3
     transducer_geometry = fullwave.TransducerGeometry(
         grid,
@@ -460,6 +471,23 @@ def main() -> None:  # noqa: PLR0915
         ylabel="Axial position (mm)",
         colorbar=True,
         export_path=work_dir / "beamformed_image.svg",
+    )
+    plot_utils.plot_array(
+        convert_to_db(b_mode).T,
+        vmin=-30,
+        vmax=0,
+        aspect=1,
+        cmap="gray",
+        extent=[
+            b_mode_x[0] * 1e3,
+            b_mode_x[-1] * 1e3,
+            b_mode_z[-1] * 1e3,
+            b_mode_z[0] * 1e3,
+        ],
+        xlabel="Lateral position (mm)",
+        ylabel="Axial position (mm)",
+        colorbar=True,
+        export_path="./temp/temp.png",
     )
 
 

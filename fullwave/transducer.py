@@ -785,6 +785,10 @@ class Transducer:
             )
             * self.sensor_mask
         )
+        if indexed_element_surface.sum() == 0:
+            indexed_element_surface = (
+                self.transducer_geometry.indexed_element_mask_output * self.sensor_mask
+            )
 
         for i in range(1, self.transducer_geometry.number_elements + 1):
             indexed_element_mask_list = np.stack(
