@@ -1,14 +1,39 @@
 """Plane wave compounding example."""
 
 import logging
+import shutil
 from pathlib import Path
 
+import cupy
 import numpy as np
+import pymust
+from einops import rearrange
+from mach import experimental, wavefront
+from mach.io.must import (
+    linear_probe_positions,
+    scan_grid,
+)
 from tqdm import tqdm
 
 import fullwave
-from fullwave import MediumBuilder, presets
-from fullwave.utils import plot_utils, signal_process
+from fullwave.utils import plot_utils
+
+
+def convert_to_db(signal: np.ndarray) -> np.ndarray:
+    """Convert signal to decibel scale.
+
+    Parameters
+    ----------
+    signal : np.ndarray
+        Input signal array.
+
+    Returns
+    -------
+    np.ndarray
+        Signal in decibel scale.
+
+    """
+    return 20 * np.log10(np.abs(signal) / np.max(np.abs(signal)))
 
 
 def make_angled_input_signal(
@@ -109,7 +134,118 @@ def make_angled_input_signal(
     return input_signal
 
 
-def main() -> None:
+def make_echoic_targets(
+    scatterer: np.ndarray,
+    grid: fullwave.Grid,
+    target_radius_m: float,
+    target_spacing_m: float,
+    start_offset_x_m: float,
+    start_offset_y_m: float,
+    n_targets_axial: int,
+    n_targets_lateral: int,
+    *,
+    centered: bool = True,
+) -> np.ndarray:
+    """Place echoic circles in the scatter map.
+
+    Parameters
+    ----------
+    scatterer : np.ndarray
+        Scatterer map to modify.
+    grid : fullwave.Grid
+        Computational grid.
+    target_radius_m : float
+        Radius of each target in meters.
+    target_spacing_m : float
+        Spacing between targets in meters.
+    start_offset_x_m : float
+        Starting offset in the axial direction in meters.
+    start_offset_y_m : float
+        Starting offset in the lateral direction in meters.
+    n_targets_axial : int
+        Number of targets in the axial direction.
+    n_targets_lateral : int
+        Number of targets in the lateral direction.
+    centered : bool, optional
+        Whether to center the targets in the grid (default: True).
+
+    Returns
+    -------
+    np.ndarray
+        Modified scatterer map with echoic targets.
+
+    """
+    # place echoic circles in the scatter map
+    # each circle has a target_radius_m and is spaced by target_spacing_m
+    if centered:
+        total_axial_length = (n_targets_axial - 1) * target_spacing_m
+        total_lateral_length = (n_targets_lateral - 1) * target_spacing_m
+        start_offset_x_m = (grid.shape[0] * grid.dx - total_axial_length) / 2
+        start_offset_y_m = (grid.shape[1] * grid.dx - total_lateral_length) / 2
+
+    axial_positions = np.linspace(
+        start_offset_x_m,
+        start_offset_x_m + (n_targets_axial - 1) * target_spacing_m,
+        n_targets_axial,
+        endpoint=True,
+    )
+    lateral_positions = np.linspace(
+        start_offset_y_m,
+        start_offset_y_m + (n_targets_lateral - 1) * target_spacing_m,
+        n_targets_lateral,
+        endpoint=True,
+    )
+
+    echoic_target_max = 4
+    echoic_target_min = 2
+
+    hypo_echoic_target_max = 0.6
+    hypo_echoic_target_min = 0.4
+
+    anechoic_target_max = 0.0
+    anechoic_target_min = 0.0
+    hyper_echoic_ratio_array = np.linspace(
+        echoic_target_max,
+        echoic_target_min,
+        n_targets_axial,
+    )
+    hypo_echoic_ratio_array = np.linspace(
+        hypo_echoic_target_max,
+        hypo_echoic_target_min,
+        n_targets_axial,
+    )
+    anechoic_ratio_array = np.linspace(
+        anechoic_target_max,
+        anechoic_target_min,
+        n_targets_axial,
+    )
+    echoic_ratio_array = np.zeros((n_targets_axial, n_targets_lateral))
+    for i in range(n_targets_axial):
+        echoic_ratio_array[i, 0] = anechoic_ratio_array[i]
+        echoic_ratio_array[i, 1] = hypo_echoic_ratio_array[i]
+        echoic_ratio_array[i, 2] = hyper_echoic_ratio_array[i]
+
+    for i_axial, axial_pos in enumerate(axial_positions):
+        for i_lateral, lateral_pos in enumerate(lateral_positions):
+            axial_idx = int(axial_pos / grid.dx)
+            lateral_idx = int(lateral_pos / grid.dx)
+            (
+                rr,
+                cc,
+            ) = np.ogrid[
+                -axial_idx : scatterer.shape[0] - axial_idx,
+                -lateral_idx : scatterer.shape[1] - lateral_idx,
+            ]
+            circle_mask = rr**2 + cc**2 <= (target_radius_m / grid.dx) ** 2
+
+            scatterer -= 1.0
+            scatterer[circle_mask] *= echoic_ratio_array[i_axial, i_lateral]
+            scatterer += 1.0
+
+    return scatterer
+
+
+def main() -> None:  # noqa: PLR0915
     """Run linear transducer abdominal wall example."""
     # overwrite the logging level, DEBUG, INFO, WARNING, ERROR
     logging.getLogger("__main__").setLevel(logging.INFO)
@@ -117,42 +253,31 @@ def main() -> None:
     #
     # define the working directory
     #
-    work_dir = Path("./outputs/") / "linear_transducer"
+    work_dir = Path("./outputs/") / "linear_transducer_plane_wave_compounding"
     work_dir.mkdir(parents=True, exist_ok=True)
 
     #
     # --- define the computational grid ---
     #
 
-    domain_size = (6e-2, 6e-2)  # [axial, lateral] meters
-    f0 = 1e6
+    domain_size = (4.5e-2, 4.5e-2)  # [axial, lateral] meters
+    f0 = 2e6
     c0 = 1540
-    duration = domain_size[0] / c0 * 1.2
-    grid = fullwave.Grid(domain_size, f0, duration, c0=c0)
+    duration = domain_size[0] / c0 * 2.3
+    ppw = 12
+    cfl = 0.4
 
-    #
-    # --- define the linear transducer ---
-    #
-    # make a sensor for whole domain to make an animation
-    sensor_mask = np.zeros((grid.nx, grid.ny), dtype=bool)
-    sensor_mask[:, :] = True
-    sensor = fullwave.Sensor(mask=sensor_mask, sampling_modulus_time=2)
-    sensor.plot(export_path=work_dir / "sensor_whole.svg")
+    grid = fullwave.Grid(domain_size, f0, duration, c0=c0, ppw=ppw, cfl=cfl)
 
     #
     # --- define the acoustic medium properties ---
     #
-
-    # define background
-    background_property_name = "liver"
-    background = presets.BackgroundDomain(
-        grid=grid,
-        background_property_name=background_property_name,
-    )
-    # define abdominal wall
-    abdominal_wall = presets.AbdominalWallDomain(
-        grid=grid,
-    )
+    sound_speed_map = np.ones(grid.shape) * c0
+    density_map = np.ones(grid.shape) * 1000
+    alpha_coeff_map = np.ones(grid.shape) * 0.5  # dB/(MHz^y cm)
+    alpha_power_map = np.ones(grid.shape) * 1.1  # y
+    beta_map = np.ones(grid.shape) * 0  # nonlinearity parameter
+    air_map = np.zeros(grid.shape)  # no air bubbles
 
     # define scatterer
 
@@ -165,54 +290,79 @@ def main() -> None:
         rng=rng,
     )
 
-    background.density *= scatterer
-    abdominal_wall.density *= scatterer
-
-    # register the domains to MediumBuilder
-    mb = MediumBuilder(
+    scatterer = make_echoic_targets(
+        scatterer=scatterer,
         grid=grid,
+        target_radius_m=5e-3,
+        target_spacing_m=15e-3,
+        start_offset_x_m=10e-3,
+        start_offset_y_m=10e-3,
+        n_targets_axial=3,
+        n_targets_lateral=3,
+        centered=True,
     )
-    mb.register_domain(background)
-    mb.register_domain(abdominal_wall)
+    plot_utils.plot_array(scatterer)
+    # scatterer modulates the density map.
+    # scatterer values are centered around 1.0 with small variations.
+    density_map *= scatterer
 
-    # we can plot to see the current registered domains
-    mb.plot_current_map(export_path=work_dir / "medium.svg")
-
-    # generate medium for simulation
-    medium = mb.run()
+    medium = fullwave.Medium(
+        grid,
+        sound_speed=sound_speed_map,
+        density=density_map,
+        alpha_coeff=alpha_coeff_map,
+        alpha_power=alpha_power_map,
+        beta=beta_map,
+        air_map=air_map,
+    )
+    medium.plot(export_path=work_dir / "medium.svg")
 
     #
     # --- run simulation ---
     #
 
-    angles = [-15, -5, 0, 5, 15]  # degrees
+    # angles = [-10, -7.5, -5, -2.5, 0, 2.5, 5, 7.5, 10]  # degrees
+    # angles = np.linspace(-25, 25, num=21, endpoint=True).tolist()  # degrees
+    angles = np.linspace(-10, 10, num=5, endpoint=True).tolist()  # degrees
 
-    element_layer_px = 3
+    # angles = [0]  # degrees
+
+    element_layer_px = 4
+    transducer_width_m = 38e-3
     transducer_geometry = fullwave.TransducerGeometry(
         grid,
         number_elements=128,
         # -
-        element_width_m=0.146484375e-3,
+        element_width_m=0.298e-3 - 0.048e-3,
         # -
-        element_spacing_m=0.146484375e-3,
+        element_spacing_m=0.048e-3,
         # -
         element_layer_px=element_layer_px,
         # -
         # [axial, lateral]
         position_m=(
             0,
-            (60 - 37.4) / 2 * 1e-3,
+            (domain_size[1] - transducer_width_m) / 2,
         ),
         # -
         radius=float("inf"),
     )
+
+    sampling_interval = 7
     transducer = fullwave.Transducer(
         transducer_geometry=transducer_geometry,
         grid=grid,
+        sampling_modulus_time=sampling_interval,
     )
+
+    #
+    # --- run simulation ---
+    #
+
     p_max = 1e5
     length = 1000000
 
+    remove_dir = True
     sensor_output_list = []
     for i_angle, angle in tqdm(enumerate(angles), total=len(angles)):
         input_signal = make_angled_input_signal(
@@ -222,6 +372,7 @@ def main() -> None:
             transducer_geometry=transducer_geometry,
             transducer=transducer,
             element_layer_px=element_layer_px,
+            p_max=p_max,
         )
         transducer.set_signal(input_signal)
         fw_solver = fullwave.Solver(
@@ -229,7 +380,6 @@ def main() -> None:
             grid=grid,
             medium=medium,
             transducer=transducer,
-            sensor=sensor,
             run_on_memory=False,
         )
         if i_angle == 0:
@@ -237,55 +387,137 @@ def main() -> None:
                 is_static_map=True,
                 recalculate_pml=True,
             )
-            sensor_output_list.append(sensor_output)
         else:
             sensor_output = fw_solver.run(
                 simulation_dir_name=f"txrx_{i_angle}",
                 is_static_map=True,
                 recalculate_pml=False,  # Reuse PML from first run
             )
-            sensor_output_list.append(sensor_output)
-
-    #
-    # --- visualization ---
-    #
-    for sensor_output, angle in zip(sensor_output_list, angles, strict=False):
-        propagation_map = signal_process.reshape_whole_sensor_to_nt_nx_ny(
+        sensor_output = fw_solver.transducer.post_process_sensor_output(
             sensor_output,
-            grid,
+            average_surface_signals=True,
         )
-        propagation_map = np.nan_to_num(propagation_map, 0, posinf=p_max, neginf=-p_max)
+        sensor_output_list.append(sensor_output)
 
-        p_max_plot = np.abs(propagation_map).max().item() / 4
+        if remove_dir is True:
+            shutil.rmtree(work_dir / f"txrx_{i_angle}")
 
-        time_step = propagation_map.shape[0] // 50 * 37
-        plot_utils.plot_wave_propagation_snapshot(
-            propagation_map=propagation_map[time_step],
-            c_map=medium.sound_speed,
-            rho_map=medium.density,
-            export_name=work_dir / f"wave_propagation_snapshot_1_angle={angle:04d}.svg",
-            vmin=-p_max_plot,
-            vmax=p_max_plot,
-            turn_off_axes=True,
-            figsize=(6, 6),
+    #
+    # --- b-mode imaging parameters ---
+    #
+    params = {
+        "fs": 1 / grid.dt / sampling_interval,  # Sampling frequency (Hz)
+        "fc": f0,  # Center frequency (Hz)
+        "Nelements": 128,  # Number of array elements
+        "pitch": transducer_width_m / 128,  # Element pitch (meters)
+        "c": c0,  # Speed of sound in medium (m/s)
+        "fnumber": 1.0,
+        "t0": 0,  # Start time of data acquisition (seconds)
+    }
+    element_positions = linear_probe_positions(params["Nelements"], params["pitch"])
+    b_mode_x = np.linspace(-transducer_width_m / 2, transducer_width_m / 2, num=256, endpoint=True)
+    b_mode_y = np.array([0.0])  # 2D imaging (single y-plane)
+    b_mode_z = np.linspace(5e-3, domain_size[0], num=512, endpoint=True)
+
+    grid_points = scan_grid(b_mode_x, b_mode_y, b_mode_z)
+
+    wavefront_arrivals_s = [
+        wavefront.plane(
+            origin_m=np.array([0, 0, 0]),  # Wave originates at array face
+            points_m=grid_points,  # All grid points
+            direction=np.array(
+                [
+                    np.sin(np.radians(angle)),
+                    0,
+                    np.cos(np.radians(angle)),
+                ],
+            ),  # Angle direction
         )
+        / params["c"]
+        for angle in angles
+    ]
+    for i in range(len(wavefront_arrivals_s)):
+        wavefront_arrivals_s[i] -= wavefront_arrivals_s[i].min()
+    wavefront_arrivals_s = np.stack(wavefront_arrivals_s, axis=0)
 
-        plot_utils.plot_wave_propagation_with_map(
-            propagation_map=propagation_map,
-            c_map=medium.sound_speed,
-            rho_map=medium.density,
-            export_name=work_dir / f"wave_propagation_angle={angle:04d}.mp4",
-            vmin=-p_max_plot,
-            vmax=p_max_plot,
-            figsize=(6, 6),
-        )
+    # -- beamforming ---
+    sensor_output = np.stack(sensor_output_list, axis=0)
+    sensor_output = sensor_output.transpose(2, 1, 0)
 
-        # maximum intensity projection
-        plot_utils.plot_array(
-            np.max(np.abs(propagation_map**2), axis=0),
-            aspect=propagation_map.shape[2] / propagation_map.shape[1],
-            export_path=work_dir / f"wave_propagation_mip_angle={angle:04d}.png",
-        )
+    iq_data = pymust.rf2iq(sensor_output, Fs=params["fs"], Fc=params["fc"])
+
+    # Convert to flattened grid points for beamforming
+    iq_data = iq_data[:, :, :, np.newaxis]
+    iq_data = np.ascontiguousarray(
+        rearrange(
+            iq_data,
+            "samples elements transmit frames -> transmit elements samples frames",
+        ),
+        # iq_data,
+        dtype=np.complex64,
+    )
+
+    b_mode = experimental.beamform(
+        channel_data=cupy.asarray(iq_data),  # IQ data from all elements
+        rx_coords_m=cupy.asarray(element_positions),  # Array element positions
+        scan_coords_m=cupy.asarray(grid_points),  # Imaging grid coordinates
+        tx_wave_arrivals_s=cupy.asarray(
+            wavefront_arrivals_s,
+        ),  # Transmit arrival times (s)
+        f_number=float(params["fnumber"]),  # Dynamic focusing f-number
+        rx_start_s=float(params["t0"]),  # Data acquisition start time
+        sampling_freq_hz=float(params["fs"]),  # Sampling frequency
+        sound_speed_m_s=float(params["c"]),  # Medium sound speed
+        modulation_freq_hz=float(params["fc"]),  # Demodulation frequency
+        tukey_alpha=0.5,  # No additional windowing
+    )
+
+    # convert cupy to numpy
+    b_mode = cupy.asnumpy(b_mode)
+    b_mode = b_mode.reshape(len(b_mode_x), len(b_mode_z))
+
+    plot_utils.plot_array(
+        convert_to_db(b_mode).T,
+        vmin=-30,
+        vmax=0,
+        aspect=1,
+        cmap="gray",
+        extent=[
+            b_mode_x[0] * 1e3,
+            b_mode_x[-1] * 1e3,
+            b_mode_z[-1] * 1e3,
+            b_mode_z[0] * 1e3,
+        ],
+        xlabel="Lateral position (mm)",
+        ylabel="Axial position (mm)",
+        colorbar=True,
+        export_path=work_dir / "beamformed_image.svg",
+    )
+    plot_utils.plot_array(
+        convert_to_db(b_mode).T,
+        vmin=-30,
+        vmax=0,
+        aspect=1,
+        cmap="gray",
+        extent=[
+            b_mode_x[0] * 1e3,
+            b_mode_x[-1] * 1e3,
+            b_mode_z[-1] * 1e3,
+            b_mode_z[0] * 1e3,
+        ],
+        xlabel="Lateral position (mm)",
+        ylabel="Axial position (mm)",
+        colorbar=True,
+        export_path="./temp/temp.png",
+    )
+    np.savez(
+        work_dir / "simulation_data.npz",
+        b_mode=b_mode,
+        b_mode_x=b_mode_x,
+        b_mode_z=b_mode_z,
+        iq_data=iq_data,
+    )
+    print()
 
 
 if __name__ == "__main__":
