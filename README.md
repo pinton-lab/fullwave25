@@ -223,13 +223,15 @@ Please see the following examples for more advanced usage.
       - <img src="figs/linear_transducer_focused.gif" width="200"/>
     - [Linear transducer (focused transmit) with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer.py) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1zlviYe0qBy0JLifFuA2MqUkavJKUQrNb)
       - <img src="figs/linear_transducer_focused_abdominal_wall.gif" width="200"/>
+    - linear transducer plane wave compounding
+      - [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1LXlkpYhIfQtaPhNDJ1vONTDSdiLBhkEP)
+    - linear transducer full synthetic aperture
+      - [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1_jVULK2mglOx8__gWYHGhNVxYLhAGNF5)
   - Convex transducer
     - [Convex transducer with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/convex_transducer/convex_transducer_abdominal_wall.py)
       - <img src="figs/convex_transducer_abdominal_wall.gif" width="200"/>
 - 3D plane wave
-
   - Basic usage
-
     - [Simple plane wave in 3D](https://github.com/pinton-lab/fullwave25/blob/main/examples/wave_3d/simple_plane_wave_3d.py)
       <table>
         <tr>
