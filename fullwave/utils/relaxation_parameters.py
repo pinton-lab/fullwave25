@@ -151,15 +151,26 @@ def _map_parameters_search(
     logger.debug("Parameter mapping indices obtained.")
 
     # Clip indices to valid range
+    time_start = time.time()
     alpha_index = np.clip(alpha_index, 0, len(alpha_list[0]) - 1)
     power_index = np.clip(power_index, 0, len(power_list[0]) - 1)
+    time_end = time.time()
+    logger.debug("Clipping indices time: %.4f seconds.", time_end - time_start)
+
     # check invalid indices
+    time_start = time.time()
     invalid_indices = invalid_matrix[alpha_index, power_index]
+    time_end = time.time()
+    logger.debug("Invalid indices checking time: %.4f seconds.", time_end - time_start)
+
     if np.any(invalid_indices):
+        time_start = time.time()
         invalid_alpha_power = np.unique(
             input_tensor[:, :, [0, 1]][np.where(invalid_indices)],
             axis=0,
         )
+        time_end = time.time()
+        logger.debug("Invalid alpha-power extraction time: %.4f seconds.", time_end - time_start)
         invalid_attenuation = ", ".join(
             [f"({a:.4f}, {p:.4f})" for a, p in invalid_alpha_power],
         )
