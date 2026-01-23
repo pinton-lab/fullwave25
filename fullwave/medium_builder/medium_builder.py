@@ -35,6 +35,7 @@ class MediumBuilder:
         / "relaxation_params_database_num_relax=2_20260113_0957.mat",
         n_relaxation_mechanisms: int = 2,
         attenuation_builder: str = "lookup",
+        n_jobs: int = -1,
     ) -> None:
         """Initialize a DomainOrganizer.
 
@@ -61,6 +62,9 @@ class MediumBuilder:
             Attenuation builder type, by default "lookup".
             Currently supports "lookup" only.
             If "lookup", it uses the lookup table for attenuation.
+        n_jobs : int, optional
+            Number of parallel jobs for relaxation parameter calculations.
+            Default is -1, which uses all available CPUs.
 
         """
         check_functions.check_instance(grid, Grid)
@@ -78,6 +82,7 @@ class MediumBuilder:
         self.path_relaxation_parameters_database = path_relaxation_parameters_database
         self.n_relaxation_mechanisms = n_relaxation_mechanisms
         self.attenuation_builder = attenuation_builder
+        self.n_jobs = n_jobs
 
     def register_domain(self, domain: Domain) -> None:
         """Register a single Domain instances.
@@ -188,6 +193,7 @@ class MediumBuilder:
             path_relaxation_parameters_database=self.path_relaxation_parameters_database,
             n_relaxation_mechanisms=self.n_relaxation_mechanisms,
             attenuation_builder=self.attenuation_builder,
+            n_jobs=self.n_jobs,
         )
 
     def plot_current_map(

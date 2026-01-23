@@ -12,6 +12,7 @@ dependencies = [
     "opencv-python-headless>=4.12.0.88",
     "tomli>=2.3.0",
     "numba>=0.63.1",
+    "joblib>=1.5.3",
 ]
 authors = [{ name = "Masashi Sode" }, { name = "Gianmarco Pinton" }]
 maintainers = [{ name = "Masashi Sode" }]
