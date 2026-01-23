@@ -532,10 +532,15 @@ class PMLBuilder:
             is_3d=self.is_3d,
             use_isotropic_relaxation=self.use_isotropic_relaxation,
         )
+
+        # if logger is debug, use tqdm for progress bar
+        tqdm_disable = not logger.isEnabledFor(logging.DEBUG)
+
         for key_fw2, key_py in tqdm(
             rename_dict.items(),
             desc="Applying PML to relaxation parameters",
             total=len(rename_dict),
+            disable=tqdm_disable,
         ):
             if key_fw2 in ["kappa_x", "kappa_u", "kappa_y", "kappa_w"]:
                 out_dict[key_fw2] = relaxation_param_dict[key_py].copy()
@@ -725,10 +730,14 @@ class PMLBuilder:
             is_3d=self.is_3d,
             use_isotropic_relaxation=self.use_isotropic_relaxation,
         )
+
+        tqdm_disable = not logger.isEnabledFor(logging.DEBUG)
+
         for key_fw2, key_py in tqdm(
             rename_dict.items(),
             desc="Applying PML to relaxation parameters",
             total=len(rename_dict),
+            disable=tqdm_disable,
         ):
             if (
                 key_fw2 in ["kappa_x", "kappa_u"]
