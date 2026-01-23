@@ -7,6 +7,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from joblib import Parallel, delayed
 from numpy.typing import NDArray
 
 from fullwave import Grid
@@ -41,6 +42,7 @@ class MediumRelaxationMaps:
         air_map: NDArray[np.int64] | None = None,
         n_relaxation_mechanisms: int = 2,
         use_isotropic_relaxation: bool = True,
+        n_jobs: int = -1,
     ) -> None:
         """Medium class for Fullwave.
 
@@ -76,6 +78,8 @@ class MediumRelaxationMaps:
             This option omits the anisotropic relaxation mechanisms to model the attenuation.
             We usually recommend using isotropic relaxation mechanisms
             unless the anisotropic attenuation is required for the simulation.
+        n_jobs : int, optional
+            Number of parallel jobs for relaxation parameter calculations.
 
         """
         check_functions.check_compatible_value(
@@ -100,6 +104,7 @@ class MediumRelaxationMaps:
         else:
             self.air_map = air_map
 
+        self.n_jobs = n_jobs
         self.__post_init__()
 
         self._update_relaxation_param_dict(
@@ -128,98 +133,102 @@ class MediumRelaxationMaps:
             n_relaxation_mechanisms=self.n_relaxation_mechanisms,
         )
 
-        # nu should be sorted considering the values of the time constants. (for PML implementation)
-        # The sorting must be done between maps.
-        # The order of the nu has no meaning because of the summation feature of Fullwave2.
+        logger.debug("Updating relaxation parameters")
 
+        n_nu = self.n_relaxation_mechanisms
         kappa_x1 = relaxation_param_updates["kappa_x1"]
         kappa_x2 = relaxation_param_updates["kappa_x2"]
+        base_shape = kappa_x1.shape
 
-        d_x1 = []
-        alpha_x1 = []
-        d_x2 = []
-        alpha_x2 = []
-        time_const_x1 = []
-        time_const_x2 = []
-        for nu in range(1, self.n_relaxation_mechanisms + 1):
-            d_x1_nu = relaxation_param_updates[f"d_x1_nu{nu}"]
-            alpha_x1_nu = relaxation_param_updates[f"alpha_x1_nu{nu}"]
-            d_x2_nu = relaxation_param_updates[f"d_x2_nu{nu}"]
-            alpha_x2_nu = relaxation_param_updates[f"alpha_x2_nu{nu}"]
+        # Pre-allocate stacked arrays: (..., n_nu)
+        d_x1 = np.empty((*base_shape, n_nu), dtype=np.float64)
+        alpha_x1 = np.empty_like(d_x1)
+        d_x2 = np.empty((*base_shape, n_nu), dtype=np.float64)
+        alpha_x2 = np.empty_like(d_x2)
 
-            d_x1.append(d_x1_nu)
-            alpha_x1.append(alpha_x1_nu)
-            d_x2.append(d_x2_nu)
-            alpha_x2.append(alpha_x2_nu)
+        # Fill stacked arrays from dict
+        for i in range(n_nu):
+            nu = i + 1
+            d_x1[..., i] = relaxation_param_updates[f"d_x1_nu{nu}"]
+            alpha_x1[..., i] = relaxation_param_updates[f"alpha_x1_nu{nu}"]
+            d_x2[..., i] = relaxation_param_updates[f"d_x2_nu{nu}"]
+            alpha_x2[..., i] = relaxation_param_updates[f"alpha_x2_nu{nu}"]
 
-            time_const_x1_nu = self._calc_time_constants(
-                dx=d_x1_nu,
-                kappa=kappa_x1,
-                alpha=alpha_x1_nu,
-            )
-            time_const_x2_nu = self._calc_time_constants(
-                dx=d_x2_nu,
-                kappa=kappa_x2,
-                alpha=alpha_x2_nu,
-            )
-            time_const_x1.append(time_const_x1_nu)
-            time_const_x2.append(time_const_x2_nu)
+        # Broadcast kappa
+        kappa_x1_b = np.broadcast_to(kappa_x1[..., None], d_x1.shape)
+        kappa_x2_b = np.broadcast_to(kappa_x2[..., None], d_x2.shape)
 
-        time_const_x1 = np.stack(time_const_x1, axis=-1)
-        time_const_x2 = np.stack(time_const_x2, axis=-1)
-        d_x1 = np.stack(d_x1, axis=-1)
-        alpha_x1 = np.stack(alpha_x1, axis=-1)
-        d_x2 = np.stack(d_x2, axis=-1)
-        alpha_x2 = np.stack(alpha_x2, axis=-1)
-
-        # sort the nu values based on the time constants
-        sorted_indices_x1 = np.argsort(time_const_x1, axis=-1)
-        sorted_indices_x2 = np.argsort(time_const_x2, axis=-1)
-        self.relaxation_param_dict["kappa_x1"] = np.atleast_2d(kappa_x1)
-        self.relaxation_param_dict["kappa_x2"] = np.atleast_2d(kappa_x2)
-
-        for nu in range(1, self.n_relaxation_mechanisms + 1):
-            self.relaxation_param_dict[f"d_x1_nu{nu}"] = np.atleast_2d(
-                np.take_along_axis(
-                    d_x1,
-                    np.expand_dims(sorted_indices_x1[..., nu - 1], axis=-1),
-                    axis=-1,
-                ).squeeze(-1),
-            )
-            self.relaxation_param_dict[f"alpha_x1_nu{nu}"] = np.atleast_2d(
-                np.take_along_axis(
-                    alpha_x1,
-                    np.expand_dims(sorted_indices_x1[..., nu - 1], axis=-1),
-                    axis=-1,
-                ).squeeze(-1),
-            )
-            self.relaxation_param_dict[f"d_x2_nu{nu}"] = np.atleast_2d(
-                np.take_along_axis(
-                    d_x2,
-                    np.expand_dims(sorted_indices_x2[..., nu - 1], axis=-1),
-                    axis=-1,
-                ).squeeze(-1),
-            )
-            self.relaxation_param_dict[f"alpha_x2_nu{nu}"] = np.atleast_2d(
-                np.take_along_axis(
-                    alpha_x2,
-                    np.expand_dims(sorted_indices_x2[..., nu - 1], axis=-1),
-                    axis=-1,
-                ).squeeze(-1),
+        # ============ PARALLEL: compute time constants per mechanism ============
+        def _compute_time_const_mechanism(
+            i_nu: int,
+        ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+            return (
+                self._calc_time_constants(
+                    dx=d_x1[..., i_nu],
+                    kappa=kappa_x1_b[..., i_nu],
+                    alpha=alpha_x1[..., i_nu],
+                ),
+                self._calc_time_constants(
+                    dx=d_x2[..., i_nu],
+                    kappa=kappa_x2_b[..., i_nu],
+                    alpha=alpha_x2[..., i_nu],
+                ),
             )
 
-        # check keys
-        desired_dict = initialize_relaxation_param_dict(
-            n_relaxation_mechanisms=self.n_relaxation_mechanisms,
+        # Run in parallel (n_jobs=-1 uses all CPUs; tune if needed)
+        results = Parallel(n_jobs=self.n_jobs)(
+            delayed(_compute_time_const_mechanism)(i) for i in range(n_nu)
         )
-        key_set = set(self.relaxation_param_dict.keys())
-        desired_key_set = set(desired_dict.keys())
+
+        # Unpack results and stack
+        time_const_x1_list, time_const_x2_list = zip(*results, strict=True)
+        time_const_x1 = np.stack(time_const_x1_list, axis=-1)
+        time_const_x2 = np.stack(time_const_x2_list, axis=-1)
+
+        # =========================================================================
+
+        # Sort the nu values based on the time constants
+        sorted_indices_x1 = np.argsort(time_const_x1, axis=-1)
+        sorted_indices_x2 = np.argsort(time_const_x2, axis=-1)  # 3 sec
+
+        # Apply sorting once for all nus
+        d_x1_sorted = np.take_along_axis(d_x1, sorted_indices_x1, axis=-1)
+        alpha_x1_sorted = np.take_along_axis(alpha_x1, sorted_indices_x1, axis=-1)
+        d_x2_sorted = np.take_along_axis(d_x2, sorted_indices_x2, axis=-1)
+        alpha_x2_sorted = np.take_along_axis(alpha_x2, sorted_indices_x2, axis=-1)
+
+        # Write back into relaxation_param_dict
+        param_dict = self.relaxation_param_dict
+        param_dict["kappa_x1"] = np.atleast_2d(kappa_x1)
+        param_dict["kappa_x2"] = np.atleast_2d(kappa_x2)
+
+        for i in range(n_nu):
+            nu = i + 1
+            param_dict[f"d_x1_nu{nu}"] = np.atleast_2d(d_x1_sorted[..., i])
+            param_dict[f"alpha_x1_nu{nu}"] = np.atleast_2d(alpha_x1_sorted[..., i])
+            param_dict[f"d_x2_nu{nu}"] = np.atleast_2d(d_x2_sorted[..., i])
+            param_dict[f"alpha_x2_nu{nu}"] = np.atleast_2d(alpha_x2_sorted[..., i])
+
+        # Cache and check keys
+        desired_key_set = getattr(
+            self,
+            "_relax_param_keys",
+            None,
+        )
+        if desired_key_set is None:
+            desired_key_set = set(
+                initialize_relaxation_param_dict(
+                    n_relaxation_mechanisms=self.n_relaxation_mechanisms,
+                ).keys(),
+            )
+            self._relax_param_keys = desired_key_set
+
+        key_set = set(param_dict.keys())
         if key_set != desired_key_set:
             error_msg = f"Unknown relaxation parameter keys: {key_set - desired_key_set}"
             raise ValueError(error_msg)
 
-        # for key, value in relaxation_param_updates.items():
-        #     self.relaxation_param_dict[key] = np.atleast_2d(value)
+        logger.debug("Relaxation parameters updated.")
 
     def check_relaxation_param_dict(
         self,
@@ -277,15 +286,21 @@ class MediumRelaxationMaps:
         alpha_x: NDArray[np.float64] | float,
         dt: NDArray[np.float64] | float,
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        # function [a b] = ab(dx,kappax,alphax,dT)
-        dx = np.array(dx)
-        kappa_x = np.array(kappa_x)
-        alpha_x = np.array(alpha_x)
-        dt = np.array(dt)
+        # Convert inputs to float64 arrays without unnecessary copies
+        dx = np.asarray(dx, dtype=np.float64)
+        kappa_x = np.asarray(kappa_x, dtype=np.float64)
+        alpha_x = np.asarray(alpha_x, dtype=np.float64)
+        dt = np.asarray(dt, dtype=np.float64)
 
-        b = np.exp(-(dx / kappa_x + alpha_x) * dt)
-        eps = 1e-10
-        a = dx / (kappa_x * (dx + kappa_x * alpha_x) + eps) * (b - 1)
+        # Common term for the exponential
+        tmp = dx / kappa_x + alpha_x
+        b = np.exp(-tmp * dt)
+
+        # Numerically safe denominator
+        eps = np.finfo(np.float64).eps
+        denom = kappa_x * (dx + kappa_x * alpha_x) + eps
+
+        a = dx / denom * (b - 1.0)
         return a, b
 
     @staticmethod
@@ -354,6 +369,7 @@ class MediumRelaxationMaps:
             formatted for Fullwave2.
 
         """
+        logger.debug("Calculating relaxation parameters")
         if use_isotropic_relaxation:
             rename_dict = {
                 "kappa_x": "kappa_x2",
@@ -403,6 +419,7 @@ class MediumRelaxationMaps:
         out_dict = {}
         for new_key, key in rename_dict.items():
             out_dict[new_key] = relaxation_coefficients[key].copy()
+        logger.debug("Relaxation parameters calculated.")
         return out_dict
 
     def check_fields(self) -> None:
@@ -781,6 +798,7 @@ class Medium:
         n_relaxation_mechanisms: int = 2,
         attenuation_builder: str = "lookup",
         use_isotropic_relaxation: bool = True,
+        n_jobs: int = -1,
     ) -> None:
         """Medium class for Fullwave.
 
@@ -823,6 +841,9 @@ class Medium:
             This option omits the anisotropic relaxation mechanisms to model the attenuation.
             We usually recommend using isotropic relaxation mechanisms
             unless the anisotropic attenuation is required for the simulation.
+        n_jobs : int, optional
+            Number of parallel jobs for relaxation parameter calculation.
+            Default is -1, which uses all available CPUs.
 
         """
         check_functions.check_compatible_value(
@@ -857,6 +878,7 @@ class Medium:
             self.air_map = np.zeros_like(self.sound_speed, dtype=bool)
 
         self.attenuation_builder = attenuation_builder
+        self.n_jobs = n_jobs
         self.__post_init__()
         self.check_fields()
         logger.debug("Medium instance created.")
@@ -1063,6 +1085,7 @@ class Medium:
             air_map=self.air_map,
             n_relaxation_mechanisms=self.n_relaxation_mechanisms,
             use_isotropic_relaxation=self.use_isotropic_relaxation,
+            n_jobs=self.n_jobs,
         )
 
     def _db_mhz_cm_to_a_exp(

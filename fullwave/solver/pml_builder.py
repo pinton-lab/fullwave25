@@ -9,6 +9,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import NDArray
+from tqdm import tqdm
 
 import fullwave
 from fullwave.solver.utils import initialize_relaxation_param_dict
@@ -227,6 +228,7 @@ class PMLBuilder:
                 },
                 air_map=self._extend_map_for_pml(self.medium_org.air_map, fill_edge=False),
                 n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
+                n_jobs=self.medium_org.n_jobs,
             )
         else:
             self.extended_medium = fullwave.Medium(
@@ -240,6 +242,7 @@ class PMLBuilder:
                 n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
                 path_relaxation_parameters_database=self.medium_org.path_relaxation_parameters_database,
                 attenuation_builder=self.medium_org.attenuation_builder,
+                n_jobs=self.medium_org.n_jobs,
             )
 
         logger.debug("building extended source for pml...")
@@ -318,390 +321,19 @@ class PMLBuilder:
         """
         return self.n_air
 
-    def _extend_map_for_pml(  # noqa: PLR0915
+    def _extend_map_for_pml(
         self,
         input_map: NDArray[np.float64 | np.int64 | np.bool],
         *,
         fill_edge: bool = True,
     ) -> NDArray[np.float64 | np.int64 | np.bool]:
-        output_map: NDArray[np.float64 | np.int64 | np.bool]
-        if self.is_3d:
-            output_map = np.zeros(
-                (
-                    input_map.shape[0] + 2 * self.num_boundary_points,
-                    input_map.shape[1] + 2 * self.num_boundary_points,
-                    input_map.shape[2] + 2 * self.num_boundary_points,
-                ),
-            )
-            # center
-            output_map[
-                self.num_boundary_points : -self.num_boundary_points,
-                self.num_boundary_points : -self.num_boundary_points,
-                self.num_boundary_points : -self.num_boundary_points,
-            ] = input_map
-            # edges
-            if fill_edge:
-                output_map[
-                    self.num_boundary_points : -self.num_boundary_points,
-                    : self.num_boundary_points,
-                    self.num_boundary_points : -self.num_boundary_points,
-                ] = input_map[:, [0], :]
-                output_map[
-                    self.num_boundary_points : -self.num_boundary_points,
-                    -self.num_boundary_points :,
-                    self.num_boundary_points : -self.num_boundary_points,
-                ] = input_map[:, [-1], :]
-
-                output_map[
-                    : self.num_boundary_points,
-                    self.num_boundary_points : -self.num_boundary_points,
-                    self.num_boundary_points : -self.num_boundary_points,
-                ] = input_map[[0], :, :]
-                output_map[
-                    -self.num_boundary_points :,
-                    self.num_boundary_points : -self.num_boundary_points,
-                    self.num_boundary_points : -self.num_boundary_points,
-                ] = input_map[[-1], :, :]
-
-                output_map[
-                    self.num_boundary_points : -self.num_boundary_points,
-                    self.num_boundary_points : -self.num_boundary_points,
-                    : self.num_boundary_points,
-                ] = input_map[:, :, [0]]
-                output_map[
-                    self.num_boundary_points : -self.num_boundary_points,
-                    self.num_boundary_points : -self.num_boundary_points,
-                    -self.num_boundary_points :,
-                ] = input_map[:, :, [-1]]
-
-                # corners
-                output_map[
-                    : self.num_boundary_points,
-                    : self.num_boundary_points,
-                    : self.num_boundary_points,
-                ] = input_map[
-                    0,
-                    0,
-                    0,
-                ]
-
-                output_map[
-                    -self.num_boundary_points :,
-                    : self.num_boundary_points,
-                    : self.num_boundary_points,
-                ] = input_map[
-                    -1,
-                    0,
-                    0,
-                ]
-                output_map[
-                    : self.num_boundary_points,
-                    -self.num_boundary_points :,
-                    : self.num_boundary_points,
-                ] = input_map[
-                    0,
-                    -1,
-                    0,
-                ]
-                output_map[
-                    : self.num_boundary_points,
-                    : self.num_boundary_points,
-                    -self.num_boundary_points :,
-                ] = input_map[
-                    0,
-                    0,
-                    -1,
-                ]
-                output_map[
-                    -self.num_boundary_points :,
-                    -self.num_boundary_points :,
-                    : self.num_boundary_points,
-                ] = input_map[
-                    -1,
-                    -1,
-                    0,
-                ]
-                output_map[
-                    : self.num_boundary_points,
-                    -self.num_boundary_points :,
-                    -self.num_boundary_points :,
-                ] = input_map[
-                    0,
-                    -1,
-                    -1,
-                ]
-                output_map[
-                    -self.num_boundary_points :,
-                    : self.num_boundary_points,
-                    -self.num_boundary_points :,
-                ] = input_map[
-                    -1,
-                    0,
-                    -1,
-                ]
-                output_map[
-                    -self.num_boundary_points :,
-                    -self.num_boundary_points :,
-                    -self.num_boundary_points :,
-                ] = input_map[
-                    -1,
-                    -1,
-                    -1,
-                ]
-                # ---
-                output_map[
-                    : self.num_boundary_points,
-                    : self.num_boundary_points,
-                    : self.num_boundary_points,
-                ] = input_map[
-                    0,
-                    0,
-                    0,
-                ]
-                for i in range(input_map.shape[0]):
-                    output_map[
-                        self.num_boundary_points + i,
-                        : self.num_boundary_points,
-                        : self.num_boundary_points,
-                    ] = input_map[
-                        i,
-                        [0],
-                        [0],
-                    ]
-                    output_map[
-                        self.num_boundary_points + i,
-                        : self.num_boundary_points,
-                        -self.num_boundary_points :,
-                    ] = input_map[
-                        i,
-                        [0],
-                        [-1],
-                    ]
-                    output_map[
-                        -self.num_boundary_points - (i + 1),
-                        : self.num_boundary_points,
-                        : self.num_boundary_points,
-                    ] = input_map[
-                        -(i + 1),
-                        [0],
-                        [0],
-                    ]
-                    output_map[
-                        -self.num_boundary_points - (i + 1),
-                        : self.num_boundary_points,
-                        -self.num_boundary_points :,
-                    ] = input_map[
-                        -(i + 1),
-                        [0],
-                        [-1],
-                    ]
-                    output_map[
-                        self.num_boundary_points + i,
-                        -self.num_boundary_points :,
-                        : self.num_boundary_points,
-                    ] = input_map[
-                        i,
-                        [-1],
-                        [0],
-                    ]
-
-                    output_map[
-                        -self.num_boundary_points - (i + 1),
-                        -self.num_boundary_points :,
-                        : self.num_boundary_points,
-                    ] = input_map[
-                        -(i + 1),
-                        [-1],
-                        [0],
-                    ]
-                    output_map[
-                        -self.num_boundary_points - (i + 1),
-                        -self.num_boundary_points :,
-                        -self.num_boundary_points :,
-                    ] = input_map[
-                        -(i + 1),
-                        [-1],
-                        [-1],
-                    ]
-                for i in range(input_map.shape[1]):
-                    output_map[
-                        : self.num_boundary_points,
-                        self.num_boundary_points + i,
-                        : self.num_boundary_points,
-                    ] = input_map[
-                        [0],
-                        i,
-                        [0],
-                    ]
-                    output_map[
-                        : self.num_boundary_points,
-                        self.num_boundary_points + i,
-                        -self.num_boundary_points :,
-                    ] = input_map[
-                        [0],
-                        i,
-                        [-1],
-                    ]
-                    output_map[
-                        : self.num_boundary_points,
-                        -self.num_boundary_points - (i + 1),
-                        : self.num_boundary_points,
-                    ] = input_map[
-                        [0],
-                        -(i + 1),
-                        [0],
-                    ]
-                    output_map[
-                        : self.num_boundary_points,
-                        -self.num_boundary_points - (i + 1),
-                        -self.num_boundary_points :,
-                    ] = input_map[
-                        [0],
-                        -(i + 1),
-                        [-1],
-                    ]
-                    output_map[
-                        -self.num_boundary_points :,
-                        self.num_boundary_points + i,
-                        : self.num_boundary_points,
-                    ] = input_map[
-                        [-1],
-                        i,
-                        [0],
-                    ]
-
-                    output_map[
-                        -self.num_boundary_points :,
-                        -self.num_boundary_points - (i + 1),
-                        : self.num_boundary_points,
-                    ] = input_map[
-                        [-1],
-                        -(i + 1),
-                        [0],
-                    ]
-                    output_map[
-                        -self.num_boundary_points :,
-                        -self.num_boundary_points - (i + 1),
-                        -self.num_boundary_points :,
-                    ] = input_map[
-                        [-1],
-                        -(i + 1),
-                        [-1],
-                    ]
-                for i in range(input_map.shape[2]):
-                    output_map[
-                        : self.num_boundary_points,
-                        : self.num_boundary_points,
-                        self.num_boundary_points + i,
-                    ] = input_map[
-                        [0],
-                        [0],
-                        i,
-                    ]
-                    output_map[
-                        : self.num_boundary_points,
-                        -self.num_boundary_points :,
-                        self.num_boundary_points + i,
-                    ] = input_map[
-                        [0],
-                        [-1],
-                        i,
-                    ]
-                    output_map[
-                        : self.num_boundary_points,
-                        : self.num_boundary_points,
-                        -self.num_boundary_points - (i + 1),
-                    ] = input_map[
-                        [0],
-                        [0],
-                        -(i + 1),
-                    ]
-                    output_map[
-                        : self.num_boundary_points,
-                        -self.num_boundary_points :,
-                        -self.num_boundary_points - (i + 1),
-                    ] = input_map[
-                        [0],
-                        [-1],
-                        -(i + 1),
-                    ]
-                    output_map[
-                        -self.num_boundary_points :,
-                        : self.num_boundary_points,
-                        self.num_boundary_points + i,
-                    ] = input_map[
-                        [-1],
-                        [0],
-                        i,
-                    ]
-
-                    output_map[
-                        -self.num_boundary_points :,
-                        : self.num_boundary_points,
-                        -self.num_boundary_points - (i + 1),
-                    ] = input_map[
-                        [-1],
-                        [0],
-                        -(i + 1),
-                    ]
-                    output_map[
-                        -self.num_boundary_points :,
-                        -self.num_boundary_points :,
-                        -self.num_boundary_points - (i + 1),
-                    ] = input_map[
-                        [-1],
-                        [-1],
-                        -(i + 1),
-                    ]
-        else:
-            output_map = np.zeros(
-                (
-                    input_map.shape[0] + 2 * self.num_boundary_points,
-                    input_map.shape[1] + 2 * self.num_boundary_points,
-                ),
-            )
-            # center
-            output_map[
-                self.num_boundary_points : -self.num_boundary_points,
-                self.num_boundary_points : -self.num_boundary_points,
-            ] = input_map
-
-            # edges
-            if fill_edge:
-                output_map[
-                    self.num_boundary_points : -self.num_boundary_points,
-                    : self.num_boundary_points,
-                ] = input_map[:, [0]]
-                output_map[
-                    self.num_boundary_points : -self.num_boundary_points,
-                    -self.num_boundary_points :,
-                ] = input_map[:, [-1]]
-
-                output_map[
-                    : self.num_boundary_points,
-                    self.num_boundary_points : -self.num_boundary_points,
-                ] = input_map[[0], :]
-                output_map[
-                    -self.num_boundary_points :,
-                    self.num_boundary_points : -self.num_boundary_points,
-                ] = input_map[[-1], :]
-
-                # corners
-                output_map[: self.num_boundary_points, : self.num_boundary_points] = input_map[0, 0]
-                output_map[-self.num_boundary_points :, -self.num_boundary_points :] = input_map[
-                    -1,
-                    -1,
-                ]
-                output_map[-self.num_boundary_points :, : self.num_boundary_points] = input_map[
-                    -1,
-                    0,
-                ]
-                output_map[: self.num_boundary_points, -self.num_boundary_points :] = input_map[
-                    0,
-                    -1,
-                ]
-
-        return output_map
+        kwargs = {} if fill_edge else {"constant_values": 0}
+        return np.pad(
+            input_map,
+            pad_width=self.num_boundary_points,
+            mode="edge" if fill_edge else "constant",
+            **kwargs,
+        )
 
     def _extend_relaxation_param_dict(
         self,
@@ -798,15 +430,21 @@ class PMLBuilder:
         alpha_x: NDArray[np.float64] | float,
         dt: NDArray[np.float64] | float,
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        # function [a b] = ab(dx,kappax,alphax,dT)
-        d_x = np.array(d_x)
-        kappa_x = np.array(kappa_x)
-        alpha_x = np.array(alpha_x)
-        dt = np.array(dt)
+        # Convert inputs to float64 arrays without unnecessary copies
+        d_x = np.asarray(d_x, dtype=np.float64)
+        kappa_x = np.asarray(kappa_x, dtype=np.float64)
+        alpha_x = np.asarray(alpha_x, dtype=np.float64)
+        dt = np.asarray(dt, dtype=np.float64)
 
-        b = np.exp(-(d_x / kappa_x + alpha_x) * dt)
-        eps = 1e-10
-        a = d_x / (kappa_x * (d_x + kappa_x * alpha_x) + eps) * (b - 1)
+        # Common term for the exponential
+        tmp = d_x / kappa_x + alpha_x
+        b = np.exp(-tmp * dt)
+
+        # Numerically safe denominator
+        eps = np.finfo(np.float64).eps
+        denom = kappa_x * (d_x + kappa_x * alpha_x) + eps
+
+        a = d_x / denom * (b - 1.0)
         return a, b
 
     def run(self, *, use_pml: bool = True) -> fullwave.MediumRelaxationMaps:
@@ -821,6 +459,7 @@ class PMLBuilder:
             A Medium instance with the constructed domain properties.
 
         """
+        logger.debug("Running PML builder...")
         if use_pml:
             extended_medium: fullwave.MediumRelaxationMaps = self.extended_medium.build()
             if self.is_3d:
@@ -869,6 +508,7 @@ class PMLBuilder:
             The extended medium relaxation parameters with PML applied.
 
         """
+        logger.debug("Applying 2D PML...")
         # alpha=0 and d=0 will make a and b in the PML be 0
         # this procedure shrinks the multiple relaxation mechanisms to a single one
         alpha_target_pml = 0
@@ -892,7 +532,16 @@ class PMLBuilder:
             is_3d=self.is_3d,
             use_isotropic_relaxation=self.use_isotropic_relaxation,
         )
-        for key_fw2, key_py in rename_dict.items():
+
+        # if logger is debug, use tqdm for progress bar
+        tqdm_disable = not logger.isEnabledFor(logging.DEBUG)
+
+        for key_fw2, key_py in tqdm(
+            rename_dict.items(),
+            desc="Applying PML to relaxation parameters",
+            total=len(rename_dict),
+            disable=tqdm_disable,
+        ):
             if key_fw2 in ["kappa_x", "kappa_u", "kappa_y", "kappa_w"]:
                 out_dict[key_fw2] = relaxation_param_dict[key_py].copy()
             elif (
@@ -1005,6 +654,7 @@ class PMLBuilder:
                     is_3d=self.is_3d,
                 )
 
+        logger.debug("Calculating PML a and b coefficients...")
         axis_list = ["u", "x"] if self.use_isotropic_relaxation else ["u", "w", "x", "y"]
         for nu in range(1, extended_medium.n_relaxation_mechanisms + 1):
             for axis in axis_list:
@@ -1017,10 +667,13 @@ class PMLBuilder:
                     alpha_x=out_dict[f"alpha_{axis}_nu{nu}"],
                     dt=extended_medium.grid.dt,
                 )
+        logger.debug("PML a and b coefficients calculation completed.")
 
+        logger.debug("Updating extended medium relaxation parameters...")
         extended_medium.relaxation_param_dict_for_fw2.update(
             out_dict,
         )
+        logger.debug("PML application completed.")
 
         return extended_medium
 
@@ -1054,6 +707,7 @@ class PMLBuilder:
             The extended medium relaxation parameters with PML applied.
 
         """
+        logger.debug("Applying 3D PML...")
         # alpha=0 and d=0 will make a and b in the PML be 0
         # this procedure shrinks the multiple relaxation mechanisms to a single one
         alpha_target_pml = 0
@@ -1076,7 +730,15 @@ class PMLBuilder:
             is_3d=self.is_3d,
             use_isotropic_relaxation=self.use_isotropic_relaxation,
         )
-        for key_fw2, key_py in rename_dict.items():
+
+        tqdm_disable = not logger.isEnabledFor(logging.DEBUG)
+
+        for key_fw2, key_py in tqdm(
+            rename_dict.items(),
+            desc="Applying PML to relaxation parameters",
+            total=len(rename_dict),
+            disable=tqdm_disable,
+        ):
             if (
                 key_fw2 in ["kappa_x", "kappa_u"]
                 or key_fw2 in ["kappa_y", "kappa_v"]
@@ -1233,6 +895,7 @@ class PMLBuilder:
                     is_3d=self.is_3d,
                 )
 
+        logger.debug("Calculating PML a and b coefficients...")
         axis_list = ["u", "x"] if self.use_isotropic_relaxation else ["u", "v", "w", "x", "y", "z"]
 
         for nu in range(1, extended_medium.n_relaxation_mechanisms + 1):
@@ -1246,14 +909,17 @@ class PMLBuilder:
                     alpha_x=out_dict[f"alpha_{axis}_nu{nu}"],
                     dt=extended_medium.grid.dt,
                 )
+        logger.debug("PML a and b coefficients calculation completed.")
 
+        logger.debug("Updating extended medium relaxation parameters...")
         extended_medium.relaxation_param_dict_for_fw2.update(
             out_dict,
         )
+        logger.debug("PML application completed.")
 
         return extended_medium
 
-    def _apply_transition_and_pml(  # noqa: PLR0912 C901, PLR0915
+    def _apply_transition_and_pml(  # noqa: C901, PLR0912, PLR0915
         self,
         input_array: NDArray[np.float64],
         value_target: float,
@@ -1286,6 +952,19 @@ class PMLBuilder:
             logger.error(error_msg)
             raise ValueError(error_msg)
 
+        # Input validation
+        if axis not in {0, 1, 2}:
+            error_msg = f"Invalid axis value. Expected 0, 1, 2, but got {axis}."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        if axis == 2 and not is_3d:
+            error_msg = (
+                "axis=2 is only valid for 3D cases. Set is_3d=True if you are working with 3D data."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        # Compute layer parameters
         if transit_within_transition_layer:
             layer_thickness = self.n_transition_layer
             layer_offset = self.n_pml_layer
@@ -1296,206 +975,72 @@ class PMLBuilder:
             layer_thickness = self.n_pml_layer + self.n_transition_layer
             layer_offset = 0
 
-        if transition_type == "smooth":
-            transition_function = _smooth_transition_function(
-                np.linspace(
-                    0,
-                    1,
-                    layer_thickness + 1,
-                ),
+        # Compute transition function once
+        transition_linspace = np.linspace(0, 1, layer_thickness + 1)
+        transition_map = {
+            "smooth": _smooth_transition_function,
+            "linear": _linear_transition_function,
+            "polynomial": _n_th_deg_polynomial_function,
+            "cosine": _cosine_transition_function,
+        }
+
+        if transition_type not in transition_map:
+            error_msg = f"Invalid transition type: {transition_type}."
+            logger.error(error_msg)
+            raise ValueError(
+                error_msg,
             )
-        elif transition_type == "linear":
-            transition_function = _linear_transition_function(
-                np.linspace(
-                    0,
-                    1,
-                    layer_thickness + 1,
-                ),
-            )
-        elif transition_type == "polynomial":
-            transition_function = _n_th_deg_polynomial_function(
-                np.linspace(
-                    0,
-                    1,
-                    layer_thickness + 1,
-                ),
+
+        if transition_type == "polynomial":
+            transition_function = transition_map[transition_type](
+                transition_linspace,
                 n=n_polynomial,
             )
-        elif transition_type == "cosine":
-            transition_function = _cosine_transition_function(
-                np.linspace(
-                    0,
-                    1,
-                    layer_thickness + 1,
-                ),
-            )
         else:
-            error_msg = (
-                f"Invalid transition type: {transition_type}. "
-                "Choose from 'smooth', 'linear', or 'polynomial'."
-            )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
+            transition_function = transition_map[transition_type](transition_linspace)
 
         n_axis_extended = array_shape[axis]
+        m_offset = self.m_spatial_order + layer_offset
 
-        if axis == 0:
-            input_array[: self.m_spatial_order + layer_offset + layer_thickness] = value_target
-            input_array[
-                n_axis_extended - self.m_spatial_order - layer_thickness - layer_offset :,
-            ] = value_target
-            if is_3d:
-                up_start = self.m_spatial_order + layer_offset - 1
-                up_end = self.m_spatial_order + layer_offset + layer_thickness
-                up_slice = slice(up_start, up_end)
+        # Pre-compute indices (used multiple times)
+        up_end = m_offset + layer_thickness
+        down_start = n_axis_extended - m_offset - layer_thickness - 1
 
-                down_start = (
-                    n_axis_extended - self.m_spatial_order - layer_thickness - layer_offset - 1
-                )
-                down_end = n_axis_extended - self.m_spatial_order - layer_offset
-                down_slice = slice(down_start, down_end)
+        # Move axis to 0 for uniform processing
+        working_array = np.moveaxis(input_array, axis, 0)
 
-                # fetch the "mid" and "down" face values and expand dims for broadcasting
-                up_vals = input_array[up_end, :, :][None, :, :]
-                down_vals = input_array[down_start, :, :][None, :, :]
+        # Apply boundary conditions
+        working_array[: m_offset + layer_thickness] = value_target
+        working_array[n_axis_extended - m_offset - layer_thickness :] = value_target
 
-                # top transition (use reversed transition function)
-                input_array[up_slice, :, :] = up_vals - transition_function[::-1][
-                    :,
-                    None,
-                    None,
-                ] * (up_vals - value_target)
+        # Apply transitions (axis-agnostic)
+        up_start = m_offset - 1
+        down_end = n_axis_extended - m_offset
 
-                # bottom transition (forward transition function)
-                input_array[down_slice, :, :] = down_vals - transition_function[:, None, None] * (
-                    down_vals - value_target
-                )
-            else:
-                up_start = self.m_spatial_order + layer_offset - 1
-                up_end = self.m_spatial_order + layer_offset + layer_thickness
-                up_slice = slice(up_start, up_end)
+        # Fetch boundary values
+        up_vals = working_array[up_end]
+        down_vals = working_array[down_start]
 
-                down_start = (
-                    n_axis_extended - self.m_spatial_order - layer_thickness - layer_offset - 1
-                )
-                down_end = n_axis_extended - self.m_spatial_order - layer_offset
-                down_slice = slice(down_start, down_end)
-
-                # fetch the "mid" and "down" face values and expand dims for broadcasting
-                up_vals = input_array[up_end, :][None, :]
-                down_vals = input_array[down_start, :][None, :]
-
-                # top transition (use reversed transition function)
-                input_array[up_slice, :] = up_vals - transition_function[::-1][:, None] * (
-                    up_vals - value_target
-                )
-
-                # bottom transition (forward transition function)
-                input_array[down_slice, :] = down_vals - transition_function[:, None] * (
-                    down_vals - value_target
-                )
-        elif axis == 1:
-            input_array[:, : self.m_spatial_order + layer_offset + layer_thickness] = value_target
-            input_array[
-                :,
-                n_axis_extended - self.m_spatial_order - layer_thickness - layer_offset :,
-            ] = value_target
-            if is_3d:
-                up_start = self.m_spatial_order + layer_offset - 1
-                up_end = self.m_spatial_order + layer_offset + layer_thickness
-                up_slice = slice(up_start, up_end)
-
-                down_start = (
-                    n_axis_extended - self.m_spatial_order - layer_thickness - layer_offset - 1
-                )
-                down_end = n_axis_extended - self.m_spatial_order - layer_offset
-                down_slice = slice(down_start, down_end)
-
-                # fetch the "mid" and "down" face values and expand dims for broadcasting
-                up_vals = input_array[:, up_end, :][:, None, :]
-                down_vals = input_array[:, down_start, :][:, None, :]
-
-                # top transition (use reversed transition function)
-                input_array[:, up_slice, :] = up_vals - transition_function[::-1][
-                    None,
-                    :,
-                    None,
-                ] * (up_vals - value_target)
-
-                # bottom transition (forward transition function)
-                input_array[:, down_slice, :] = down_vals - transition_function[None, :, None] * (
-                    down_vals - value_target
-                )
-            else:
-                up_start = self.m_spatial_order + layer_offset - 1
-                up_end = self.m_spatial_order + layer_offset + layer_thickness
-                up_slice = slice(up_start, up_end)
-
-                down_start = (
-                    n_axis_extended - self.m_spatial_order - layer_thickness - layer_offset - 1
-                )
-                down_end = n_axis_extended - self.m_spatial_order - layer_offset
-                down_slice = slice(down_start, down_end)
-
-                # fetch the "mid" and "down" face values and expand dims for broadcasting
-                up_vals = input_array[:, up_end][:, None]
-                down_vals = input_array[:, down_start][:, None]
-
-                # top transition (use reversed transition function)
-                input_array[:, up_slice] = up_vals - transition_function[::-1][None, :] * (
-                    up_vals - value_target
-                )
-
-                # bottom transition (forward transition function)
-                input_array[:, down_slice] = down_vals - transition_function[None, :] * (
-                    down_vals - value_target
-                )
-        elif axis == 2:
-            input_array[:, :, : self.m_spatial_order + layer_offset + layer_thickness] = (
-                value_target
-            )
-            input_array[
-                :,
-                :,
-                n_axis_extended - self.m_spatial_order - layer_thickness - layer_offset :,
-            ] = value_target
-            if is_3d:
-                up_start = self.m_spatial_order + layer_offset - 1
-                up_end = self.m_spatial_order + layer_offset + layer_thickness
-                up_slice = slice(up_start, up_end)
-
-                down_start = (
-                    n_axis_extended - self.m_spatial_order - layer_thickness - layer_offset - 1
-                )
-                down_end = n_axis_extended - self.m_spatial_order - layer_offset
-                down_slice = slice(down_start, down_end)
-
-                # fetch the “mid” and “down” face values and expand dims for broadcasting
-                up_vals = input_array[:, :, up_end][..., None]
-                down_vals = input_array[:, :, down_start][..., None]
-
-                # top transition (use reversed transition function)
-                input_array[:, :, up_slice] = up_vals - transition_function[::-1][
-                    None,
-                    None,
-                    :,
-                ] * (up_vals - value_target)
-
-                # bottom transition (forward transition function)
-                input_array[:, :, down_slice] = down_vals - transition_function[None, None, :] * (
-                    down_vals - value_target
-                )
-            else:
-                error_msg = (
-                    "axis=2 is not supported for 2D cases. Please set is_3d=True to use axis=2."
-                )
-                logger.error(error_msg)
-                raise ValueError(error_msg)
+        # Reshape for broadcasting based on dimensionality
+        if is_3d:
+            # For 3D: shape is (L, H, W) after moveaxis
+            up_vals = up_vals[None, :, :]
+            down_vals = down_vals[None, :, :]
+            trans_up = transition_function[::-1][:, None, None]
+            trans_down = transition_function[:, None, None]
         else:
-            error_msg = f"Invalid axis value. Expected 0, 1, but got {axis}."
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        return input_array
+            # For 2D: shape is (L, W) after moveaxis
+            up_vals = up_vals[None, :]
+            down_vals = down_vals[None, :]
+            trans_up = transition_function[::-1][:, None]
+            trans_down = transition_function[:, None]
+
+        # Apply transitions
+        working_array[up_start:up_end] = up_vals - trans_up * (up_vals - value_target)
+        working_array[down_start:down_end] = down_vals - trans_down * (down_vals - value_target)
+
+        # Move axis back
+        return np.moveaxis(working_array, 0, axis)
 
     @staticmethod
     def _calc_time_constants(

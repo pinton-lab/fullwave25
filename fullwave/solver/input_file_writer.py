@@ -71,6 +71,8 @@ class InputFileWriter:
             unless the anisotropic attenuation is required for the simulation.
 
         """
+        logger.debug("Initializing InputFileWriter instance.")
+
         self._work_dir = Path(work_dir)
         self.path_fullwave_simulation_bin = path_fullwave_simulation_bin
         self.use_isotropic_relaxation = use_isotropic_relaxation
@@ -192,6 +194,7 @@ class InputFileWriter:
     # --- constructor utils ---
 
     def _set_d_mat(self) -> None:
+        logger.debug("Setting d matrix for stencil coefficients.")
         # For 2D modeling:
         self._d = np.zeros((9, 2))
         if self.is_3d:
@@ -376,6 +379,7 @@ class InputFileWriter:
                 + 4.42258843694177e-10 * self.grid.cfl
                 - 4.20967682664542e-07
             )
+        logger.debug("d matrix for stencil coefficients set.")
 
     def _set_d_map(self, dim: int, c_map: NDArray[np.float64]) -> None:
         self._d_map = np.zeros((9, 2, dim + 1))
@@ -567,7 +571,9 @@ class InputFileWriter:
                 )
 
     def _set_dc_map(self, c_map: NDArray[np.float64]) -> None:
+        logger.debug("Setting dc map for stencil coefficients.")
         self._dc_map = matlab_round(c_map) - matlab_round(c_map.min()) + 1
+        logger.debug("dc map for stencil coefficients set.")
 
     # --- saving utils ---
 

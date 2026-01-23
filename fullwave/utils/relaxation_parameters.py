@@ -4,8 +4,10 @@ using a precomputed lookup table and input attenuation values.
 """
 
 import logging
+import time
 from pathlib import Path
 
+import numba as nb
 import numpy as np
 from numpy.typing import NDArray
 from scipy.io import loadmat
@@ -13,6 +15,99 @@ from scipy.io import loadmat
 from fullwave.solver.utils import initialize_relaxation_param_dict
 
 logger = logging.getLogger("__main__." + __name__)
+
+
+@nb.njit(inline="always")
+def _lower_bound(a: NDArray[np.float64], x: float) -> int:
+    lo, hi = 0, a.size
+    while lo < hi:
+        mid = (lo + hi) >> 1
+        if a[mid] < x:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
+
+
+@nb.njit(inline="always")
+def _upper_bound(a: NDArray[np.float64], x: float) -> int:
+    lo, hi = 0, a.size
+    while lo < hi:
+        mid = (lo + hi) >> 1
+        if a[mid] <= x:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
+
+
+@nb.njit(parallel=True)
+def _searchsorted_parallel_sorted_a(
+    a_sorted: NDArray[np.float64],
+    v_flat: NDArray[np.float64],
+    *,
+    side_is_right: bool,
+) -> NDArray[np.int64]:
+    out = np.empty(v_flat.size, dtype=np.int64)
+    if side_is_right:
+        for i in nb.prange(v_flat.size):
+            out[i] = _upper_bound(a_sorted, v_flat[i])
+    else:
+        for i in nb.prange(v_flat.size):
+            out[i] = _lower_bound(a_sorted, v_flat[i])
+    return out
+
+
+def searchsorted_parallel(
+    a: NDArray[np.float64],
+    v: NDArray[np.float64],
+    *,
+    side: str = "left",
+    sorter: NDArray[np.int64] | None = None,
+) -> NDArray[np.int64]:
+    """Make np.searchsorted parallel using Numba.
+
+    A drop-in parallel version of np.searchsorted using Numba.
+
+    Parameters
+    ----------
+    a : NDArray[np.float64]
+        1-D sorted array.
+    v : NDArray[np.float64]
+        Array of values to search.
+    side : str, optional
+        'left' or 'right', optional. Default is 'left'.
+        If 'left', the index of the first suitable location found is given.
+        If 'right', return the last such index.
+    sorter : NDArray[np.int64] | None, optional
+        Optional array of indices that sort 'a'.
+
+    Returns
+    -------
+    NDArray[np.int64]
+        Indices into 'a' such that, if the corresponding elements in 'v' were
+        inserted before the indices, the order of 'a' would be preserved.
+
+    """
+    a = np.asarray(a)
+    v_arr = np.asarray(v)
+
+    # Handle sorter: NumPy defines that indices refer to sorted(a) not original a. [page:2]
+    if sorter is not None:
+        sorter = np.asarray(sorter)
+        a_sorted = a[sorter]
+    else:
+        a_sorted = a
+
+    side_is_right = side == "right"
+    v_flat = v_arr.ravel()
+    out_flat = _searchsorted_parallel_sorted_a(a_sorted, v_flat, side_is_right)
+    out = out_flat.reshape(v_arr.shape)
+
+    # Scalar-in -> scalar-out, like NumPy. [page:2]
+    if np.isscalar(v) or v_arr.shape == ():
+        return int(out.reshape(()))
+    return out
 
 
 def _map_parameters_search(
@@ -47,18 +142,35 @@ def _map_parameters_search(
     # alpha is in input_tensor[:, :, 0]
     # power is in input_tensor[:, :, 1]
     # the index corresponds to lookup table
-    alpha_index = np.searchsorted(alpha_list[0].round(10), input_tensor[..., 0])
-    power_index = np.searchsorted(power_list[0].round(10), input_tensor[..., 1])
+    logger.debug("Mapping parameters using searchsorted.")
+    time_start = time.time()
+    alpha_index = searchsorted_parallel(alpha_list[0].round(10), input_tensor[..., 0])
+    power_index = searchsorted_parallel(power_list[0].round(10), input_tensor[..., 1])
+    time_end = time.time()
+    logger.debug("Searchsorted time: %.4f seconds.", time_end - time_start)
+    logger.debug("Parameter mapping indices obtained.")
+
     # Clip indices to valid range
+    time_start = time.time()
     alpha_index = np.clip(alpha_index, 0, len(alpha_list[0]) - 1)
     power_index = np.clip(power_index, 0, len(power_list[0]) - 1)
+    time_end = time.time()
+    logger.debug("Clipping indices time: %.4f seconds.", time_end - time_start)
+
     # check invalid indices
+    time_start = time.time()
     invalid_indices = invalid_matrix[alpha_index, power_index]
+    time_end = time.time()
+    logger.debug("Invalid indices checking time: %.4f seconds.", time_end - time_start)
+
     if np.any(invalid_indices):
+        time_start = time.time()
         invalid_alpha_power = np.unique(
             input_tensor[:, :, [0, 1]][np.where(invalid_indices)],
             axis=0,
         )
+        time_end = time.time()
+        logger.debug("Invalid alpha-power extraction time: %.4f seconds.", time_end - time_start)
         invalid_attenuation = ", ".join(
             [f"({a:.4f}, {p:.4f})" for a, p in invalid_alpha_power],
         )

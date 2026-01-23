@@ -75,6 +75,7 @@ def initialize_relaxation_param_dict(
         dict[str, NDArray[np.float64]]: Dictionary of relaxation parameters.
 
     """
+    logger.debug("Initializing relaxation parameter dictionary.")
     out_dict: dict = {}
     out_dict["kappa_x1"] = value.copy() if value is not None else None
     out_dict["kappa_x2"] = value.copy() if value is not None else None
@@ -83,6 +84,7 @@ def initialize_relaxation_param_dict(
         out_dict[f"alpha_x1_nu{i_relax + 1}"] = value.copy() if value is not None else None
         out_dict[f"d_x2_nu{i_relax + 1}"] = value.copy() if value is not None else None
         out_dict[f"alpha_x2_nu{i_relax + 1}"] = value.copy() if value is not None else None
+    logger.debug("Relaxation parameter dictionary initialized.")
     return out_dict
 
 
