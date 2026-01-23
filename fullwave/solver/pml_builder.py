@@ -878,6 +878,7 @@ class PMLBuilder:
                     is_3d=self.is_3d,
                 )
 
+        logger.debug("Calculating PML a and b coefficients...")
         axis_list = ["u", "x"] if self.use_isotropic_relaxation else ["u", "v", "w", "x", "y", "z"]
 
         for nu in range(1, extended_medium.n_relaxation_mechanisms + 1):
@@ -891,10 +892,13 @@ class PMLBuilder:
                     alpha_x=out_dict[f"alpha_{axis}_nu{nu}"],
                     dt=extended_medium.grid.dt,
                 )
+        logger.debug("PML a and b coefficients calculation completed.")
 
+        logger.debug("Updating extended medium relaxation parameters...")
         extended_medium.relaxation_param_dict_for_fw2.update(
             out_dict,
         )
+        logger.debug("PML application completed.")
 
         return extended_medium
 
