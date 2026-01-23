@@ -735,7 +735,7 @@ wheels = [
 
 [[package]]
 name = "fullwave25"
-version = "1.2.0.dev5"
+version = "1.2.0.dev6"
 source = { editable = "." }
 dependencies = [
     { name = "joblib" },
