@@ -26,7 +26,7 @@ def make_circle_idx(
 
 
 def map_to_coords(
-    map_data: NDArray[np.float64 | np.int64 | np.bool],
+    map_data: NDArray[np.float64 | np.int64 | np.bool_],
     *,
     export_as_xyz: bool = False,
 ) -> NDArray[np.int64]:
@@ -36,21 +36,14 @@ def map_to_coords(
         NDArray[np.int64]: An array of coordinates corresponding to non-zero elements in the mask.
 
     """
-    is_3d = map_data.ndim == 3
-    # indices = np.where(map_data.T != 0)
-    indices = np.where(map_data != 0)
-    if is_3d:
-        # out = np.array([indices[2], indices[1], indices[0]]).T
-        # out = np.array([indices[2], indices[1], indices[0]]).T
-        out = np.array([*indices]).T
+    coords = np.argwhere(map_data)  # shape: (N, ndim)
 
-        if export_as_xyz:
-            out = np.stack([out[:, 2], out[:, 1], out[:, 0]], axis=1)
-    else:
-        out = np.array([*indices]).T
-        if export_as_xyz:
-            out = np.stack([out[:, 1], out[:, 0]], axis=1)
-    return out
+    if export_as_xyz:
+        # Reverse axis order: (z,y,x) for 3D, (y,x) for 2D.
+        coords = coords[:, ::-1]
+
+    # Ensure int64 output (argwhere returns intp)
+    return coords.astype(np.int64, copy=False)
 
 
 def coords_to_map(
