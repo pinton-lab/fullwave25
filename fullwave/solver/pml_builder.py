@@ -428,15 +428,21 @@ class PMLBuilder:
         alpha_x: NDArray[np.float64] | float,
         dt: NDArray[np.float64] | float,
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        # function [a b] = ab(dx,kappax,alphax,dT)
-        d_x = np.array(d_x)
-        kappa_x = np.array(kappa_x)
-        alpha_x = np.array(alpha_x)
-        dt = np.array(dt)
+        # Convert inputs to float64 arrays without unnecessary copies
+        d_x = np.asarray(d_x, dtype=np.float64)
+        kappa_x = np.asarray(kappa_x, dtype=np.float64)
+        alpha_x = np.asarray(alpha_x, dtype=np.float64)
+        dt = np.asarray(dt, dtype=np.float64)
 
-        b = np.exp(-(d_x / kappa_x + alpha_x) * dt)
-        eps = 1e-10
-        a = d_x / (kappa_x * (d_x + kappa_x * alpha_x) + eps) * (b - 1)
+        # Common term for the exponential
+        tmp = d_x / kappa_x + alpha_x
+        b = np.exp(-tmp * dt)
+
+        # Numerically safe denominator
+        eps = np.finfo(np.float64).eps
+        denom = kappa_x * (d_x + kappa_x * alpha_x) + eps
+
+        a = d_x / denom * (b - 1.0)
         return a, b
 
     def run(self, *, use_pml: bool = True) -> fullwave.MediumRelaxationMaps:
