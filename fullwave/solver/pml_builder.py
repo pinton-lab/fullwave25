@@ -228,6 +228,7 @@ class PMLBuilder:
                 },
                 air_map=self._extend_map_for_pml(self.medium_org.air_map, fill_edge=False),
                 n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
+                n_jobs=self.medium_org.n_jobs,
             )
         else:
             self.extended_medium = fullwave.Medium(
@@ -241,6 +242,7 @@ class PMLBuilder:
                 n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
                 path_relaxation_parameters_database=self.medium_org.path_relaxation_parameters_database,
                 attenuation_builder=self.medium_org.attenuation_builder,
+                n_jobs=self.medium_org.n_jobs,
             )
 
         logger.debug("building extended source for pml...")
