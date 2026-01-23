@@ -4,6 +4,7 @@ using a precomputed lookup table and input attenuation values.
 """
 
 import logging
+import time
 from pathlib import Path
 
 import numba as nb
@@ -141,8 +142,13 @@ def _map_parameters_search(
     # alpha is in input_tensor[:, :, 0]
     # power is in input_tensor[:, :, 1]
     # the index corresponds to lookup table
+    logger.debug("Mapping parameters using searchsorted.")
+    time_start = time.time()
     alpha_index = searchsorted_parallel(alpha_list[0].round(10), input_tensor[..., 0])
     power_index = searchsorted_parallel(power_list[0].round(10), input_tensor[..., 1])
+    time_end = time.time()
+    logger.debug("Searchsorted time: %.4f seconds.", time_end - time_start)
+    logger.debug("Parameter mapping indices obtained.")
 
     # Clip indices to valid range
     alpha_index = np.clip(alpha_index, 0, len(alpha_list[0]) - 1)

@@ -9,6 +9,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import NDArray
+from tqdm import tqdm
 
 import fullwave
 from fullwave.solver.utils import initialize_relaxation_param_dict
@@ -450,6 +451,7 @@ class PMLBuilder:
             A Medium instance with the constructed domain properties.
 
         """
+        logger.debug("Running PML builder...")
         if use_pml:
             extended_medium: fullwave.MediumRelaxationMaps = self.extended_medium.build()
             if self.is_3d:
@@ -498,6 +500,7 @@ class PMLBuilder:
             The extended medium relaxation parameters with PML applied.
 
         """
+        logger.debug("Applying 2D PML...")
         # alpha=0 and d=0 will make a and b in the PML be 0
         # this procedure shrinks the multiple relaxation mechanisms to a single one
         alpha_target_pml = 0
@@ -521,7 +524,11 @@ class PMLBuilder:
             is_3d=self.is_3d,
             use_isotropic_relaxation=self.use_isotropic_relaxation,
         )
-        for key_fw2, key_py in rename_dict.items():
+        for key_fw2, key_py in tqdm(
+            rename_dict.items(),
+            desc="Applying PML to relaxation parameters",
+            total=len(rename_dict),
+        ):
             if key_fw2 in ["kappa_x", "kappa_u", "kappa_y", "kappa_w"]:
                 out_dict[key_fw2] = relaxation_param_dict[key_py].copy()
             elif (
@@ -683,6 +690,7 @@ class PMLBuilder:
             The extended medium relaxation parameters with PML applied.
 
         """
+        logger.debug("Applying 3D PML...")
         # alpha=0 and d=0 will make a and b in the PML be 0
         # this procedure shrinks the multiple relaxation mechanisms to a single one
         alpha_target_pml = 0
@@ -705,7 +713,11 @@ class PMLBuilder:
             is_3d=self.is_3d,
             use_isotropic_relaxation=self.use_isotropic_relaxation,
         )
-        for key_fw2, key_py in rename_dict.items():
+        for key_fw2, key_py in tqdm(
+            rename_dict.items(),
+            desc="Applying PML to relaxation parameters",
+            total=len(rename_dict),
+        ):
             if (
                 key_fw2 in ["kappa_x", "kappa_u"]
                 or key_fw2 in ["kappa_y", "kappa_v"]
