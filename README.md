@@ -65,16 +65,19 @@ If you use Fullwave 2.5 in your research, please cite this repository as:
   url = {https://github.com/pinton-lab/fullwave25},
 }
 
-@ARTICLE{Pinton2021-fullwave2,
-  title = "A fullwave model of the nonlinear wave equation with multiple relaxations and relaxing perfectly matched layers for high-order numerical finite-difference solutions",
-  author = "Pinton, Gianmarco",
-  month = jun,
-  year = 2021,
-  copyright = "http://creativecommons.org/licenses/by/4.0/",
-  archivePrefix = "arXiv",
-  primaryClass = "physics.med-ph",
-  eprint = "2106.11476"
+@ARTICLE{Pinton2021-to,
+  title        = {A fullwave model of the nonlinear wave equation with multiple
+                  relaxations and relaxing perfectly matched layers for
+                  high-order numerical finite-difference solutions},
+  author       = {Pinton, Gianmarco},
+  journaltitle = {arXiv [physics.med-ph]},
+  date         = {2021-06-22},
+  eprint       = {2106.11476},
+  eprinttype   = {arXiv},
+  eprintclass  = {physics.med-ph},
+  url          = {http://arxiv.org/abs/2106.11476},
 }
+
 ```
 
 ---
