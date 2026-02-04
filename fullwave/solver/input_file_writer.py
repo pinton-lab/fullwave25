@@ -95,8 +95,7 @@ class InputFileWriter:
         self.use_exponential_attenuation = use_exponential_attenuation
 
         self._dim = int(
-            matlab_round(self.medium.sound_speed.max())
-            - matlab_round(self.medium.sound_speed.min()),
+            np.rint(self.medium.sound_speed.max()) - np.rint(self.medium.sound_speed.min()),
         )
 
         self._set_d_mat()
@@ -198,377 +197,446 @@ class InputFileWriter:
         # For 2D modeling:
         self._d = np.zeros((9, 2))
         if self.is_3d:
-            self._d[1, 0] = (
-                3.26627215252963e-3 * self.grid.cfl**7
-                - 7.91679373564790e-4 * self.grid.cfl**6
-                + 1.08663532410570e-3 * self.grid.cfl**5
-                + 2.54974226454794e-2 * self.grid.cfl**4
-                + 3.23083288193913e-5 * self.grid.cfl**3
-                - 3.97704676886853e-1 * self.grid.cfl**2
-                + 7.95584310128586e-8 * self.grid.cfl
-                + 1.25425295688331
+            self._d[1, 0] = self._horner7(
+                self.grid.cfl,
+                3.26627215252963e-3,
+                -7.91679373564790e-4,
+                1.08663532410570e-3,
+                2.54974226454794e-2,
+                3.23083288193913e-5,
+                -3.97704676886853e-1,
+                7.95584310128586e-8,
+                1.25425295688331,
             )
-            self._d[2, 0] = (
-                -2.83291379048757e-3 * self.grid.cfl**7
-                + 8.52796449228369e-4 * self.grid.cfl**6
-                - 9.45353822586534e-4 * self.grid.cfl**5
-                - 8.82015372858580e-3 * self.grid.cfl**4
-                - 2.81364895458027e-5 * self.grid.cfl**3
-                + 6.73021045987599e-2 * self.grid.cfl**2
-                - 6.93180036837075e-8 * self.grid.cfl
-                - 1.23448809066664e-1
+            self._d[2, 0] = self._horner7(
+                self.grid.cfl,
+                -2.83291379048757e-3,
+                8.52796449228369e-4,
+                -9.45353822586534e-4,
+                -8.82015372858580e-3,
+                -2.81364895458027e-5,
+                6.73021045987599e-2,
+                -6.93180036837075e-8,
+                -1.23448809066664e-1,
             )
-            self._d[3, 0] = (
-                2.32775473203342e-3 * self.grid.cfl**7
-                - 5.56793042789852e-4 * self.grid.cfl**6
-                + 7.77649035879584e-4 * self.grid.cfl**5
-                + 2.45547234243566e-3 * self.grid.cfl**4
-                + 2.31537892801923e-5 * self.grid.cfl**3
-                + 1.61900960524164e-2 * self.grid.cfl**2
-                + 5.70523152308121e-8 * self.grid.cfl
-                + 3.46683979649506e-2
+            self._d[3, 0] = self._horner7(
+                self.grid.cfl,
+                2.32775473203342e-3,
+                -5.56793042789852e-4,
+                7.77649035879584e-4,
+                2.45547234243566e-3,
+                2.31537892801923e-5,
+                1.61900960524164e-2,
+                5.70523152308121e-8,
+                3.46683979649506e-2,
             )
-            self._d[4, 0] = (
-                -1.68883462553539e-3 * self.grid.cfl**7
-                + 3.03535823592644e-4 * self.grid.cfl**6
-                - 5.64777117315819e-4 * self.grid.cfl**5
-                + 2.44582905523866e-4 * self.grid.cfl**4
-                - 1.68215579314751e-5 * self.grid.cfl**3
-                - 2.62344345204941e-2 * self.grid.cfl**2
-                - 4.14559953526389e-8 * self.grid.cfl
-                - 1.19918511290930e-2
+            self._d[4, 0] = self._horner7(
+                self.grid.cfl,
+                -1.68883462553539e-3,
+                3.03535823592644e-4,
+                -5.64777117315819e-4,
+                2.44582905523866e-4,
+                -1.68215579314751e-5,
+                -2.62344345204941e-2,
+                -4.14559953526389e-8,
+                -1.19918511290930e-2,
             )
-            self._d[5, 0] = (
-                1.08994931098070e-3 * self.grid.cfl**7
-                - 1.41445142143525e-4 * self.grid.cfl**6
-                + 3.64794490139160e-4 * self.grid.cfl**5
-                - 8.86057426195227e-4 * self.grid.cfl**4
-                + 1.08681882832738e-5 * self.grid.cfl**3
-                + 2.07238558666603e-2 * self.grid.cfl**2
-                + 2.67876079477806e-8 * self.grid.cfl
-                + 4.17058420250698e-3
+            self._d[5, 0] = self._horner7(
+                self.grid.cfl,
+                1.08994931098070e-3,
+                -1.41445142143525e-4,
+                3.64794490139160e-4,
+                -8.86057426195227e-4,
+                1.08681882832738e-5,
+                2.07238558666603e-2,
+                2.67876079477806e-8,
+                4.17058420250698e-3,
             )
-            self._d[6, 0] = (
-                -6.39950124405340e-4 * self.grid.cfl**7
-                + 6.06079815415080e-5 * self.grid.cfl**6
-                - 2.14633466007892e-4 * self.grid.cfl**5
-                + 6.84580412267934e-4 * self.grid.cfl**4
-                - 6.39907927898092e-6 * self.grid.cfl**3
-                - 1.29825288653404e-2 * self.grid.cfl**2
-                - 1.57775422151124e-8 * self.grid.cfl
-                - 1.29998325971518e-3
+            self._d[6, 0] = self._horner7(
+                self.grid.cfl,
+                -6.39950124405340e-4,
+                6.06079815415080e-5,
+                -2.14633466007892e-4,
+                6.84580412267934e-4,
+                -6.39907927898092e-6,
+                -1.29825288653404e-2,
+                -1.57775422151124e-8,
+                -1.29998325971518e-3,
             )
-            self._d[7, 0] = (
-                2.92716539609611e-4 * self.grid.cfl**7
-                - 1.87446062803024e-5 * self.grid.cfl**6
-                + 9.85389372183761e-5 * self.grid.cfl**5
-                - 2.40360290348543e-4 * self.grid.cfl**4
-                + 2.94166215515130e-6 * self.grid.cfl**3
-                + 5.57066438452790e-3 * self.grid.cfl**2
-                + 7.25741366376659e-9 * self.grid.cfl
-                + 3.18698432679400e-4
+            self._d[7, 0] = self._horner7(
+                self.grid.cfl,
+                2.92716539609611e-4,
+                -1.87446062803024e-5,
+                9.85389372183761e-5,
+                -2.40360290348543e-4,
+                2.94166215515130e-6,
+                5.57066438452790e-3,
+                7.25741366376659e-9,
+                3.18698432679400e-4,
             )
-            self._d[8, 0] = (
-                -6.42183857909518e-5 * self.grid.cfl**7
-                + 3.38552867751042e-6 * self.grid.cfl**6
-                - 2.17377151411164e-5 * self.grid.cfl**5
-                + 4.98269067389945e-5 * self.grid.cfl**4
-                - 6.50197868987757e-7 * self.grid.cfl**3
-                - 1.19096089679178e-3 * self.grid.cfl**2
-                - 1.60559948991172e-9 * self.grid.cfl
-                - 4.57795411807702e-5
+            self._d[8, 0] = self._horner7(
+                self.grid.cfl,
+                -6.42183857909518e-5,
+                3.38552867751042e-6,
+                -2.17377151411164e-5,
+                4.98269067389945e-5,
+                -6.50197868987757e-7,
+                -1.19096089679178e-3,
+                -1.60559948991172e-9,
+                -4.57795411807702e-5,
             )
-            self._d[1, 1] = (
-                -4.47723278782936e-5 * self.grid.cfl**7
-                - 7.69502473399932e-5 * self.grid.cfl**6
-                - 1.41765498250133e-5 * self.grid.cfl**5
-                - 2.54672045901272e-3 * self.grid.cfl**4
-                - 4.14343385915353e-7 * self.grid.cfl**3
-                + 5.00210047924752e-2 * self.grid.cfl**2
-                - 1.01220354410507e-9 * self.grid.cfl
-                - 8.07139347787336e-8
+            self._d[1, 1] = self._horner7(
+                self.grid.cfl,
+                -4.47723278782936e-5,
+                -7.69502473399932e-5,
+                -1.41765498250133e-5,
+                -2.54672045901272e-3,
+                -4.14343385915353e-7,
+                5.00210047924752e-2,
+                -1.01220354410507e-9,
+                -8.07139347787336e-8,
             )
         else:
-            self._d[1, 0] = (
-                -0.000874634088067635 * self.grid.cfl**7
-                - 0.00180530560296097 * self.grid.cfl**6
-                - 0.000440512972481673 * self.grid.cfl**5
-                + 0.00474018847663366 * self.grid.cfl**4
-                - 1.93097802254349e-05 * self.grid.cfl**3
-                - 0.292328221171893 * self.grid.cfl**2
-                - 6.58101498708345e-08 * self.grid.cfl
-                + 1.25420636437969
+            self._d[1, 0] = self._horner7(
+                self.grid.cfl,
+                -8.74634088067635e-4,
+                -1.80530560296097e-3,
+                -4.40512972481673e-4,
+                4.74018847663366e-3,
+                -1.93097802254349e-5,
+                -2.92328221171893e-1,
+                -6.58101498708345e-8,
+                1.25420636437969,
             )
-            self._d[2, 0] = (
-                0.000793317828964018 * self.grid.cfl**7
-                + 0.00161433256585486 * self.grid.cfl**6
-                + 0.000397244786277123 * self.grid.cfl**5
-                + 0.00546057645976549 * self.grid.cfl**4
-                + 1.73781972873916e-05 * self.grid.cfl**3
-                + 0.0588754971188371 * self.grid.cfl**2
-                + 5.91706982879834e-08 * self.grid.cfl
-                - 0.123406473759703
+            self._d[2, 0] = self._horner7(
+                self.grid.cfl,
+                7.93317828964018e-4,
+                1.61433256585486e-3,
+                3.97244786277123e-4,
+                5.46057645976549e-3,
+                1.73781972873916e-5,
+                5.88754971188371e-2,
+                5.91706982879834e-8,
+                -1.23406473759703e-1,
             )
-            self._d[3, 0] = (
-                -0.000650217700538851 * self.grid.cfl**7
-                - 0.00116449260340413 * self.grid.cfl**6
-                - 0.000324403734066325 * self.grid.cfl**5
-                - 0.00911483710059994 * self.grid.cfl**4
-                - 1.417399823126e-05 * self.grid.cfl**3
-                + 0.0233184077551615 * self.grid.cfl**2
-                - 4.82326094707544e-08 * self.grid.cfl
-                + 0.0346342451534453
+            self._d[3, 0] = self._horner7(
+                self.grid.cfl,
+                -6.50217700538851e-4,
+                -1.16449260340413e-3,
+                -3.24403734066325e-4,
+                -9.11483710059994e-3,
+                -1.41739982312600e-5,
+                2.33184077551615e-2,
+                -4.82326094707544e-8,
+                3.46342451534453e-2,
             )
-            self._d[4, 0] = (
-                0.000467529510541428 * self.grid.cfl**7
-                + 0.000732736676632388 * self.grid.cfl**6
-                + 0.000232444388955328 * self.grid.cfl**5
-                + 0.00846419766685254 * self.grid.cfl**4
-                + 1.01438593426278e-05 * self.grid.cfl**3
-                - 0.0317586249260511 * self.grid.cfl**2
-                + 3.44988852042879e-08 * self.grid.cfl
-                - 0.0119674942518101
+            self._d[4, 0] = self._horner7(
+                self.grid.cfl,
+                4.67529510541428e-4,
+                7.32736676632388e-4,
+                2.32444388955328e-4,
+                8.46419766685254e-3,
+                1.01438593426278e-5,
+                -3.17586249260511e-2,
+                3.44988852042879e-8,
+                -1.19674942518101e-2,
             )
-            self._d[5, 0] = (
-                -0.000298416281187033 * self.grid.cfl**7
-                - 0.000399380750669364 * self.grid.cfl**6
-                - 0.000148203388388213 * self.grid.cfl**5
-                - 0.00601788793192501 * self.grid.cfl**4
-                - 6.46543538517443e-06 * self.grid.cfl**3
-                + 0.0241912754935119 * self.grid.cfl**2
-                - 2.19855171569984e-08 * self.grid.cfl
-                + 0.00415554391204146
+            self._d[5, 0] = self._horner7(
+                self.grid.cfl,
+                -2.98416281187033e-4,
+                -3.99380750669364e-4,
+                -1.48203388388213e-4,
+                -6.01788793192501e-3,
+                -6.46543538517443e-6,
+                2.41912754935119e-2,
+                -2.19855171569984e-8,
+                4.15554391204146e-3,
             )
-            self._d[6, 0] = (
-                0.000167882669698981 * self.grid.cfl**7
-                + 0.000188195874702691 * self.grid.cfl**6
-                + 8.3057921860396e-05 * self.grid.cfl**5
-                + 0.00348461963201376 * self.grid.cfl**4
-                + 3.61873162287129e-06 * self.grid.cfl**3
-                - 0.0149875789940005 * self.grid.cfl**2
-                + 1.22979142197165e-08 * self.grid.cfl
-                - 0.00129213888778954
+            self._d[6, 0] = self._horner7(
+                self.grid.cfl,
+                1.67882669698981e-4,
+                1.88195874702691e-4,
+                8.30579218603960e-5,
+                3.48461963201376e-3,
+                3.61873162287129e-6,
+                -1.49875789940005e-2,
+                1.22979142197165e-8,
+                -1.29213888778954e-3,
             )
-            self._d[7, 0] = (
-                -6.22209937489143e-05 * self.grid.cfl**7
-                - 6.44890425871692e-05 * self.grid.cfl**6
-                - 3.02936928954918e-05 * self.grid.cfl**5
-                - 0.00133386143898282 * self.grid.cfl**4
-                - 1.31215186728213e-06 * self.grid.cfl**3
-                + 0.00670228205200379 * self.grid.cfl**2
-                - 4.44653967516776e-09 * self.grid.cfl
-                + 0.000315659916047599
+            self._d[7, 0] = self._horner7(
+                self.grid.cfl,
+                -6.22209937489143e-5,
+                -6.44890425871692e-5,
+                -3.02936928954918e-5,
+                -1.33386143898282e-3,
+                -1.31215186728213e-6,
+                6.70228205200379e-3,
+                -4.44653967516776e-9,
+                3.15659916047599e-4,
             )
-            self._d[8, 0] = (
-                6.8474088109024e-06 * self.grid.cfl**7
-                + 1.14082245705934e-05 * self.grid.cfl**6
-                + 3.0372759370575e-06 * self.grid.cfl**5
-                + 0.000236122782444105 * self.grid.cfl**4
-                + 1.26768491232397e-07 * self.grid.cfl**3
-                - 0.00153347270556276 * self.grid.cfl**2
-                + 4.21617557752767e-10 * self.grid.cfl
-                - 4.51948990428065e-05
+            self._d[8, 0] = self._horner7(
+                self.grid.cfl,
+                6.84740881090240e-6,
+                1.14082245705934e-5,
+                3.03727593705750e-6,
+                2.36122782444105e-4,
+                1.26768491232397e-7,
+                -1.53347270556276e-3,
+                4.21617557752767e-10,
+                -4.51948990428065e-5,
             )
-            self._d[1, 1] = (
-                2.13188763071246e-06 * self.grid.cfl**7
-                - 7.41025068776257e-05 * self.grid.cfl**6
-                + 2.31652037371554e-06 * self.grid.cfl**5
-                - 0.00259495924602038 * self.grid.cfl**4
-                + 1.20637183170338e-07 * self.grid.cfl**3
-                + 0.0521123771632193 * self.grid.cfl**2
-                + 4.42258843694177e-10 * self.grid.cfl
-                - 4.20967682664542e-07
+            self._d[1, 1] = self._horner7(
+                self.grid.cfl,
+                2.13188763071246e-6,
+                -7.41025068776257e-5,
+                2.31652037371554e-6,
+                -2.59495924602038e-3,
+                1.20637183170338e-7,
+                5.21123771632193e-2,
+                4.42258843694177e-10,
+                -4.20967682664542e-7,
             )
         logger.debug("d matrix for stencil coefficients set.")
 
-    def _set_d_map(self, dim: int, c_map: NDArray[np.float64]) -> None:
-        self._d_map = np.zeros((9, 2, dim + 1))
+    @staticmethod
+    def _horner7(
+        x: np.ndarray | float,
+        a7: float,
+        a6: float,
+        a5: float,
+        a4: float,
+        a3: float,
+        a2: float,
+        a1: float,
+        a0: float,
+    ) -> np.ndarray | float:
+        """Evaluate a 7th degree polynomial using Horner's method.
+
+        Parameters
+        ----------
+        x : np.ndarray | float
+            The input value(s) at which to evaluate the polynomial.
+        a7, a6, a5, a4, a3, a2, a1, a0 : float
+            The coefficients of the polynomial, where a7 is the coefficient of x^7
+            and a0 is the constant term.
+
+        Returns
+        -------
+        np.ndarray | float
+            The evaluated polynomial value(s).
+
+        """
+        # (((((((a7*x + a6)*x + a5)*x + a4)*x + a3)*x + a2)*x + a1)*x + a0)
+        return ((((((a7 * x + a6) * x + a5) * x + a4) * x + a3) * x + a2) * x + a1) * x + a0
+
+    def _set_d_map(self, dim: int, c_map: np.ndarray) -> None:
+        self._d_map = np.zeros((9, 2, dim + 1), dtype=np.float64)
+
+        cmin = float(np.min(c_map))  # compute once (was inside loop)
+        scale = self.grid.dt / self.grid.dx  # compute once
+        i = np.arange(dim + 1, dtype=np.float64)
+        r = (i + cmin) * scale
+
         if self.is_3d:
-            for i in range(dim + 1):
-                r_d_map = (i + c_map.min()) * self.grid.dt / self.grid.dx
-                self._d_map[1, 0, i] = (
-                    3.26627215252963e-3 * r_d_map**7
-                    - 7.91679373564790e-4 * r_d_map**6
-                    + 1.08663532410570e-3 * r_d_map**5
-                    + 2.54974226454794e-2 * r_d_map**4
-                    + 3.23083288193913e-5 * r_d_map**3
-                    - 3.97704676886853e-1 * r_d_map**2
-                    + 7.95584310128586e-8 * r_d_map
-                    + 1.25425295688331
-                )
-                self._d_map[2, 0, i] = (
-                    -2.83291379048757e-3 * r_d_map**7
-                    + 8.52796449228369e-4 * r_d_map**6
-                    - 9.45353822586534e-4 * r_d_map**5
-                    - 8.82015372858580e-3 * r_d_map**4
-                    - 2.81364895458027e-5 * r_d_map**3
-                    + 6.73021045987599e-2 * r_d_map**2
-                    - 6.93180036837075e-8 * r_d_map
-                    - 1.23448809066664e-1
-                )
-                self._d_map[3, 0, i] = (
-                    2.32775473203342e-3 * r_d_map**7
-                    - 5.56793042789852e-4 * r_d_map**6
-                    + 7.77649035879584e-4 * r_d_map**5
-                    + 2.45547234243566e-3 * r_d_map**4
-                    + 2.31537892801923e-5 * r_d_map**3
-                    + 1.61900960524164e-2 * r_d_map**2
-                    + 5.70523152308121e-8 * r_d_map
-                    + 3.46683979649506e-2
-                )
-                self._d_map[4, 0, i] = (
-                    -1.68883462553539e-3 * r_d_map**7
-                    + 3.03535823592644e-4 * r_d_map**6
-                    - 5.64777117315819e-4 * r_d_map**5
-                    + 2.44582905523866e-4 * r_d_map**4
-                    - 1.68215579314751e-5 * r_d_map**3
-                    - 2.62344345204941e-2 * r_d_map**2
-                    - 4.14559953526389e-8 * r_d_map
-                    - 1.19918511290930e-2
-                )
-                self._d_map[5, 0, i] = (
-                    1.08994931098070e-3 * r_d_map**7
-                    - 1.41445142143525e-4 * r_d_map**6
-                    + 3.64794490139160e-4 * r_d_map**5
-                    - 8.86057426195227e-4 * r_d_map**4
-                    + 1.08681882832738e-5 * r_d_map**3
-                    + 2.07238558666603e-2 * r_d_map**2
-                    + 2.67876079477806e-8 * r_d_map
-                    + 4.17058420250698e-3
-                )
-                self._d_map[6, 0, i] = (
-                    -6.39950124405340e-4 * r_d_map**7
-                    + 6.06079815415080e-5 * r_d_map**6
-                    - 2.14633466007892e-4 * r_d_map**5
-                    + 6.84580412267934e-4 * r_d_map**4
-                    - 6.39907927898092e-6 * r_d_map**3
-                    - 1.29825288653404e-2 * r_d_map**2
-                    - 1.57775422151124e-8 * r_d_map
-                    - 1.29998325971518e-3
-                )
-                self._d_map[7, 0, i] = (
-                    2.92716539609611e-4 * r_d_map**7
-                    - 1.87446062803024e-5 * r_d_map**6
-                    + 9.85389372183761e-5 * r_d_map**5
-                    - 2.40360290348543e-4 * r_d_map**4
-                    + 2.94166215515130e-6 * r_d_map**3
-                    + 5.57066438452790e-3 * r_d_map**2
-                    + 7.25741366376659e-9 * r_d_map
-                    + 3.18698432679400e-4
-                )
-                self._d_map[8, 0, i] = (
-                    -6.42183857909518e-5 * r_d_map**7
-                    + 3.38552867751042e-6 * r_d_map**6
-                    - 2.17377151411164e-5 * r_d_map**5
-                    + 4.98269067389945e-5 * r_d_map**4
-                    - 6.50197868987757e-7 * r_d_map**3
-                    - 1.19096089679178e-3 * r_d_map**2
-                    - 1.60559948991172e-9 * r_d_map
-                    - 4.57795411807702e-5
-                )
-                self._d_map[1, 1, i] = (
-                    -4.47723278782936e-5 * r_d_map**7
-                    - 7.69502473399932e-5 * r_d_map**6
-                    - 1.41765498250133e-5 * r_d_map**5
-                    - 2.54672045901272e-3 * r_d_map**4
-                    - 4.14343385915353e-7 * r_d_map**3
-                    + 5.00210047924752e-2 * r_d_map**2
-                    - 1.01220354410507e-9 * r_d_map
-                    - 8.07139347787336e-8
-                )
+            self._d_map[1, 0, :] = self._horner7(
+                r,
+                3.26627215252963e-3,
+                -7.91679373564790e-4,
+                1.08663532410570e-3,
+                2.54974226454794e-2,
+                3.23083288193913e-5,
+                -3.97704676886853e-1,
+                7.95584310128586e-8,
+                1.25425295688331,
+            )
+            self._d_map[2, 0, :] = self._horner7(
+                r,
+                -2.83291379048757e-3,
+                8.52796449228369e-4,
+                -9.45353822586534e-4,
+                -8.82015372858580e-3,
+                -2.81364895458027e-5,
+                6.73021045987599e-2,
+                -6.93180036837075e-8,
+                -1.23448809066664e-1,
+            )
+            self._d_map[3, 0, :] = self._horner7(
+                r,
+                2.32775473203342e-3,
+                -5.56793042789852e-4,
+                7.77649035879584e-4,
+                2.45547234243566e-3,
+                2.31537892801923e-5,
+                1.61900960524164e-2,
+                5.70523152308121e-8,
+                3.46683979649506e-2,
+            )
+            self._d_map[4, 0, :] = self._horner7(
+                r,
+                -1.68883462553539e-3,
+                3.03535823592644e-4,
+                -5.64777117315819e-4,
+                2.44582905523866e-4,
+                -1.68215579314751e-5,
+                -2.62344345204941e-2,
+                -4.14559953526389e-8,
+                -1.19918511290930e-2,
+            )
+            self._d_map[5, 0, :] = self._horner7(
+                r,
+                1.08994931098070e-3,
+                -1.41445142143525e-4,
+                3.64794490139160e-4,
+                -8.86057426195227e-4,
+                1.08681882832738e-5,
+                2.07238558666603e-2,
+                2.67876079477806e-8,
+                4.17058420250698e-3,
+            )
+            self._d_map[6, 0, :] = self._horner7(
+                r,
+                -6.39950124405340e-4,
+                6.06079815415080e-5,
+                -2.14633466007892e-4,
+                6.84580412267934e-4,
+                -6.39907927898092e-6,
+                -1.29825288653404e-2,
+                -1.57775422151124e-8,
+                -1.29998325971518e-3,
+            )
+            self._d_map[7, 0, :] = self._horner7(
+                r,
+                2.92716539609611e-4,
+                -1.87446062803024e-5,
+                9.85389372183761e-5,
+                -2.40360290348543e-4,
+                2.94166215515130e-6,
+                5.57066438452790e-3,
+                7.25741366376659e-9,
+                3.18698432679400e-4,
+            )
+            self._d_map[8, 0, :] = self._horner7(
+                r,
+                -6.42183857909518e-5,
+                3.38552867751042e-6,
+                -2.17377151411164e-5,
+                4.98269067389945e-5,
+                -6.50197868987757e-7,
+                -1.19096089679178e-3,
+                -1.60559948991172e-9,
+                -4.57795411807702e-5,
+            )
+            self._d_map[1, 1, :] = self._horner7(
+                r,
+                -4.47723278782936e-5,
+                -7.69502473399932e-5,
+                -1.41765498250133e-5,
+                -2.54672045901272e-3,
+                -4.14343385915353e-7,
+                5.00210047924752e-2,
+                -1.01220354410507e-9,
+                -8.07139347787336e-8,
+            )
         else:
-            for i in range(dim + 1):
-                r_d_map = (i + c_map.min()) * self.grid.dt / self.grid.dx
-                self._d_map[1, 0, i] = (
-                    -0.000874634088067635 * r_d_map**7
-                    - 0.00180530560296097 * r_d_map**6
-                    - 0.000440512972481673 * r_d_map**5
-                    + 0.00474018847663366 * r_d_map**4
-                    - 1.93097802254349e-05 * r_d_map**3
-                    - 0.292328221171893 * r_d_map**2
-                    - 6.58101498708345e-08 * r_d_map
-                    + 1.25420636437969
-                )
-                self._d_map[2, 0, i] = (
-                    0.000793317828964018 * r_d_map**7
-                    + 0.00161433256585486 * r_d_map**6
-                    + 0.000397244786277123 * r_d_map**5
-                    + 0.00546057645976549 * r_d_map**4
-                    + 1.73781972873916e-05 * r_d_map**3
-                    + 0.0588754971188371 * r_d_map**2
-                    + 5.91706982879834e-08 * r_d_map
-                    - 0.123406473759703
-                )
-                self._d_map[3, 0, i] = (
-                    -0.000650217700538851 * r_d_map**7
-                    - 0.00116449260340413 * r_d_map**6
-                    - 0.000324403734066325 * r_d_map**5
-                    - 0.00911483710059994 * r_d_map**4
-                    - 1.417399823126e-05 * r_d_map**3
-                    + 0.0233184077551615 * r_d_map**2
-                    - 4.82326094707544e-08 * r_d_map
-                    + 0.0346342451534453
-                )
-                self._d_map[4, 0, i] = (
-                    0.000467529510541428 * r_d_map**7
-                    + 0.000732736676632388 * r_d_map**6
-                    + 0.000232444388955328 * r_d_map**5
-                    + 0.00846419766685254 * r_d_map**4
-                    + 1.01438593426278e-05 * r_d_map**3
-                    - 0.0317586249260511 * r_d_map**2
-                    + 3.44988852042879e-08 * r_d_map
-                    - 0.0119674942518101
-                )
-                self._d_map[5, 0, i] = (
-                    -0.000298416281187033 * r_d_map**7
-                    - 0.000399380750669364 * r_d_map**6
-                    - 0.000148203388388213 * r_d_map**5
-                    - 0.00601788793192501 * r_d_map**4
-                    - 6.46543538517443e-06 * r_d_map**3
-                    + 0.0241912754935119 * r_d_map**2
-                    - 2.19855171569984e-08 * r_d_map
-                    + 0.00415554391204146
-                )
-                self._d_map[6, 0, i] = (
-                    0.000167882669698981 * r_d_map**7
-                    + 0.000188195874702691 * r_d_map**6
-                    + 8.3057921860396e-05 * r_d_map**5
-                    + 0.00348461963201376 * r_d_map**4
-                    + 3.61873162287129e-06 * r_d_map**3
-                    - 0.0149875789940005 * r_d_map**2
-                    + 1.22979142197165e-08 * r_d_map
-                    - 0.00129213888778954
-                )
-                self._d_map[7, 0, i] = (
-                    -6.22209937489143e-05 * r_d_map**7
-                    - 6.44890425871692e-05 * r_d_map**6
-                    - 3.02936928954918e-05 * r_d_map**5
-                    - 0.00133386143898282 * r_d_map**4
-                    - 1.31215186728213e-06 * r_d_map**3
-                    + 0.00670228205200379 * r_d_map**2
-                    - 4.44653967516776e-09 * r_d_map
-                    + 0.000315659916047599
-                )
-                self._d_map[8, 0, i] = (
-                    6.8474088109024e-06 * r_d_map**7
-                    + 1.14082245705934e-05 * r_d_map**6
-                    + 3.0372759370575e-06 * r_d_map**5
-                    + 0.000236122782444105 * r_d_map**4
-                    + 1.26768491232397e-07 * r_d_map**3
-                    - 0.00153347270556276 * r_d_map**2
-                    + 4.21617557752767e-10 * r_d_map
-                    - 4.51948990428065e-05
-                )
-                self._d_map[1, 1, i] = (
-                    2.13188763071246e-06 * r_d_map**7
-                    - 7.41025068776257e-05 * r_d_map**6
-                    + 2.31652037371554e-06 * r_d_map**5
-                    - 0.00259495924602038 * r_d_map**4
-                    + 1.20637183170338e-07 * r_d_map**3
-                    + 0.0521123771632193 * r_d_map**2
-                    + 4.42258843694177e-10 * r_d_map
-                    - 4.20967682664542e-07
-                )
+            self._d_map[1, 0, :] = self._horner7(
+                r,
+                -8.74634088067635e-4,
+                -1.80530560296097e-3,
+                -4.40512972481673e-4,
+                4.74018847663366e-3,
+                -1.93097802254349e-5,
+                -2.92328221171893e-1,
+                -6.58101498708345e-8,
+                1.25420636437969,
+            )
+            self._d_map[2, 0, :] = self._horner7(
+                r,
+                7.93317828964018e-4,
+                1.61433256585486e-3,
+                3.97244786277123e-4,
+                5.46057645976549e-3,
+                1.73781972873916e-5,
+                5.88754971188371e-2,
+                5.91706982879834e-8,
+                -1.23406473759703e-1,
+            )
+            self._d_map[3, 0, :] = self._horner7(
+                r,
+                -6.50217700538851e-4,
+                -1.16449260340413e-3,
+                -3.24403734066325e-4,
+                -9.11483710059994e-3,
+                -1.41739982312600e-5,
+                2.33184077551615e-2,
+                -4.82326094707544e-8,
+                3.46342451534453e-2,
+            )
+            self._d_map[4, 0, :] = self._horner7(
+                r,
+                4.67529510541428e-4,
+                7.32736676632388e-4,
+                2.32444388955328e-4,
+                8.46419766685254e-3,
+                1.01438593426278e-5,
+                -3.17586249260511e-2,
+                3.44988852042879e-8,
+                -1.19674942518101e-2,
+            )
+            self._d_map[5, 0, :] = self._horner7(
+                r,
+                -2.98416281187033e-4,
+                -3.99380750669364e-4,
+                -1.48203388388213e-4,
+                -6.01788793192501e-3,
+                -6.46543538517443e-6,
+                2.41912754935119e-2,
+                -2.19855171569984e-8,
+                4.15554391204146e-3,
+            )
+            self._d_map[6, 0, :] = self._horner7(
+                r,
+                1.67882669698981e-4,
+                1.88195874702691e-4,
+                8.30579218603960e-5,
+                3.48461963201376e-3,
+                3.61873162287129e-6,
+                -1.49875789940005e-2,
+                1.22979142197165e-8,
+                -1.29213888778954e-3,
+            )
+            self._d_map[7, 0, :] = self._horner7(
+                r,
+                -6.22209937489143e-5,
+                -6.44890425871692e-5,
+                -3.02936928954918e-5,
+                -1.33386143898282e-3,
+                -1.31215186728213e-6,
+                6.70228205200379e-3,
+                -4.44653967516776e-9,
+                3.15659916047599e-4,
+            )
+            self._d_map[8, 0, :] = self._horner7(
+                r,
+                6.84740881090240e-6,
+                1.14082245705934e-5,
+                3.03727593705750e-6,
+                2.36122782444105e-4,
+                1.26768491232397e-7,
+                -1.53347270556276e-3,
+                4.21617557752767e-10,
+                -4.51948990428065e-5,
+            )
+            self._d_map[1, 1, :] = self._horner7(
+                r,
+                2.13188763071246e-6,
+                -7.41025068776257e-5,
+                2.31652037371554e-6,
+                -2.59495924602038e-3,
+                1.20637183170338e-7,
+                5.21123771632193e-2,
+                4.42258843694177e-10,
+                -4.20967682664542e-7,
+            )
 
     def _set_dc_map(self, c_map: NDArray[np.float64]) -> None:
         logger.debug("Setting dc map for stencil coefficients.")
@@ -858,36 +926,35 @@ class InputFileWriter:
         )
 
     @staticmethod
-    def _write_ic(fname: str | Path, icmat: NDArray[np.float64]) -> None:
-        message = f"Writing initial condition matrix to {fname}"
-        logger.debug(message, stacklevel=2)
+    def _write_ic(fname: str | Path, icmat: np.ndarray) -> None:
+        logger.debug("Writing initial condition matrix to %s", fname, stacklevel=2)
 
-        start_time = time.time()
-        icmat.T.flatten().astype(np.float32).tofile(fname)
-        end_time = time.time()
+        t0 = time.perf_counter()
+        out = np.ascontiguousarray(
+            icmat.T,
+            dtype=np.float32,
+        )  # does transpose+cast into one new buffer
+        out.tofile(fname)
+        t1 = time.perf_counter()
 
-        message = f"Initial condition matrix written in {end_time - start_time:.2e} seconds"
-        logger.debug(message, stacklevel=2)
+        logger.debug("Initial condition matrix written in %.2e seconds", t1 - t0, stacklevel=2)
 
     @staticmethod
-    def _write_coords(
-        fname: str | Path,
-        coords: NDArray[np.float64 | np.int64],
-        # *,
-        # swap_ij: bool = False,
-    ) -> None:
-        # if swap_ij:
-        #     np.array([coords[:, 1], coords[:, 0]]).T.flatten().astype(np.int32).tofile(fname)
-        # else:
-        #     coords.T.flatten().astype(np.int32).tofile(fname)
+    def _write_coords(fname: str | Path, coords: np.ndarray) -> None:
+        logger.debug("Writing coordinates to %s", fname, stacklevel=2)
 
-        message = f"Writing coordinates to {fname}"
-        logger.debug(message, stacklevel=2)
-        time_start = time.time()
-        coords.flatten().astype(np.int32).tofile(fname)
-        time_end = time.time()
-        message = f"Coordinates written in {time_end - time_start:.2e} seconds"
-        logger.debug(message, stacklevel=2)
+        t0 = time.perf_counter()
+
+        # ravel() avoids an unconditional copy; ascontiguousarray(dtype=...)
+        # makes one int32 C-contig buffer.
+        out = np.ascontiguousarray(
+            coords.ravel(),
+            dtype=np.int32,
+        )  # ravel is view-if-possible, ascontiguousarray makes C-order
+        out.tofile(fname)  # binary write of the raw buffer
+
+        t1 = time.perf_counter()
+        logger.debug("Coordinates written in %.2e seconds", t1 - t0, stacklevel=2)
 
     @staticmethod
     def _write_v_abs(
@@ -901,12 +968,19 @@ class InputFileWriter:
     def _write_matrix(
         var_type: DTypeLike,
         save_path: str | Path,
-        variable_mat: NDArray[np.float64],
+        variable_mat: np.ndarray,
     ) -> None:
-        message = f"Writing matrix to {save_path}"
-        logger.debug(message, stacklevel=2)
-        start_time = time.time()
-        variable_mat.astype(var_type).tofile(save_path)
-        end_time = time.time()
-        message = f"Matrix written in {end_time - start_time:.2e} seconds"
-        logger.debug(message, stacklevel=2)
+        logger.debug("Writing matrix to %s", save_path, stacklevel=2)
+        t0 = time.perf_counter()
+
+        dtype = np.dtype(var_type)
+
+        # Fast path: no conversion, no reorder.
+        if variable_mat.dtype == dtype and variable_mat.flags.c_contiguous:
+            variable_mat.tofile(save_path)  # writes in C order
+        else:
+            out = np.ascontiguousarray(variable_mat, dtype=dtype)  # at most one new buffer
+            out.tofile(save_path)
+
+        t1 = time.perf_counter()
+        logger.debug("Matrix written in %.2e seconds", t1 - t0, stacklevel=2)

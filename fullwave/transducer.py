@@ -516,7 +516,11 @@ class TransducerGeometry:
 
         return output_map
 
-    def _calculate_outmap(self, center: NDArray[np.float64], radius: float) -> np.ndarray:
+    def _calculate_outmap(
+        self,
+        center: NDArray[np.float64],
+        radius: float,
+    ) -> np.ndarray:
         # Make a circle that defines the transducer surface
         out_map = np.zeros((self.grid.nx, self.grid.ny))
         out_map[make_circle_idx(out_map.shape, center, radius)] = 1
@@ -930,16 +934,62 @@ class Transducer:
     @property
     def element_id_to_element_center(self) -> dict[int, NDArray[np.int64]]:
         """Return the dictionary mapping source elements to their center coordinates."""
-        out_dict = {}
-        for i in range(1, self.transducer_geometry.number_elements + 1):
-            indexed_element_mask = np.stack(
-                np.where(
-                    self.transducer_geometry.indexed_element_mask_input == i,
-                ),
+        labels = self.transducer_geometry.indexed_element_mask_input  # shape (H, W), int labels
+        n = self.transducer_geometry.number_elements
+
+        # Coordinates of every pixel
+        if self.is_3d:
+            rr, cc, dd = np.indices(labels.shape)  # rr=row, cc=col, dd=depth
+
+            lab = labels.ravel()
+            rr = rr.ravel()
+            cc = cc.ravel()
+            dd = dd.ravel()
+
+            # Count pixels per label, and sum coordinates per label
+            counts = np.bincount(lab, minlength=n + 1)
+            sum_r = np.bincount(lab, weights=rr, minlength=n + 1)
+            sum_c = np.bincount(lab, weights=cc, minlength=n + 1)
+            sum_d = np.bincount(lab, weights=dd, minlength=n + 1)
+
+            # Avoid division by zero if some labels are missing
+            valid = counts[1:] > 0
+            centers = np.empty((n, 3), dtype=np.int64)
+            centers[:] = -1  # or whatever sentinel you prefer
+
+            centers[valid, 0] = np.rint(sum_r[1:][valid] / counts[1:][valid]).astype(
+                np.int64,
             )
-            center = np.round(indexed_element_mask.mean(axis=1))
-            out_dict[i] = center
-        return out_dict
+            centers[valid, 1] = np.rint(sum_c[1:][valid] / counts[1:][valid]).astype(
+                np.int64,
+            )
+            centers[valid, 2] = np.rint(sum_d[1:][valid] / counts[1:][valid]).astype(
+                np.int64,
+            )
+
+            # Build dict {element_id: center([r,c,d])}
+            return {i: centers[i - 1] for i in range(1, n + 1)}
+        rr, cc = np.indices(labels.shape)  # rr=row, cc=col
+
+        lab = labels.ravel()
+        rr = rr.ravel()
+        cc = cc.ravel()
+
+        # Count pixels per label, and sum coordinates per label
+        counts = np.bincount(lab, minlength=n + 1)
+        sum_r = np.bincount(lab, weights=rr, minlength=n + 1)
+        sum_c = np.bincount(lab, weights=cc, minlength=n + 1)
+
+        # Avoid division by zero if some labels are missing
+        valid = counts[1:] > 0
+        centers = np.empty((n, 2), dtype=np.int64)
+        centers[:] = -1  # or whatever sentinel you prefer
+
+        centers[valid, 0] = np.rint(sum_r[1:][valid] / counts[1:][valid]).astype(np.int64)
+        centers[valid, 1] = np.rint(sum_c[1:][valid] / counts[1:][valid]).astype(np.int64)
+
+        # Build dict {element_id: center([r,c])}
+        return {i: centers[i - 1] for i in range(1, n + 1)}
 
     @property
     def sensor(self) -> fullwave.sensor.Sensor:
