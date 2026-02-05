@@ -17,44 +17,42 @@ from fullwave.solver.utils import initialize_relaxation_param_dict
 logger = logging.getLogger("__main__." + __name__)
 
 
-@nb.njit(inline="always")
-def _lower_bound(a: NDArray[np.float64], x: float) -> int:
-    lo, hi = 0, a.size
-    while lo < hi:
-        mid = (lo + hi) >> 1
-        if a[mid] < x:
-            lo = mid + 1
-        else:
-            hi = mid
-    return lo
-
-
-@nb.njit(inline="always")
-def _upper_bound(a: NDArray[np.float64], x: float) -> int:
-    lo, hi = 0, a.size
-    while lo < hi:
-        mid = (lo + hi) >> 1
-        if a[mid] <= x:
-            lo = mid + 1
-        else:
-            hi = mid
-    return lo
-
-
-@nb.njit(parallel=True)
+@nb.njit(parallel=True, fastmath=True)
 def _searchsorted_parallel_sorted_a(
     a_sorted: NDArray[np.float64],
     v_flat: NDArray[np.float64],
     *,
     side_is_right: bool,
 ) -> NDArray[np.int64]:
-    out = np.empty(v_flat.size, dtype=np.int64)
+    n = a_sorted.size
+    m = v_flat.size
+    out = np.empty(m, dtype=np.int64)
+
     if side_is_right:
-        for i in nb.prange(v_flat.size):
-            out[i] = _upper_bound(a_sorted, v_flat[i])
+        for i in nb.prange(m):
+            x = v_flat[i]
+            lo = 0
+            hi = n
+            while lo < hi:
+                mid = (lo + hi) >> 1
+                if a_sorted[mid] <= x:
+                    lo = mid + 1
+                else:
+                    hi = mid
+            out[i] = lo
     else:
-        for i in nb.prange(v_flat.size):
-            out[i] = _lower_bound(a_sorted, v_flat[i])
+        for i in nb.prange(m):
+            x = v_flat[i]
+            lo = 0
+            hi = n
+            while lo < hi:
+                mid = (lo + hi) >> 1
+                if a_sorted[mid] < x:
+                    lo = mid + 1
+                else:
+                    hi = mid
+            out[i] = lo
+
     return out
 
 

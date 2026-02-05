@@ -4,12 +4,14 @@ import logging
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from functools import cached_property
+from itertools import starmap
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numexpr as ne
 import numpy as np
+from joblib import Parallel, delayed
 from numpy.typing import NDArray
-from tqdm import tqdm
 
 import fullwave
 from fullwave.solver.utils import initialize_relaxation_param_dict
@@ -425,26 +427,27 @@ class PMLBuilder:
 
     @staticmethod
     def _calc_a_and_b(
-        d_x: NDArray[np.float64] | float,
-        kappa_x: NDArray[np.float64] | float,
-        alpha_x: NDArray[np.float64] | float,
-        dt: NDArray[np.float64] | float,
+        d_x: float | NDArray[np.float64],
+        kappa_x: float | NDArray[np.float64],
+        alpha_x: float | NDArray[np.float64],
+        dt: float | NDArray[np.float64],
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        # Convert inputs to float64 arrays without unnecessary copies
         d_x = np.asarray(d_x, dtype=np.float64)
         kappa_x = np.asarray(kappa_x, dtype=np.float64)
         alpha_x = np.asarray(alpha_x, dtype=np.float64)
         dt = np.asarray(dt, dtype=np.float64)
 
-        # Common term for the exponential
-        tmp = d_x / kappa_x + alpha_x
-        b = np.exp(-tmp * dt)
+        eps = np.finfo(np.float64).eps  # noqa: F841
 
-        # Numerically safe denominator
-        eps = np.finfo(np.float64).eps
-        denom = kappa_x * (d_x + kappa_x * alpha_x) + eps
+        # b = exp(-(dx/kappa_x + alpha_x) * dt)
+        b = ne.evaluate("exp(-(d_x/kappa_x + alpha_x) * dt)")
 
-        a = d_x / denom * (b - 1.0)
+        # denom = kappa_x*(dx + kappa_x*alpha_x) + eps
+        denom = ne.evaluate("kappa_x*(d_x + kappa_x*alpha_x) + eps")  # noqa: F841
+
+        # a = dx/denom*(b - 1)
+        a = ne.evaluate("d_x/denom*(b - 1)")
+
         return a, b
 
     def run(self, *, use_pml: bool = True) -> fullwave.MediumRelaxationMaps:
@@ -469,7 +472,7 @@ class PMLBuilder:
                     n_polynomial=self.n_polynomial,
                 )
 
-            return self._apply_pml(
+            return self._apply_pml_2d(
                 extended_medium=extended_medium,
                 theoritical_reflection_coefficient=self.theoritical_reflection_coefficient,
                 n_polynomial=self.n_polynomial,
@@ -478,7 +481,7 @@ class PMLBuilder:
         extended_medium: fullwave.MediumRelaxationMaps = self.extended_medium.build()
         return extended_medium
 
-    def _apply_pml(
+    def _apply_pml_2d(
         self,
         extended_medium: fullwave.MediumRelaxationMaps,
         theoritical_reflection_coefficient: float,
@@ -533,140 +536,186 @@ class PMLBuilder:
             use_isotropic_relaxation=self.use_isotropic_relaxation,
         )
 
-        # if logger is debug, use tqdm for progress bar
-        tqdm_disable = not logger.isEnabledFor(logging.DEBUG)
+        def _compute_one(
+            key_fw2: str,
+            key_py: str,
+            relaxation_param_dict: dict[str, NDArray[np.float64]],
+            alpha_target_higher_nu: float,
+            d_target_higher_nu: float,
+            alpha_target_pml: float,
+            d_target_pml: float,
+            n_polynomial: float,
+            is_3d: bool,  # noqa: FBT001
+            apply_transition_and_pml_fn: callable,
+        ) -> tuple[str, NDArray[np.float64]]:
+            """Return (key_fw2, computed_array). No side effects."""
+            arr = relaxation_param_dict[key_py]
 
-        for key_fw2, key_py in tqdm(
-            rename_dict.items(),
-            desc="Applying PML to relaxation parameters",
-            total=len(rename_dict),
-            disable=tqdm_disable,
-        ):
             if key_fw2 in ["kappa_x", "kappa_u", "kappa_y", "kappa_w"]:
-                out_dict[key_fw2] = relaxation_param_dict[key_py].copy()
-            elif (
-                ("alpha_u_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("alpha_x_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("alpha_w_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("alpha_y_nu" in key_fw2 and "nu1" not in key_fw2)
-            ):
-                # out_dict[key_fw2] = relaxation_param_dict[key_py].copy()
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    relaxation_param_dict[key_py].copy(),
+                return key_fw2, arr
+
+            # helper predicates
+            is_alpha = (
+                ("alpha_u_nu" in key_fw2)
+                or ("alpha_x_nu" in key_fw2)
+                or ("alpha_w_nu" in key_fw2)
+                or ("alpha_y_nu" in key_fw2)
+            )
+            is_d = (
+                ("d_u_nu" in key_fw2)
+                or ("d_x_nu" in key_fw2)
+                or ("d_w_nu" in key_fw2)
+                or ("d_y_nu" in key_fw2)
+            )
+            has_nu1 = "nu1" in key_fw2
+
+            if is_alpha and (not has_nu1):
+                out = apply_transition_and_pml_fn(
+                    arr,
                     value_target=alpha_target_higher_nu,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=0,
                     transition_type="cosine",
                     transit_within_transition_layer=True,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
-                    # relaxation_param_dict[key_py].copy(),
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=alpha_target_higher_nu,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=1,
                     transition_type="cosine",
                     transit_within_transition_layer=True,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-            elif (
-                ("d_u_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("d_x_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("d_w_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("d_y_nu" in key_fw2 and "nu1" not in key_fw2)
-            ):
-                # out_dict[key_fw2] = relaxation_param_dict[key_py].copy()
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    relaxation_param_dict[key_py].copy(),
+                return key_fw2, out
+
+            if is_d and (not has_nu1):
+                out = apply_transition_and_pml_fn(
+                    arr,
                     value_target=d_target_higher_nu,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=0,
                     transition_type="cosine",
                     transit_within_transition_layer=True,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
-                    # relaxation_param_dict[key_py].copy(),
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=d_target_higher_nu,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=1,
                     transition_type="cosine",
                     transit_within_transition_layer=True,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-            elif (
-                ("alpha_u_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("alpha_x_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("alpha_w_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("alpha_y_nu" in key_fw2 and "nu1" in key_fw2)
-            ):
-                # out_dict[key_fw2] = relaxation_param_dict[key_py].copy()
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    relaxation_param_dict[key_py].copy(),
+                return key_fw2, out
+
+            if is_alpha and has_nu1:
+                out = apply_transition_and_pml_fn(
+                    arr,
                     value_target=alpha_target_pml,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=0,
                     transition_type="linear",
                     transit_within_transition_layer=False,
                     transit_within_pml_layer=False,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
-                    # relaxation_param_dict[key_py].copy(),
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=alpha_target_pml,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=1,
                     transition_type="linear",
                     transit_within_transition_layer=False,
                     transit_within_pml_layer=False,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-            elif (
-                ("d_u_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("d_x_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("d_w_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("d_y_nu" in key_fw2 and "nu1" in key_fw2)
-            ):
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    relaxation_param_dict[key_py].copy(),
+                return key_fw2, out
+
+            if is_d and has_nu1:
+                out = apply_transition_and_pml_fn(
+                    arr,
                     value_target=d_target_pml,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=0,
                     n_polynomial=n_polynomial,
                     transition_type="polynomial",
                     transit_within_transition_layer=False,
                     transit_within_pml_layer=False,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
-                    # relaxation_param_dict[key_py].copy(),
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=d_target_pml,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=1,
                     n_polynomial=n_polynomial,
                     transition_type="polynomial",
                     transit_within_transition_layer=False,
                     transit_within_pml_layer=False,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
+                return key_fw2, out
+
+            error_msg = f"Unhandled key_fw2 pattern: {key_fw2}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        items = list(rename_dict.items())
+
+        results = Parallel(n_jobs=self.medium_org.n_jobs, backend="threading")(
+            delayed(_compute_one)(
+                key_fw2,
+                key_py,
+                relaxation_param_dict,
+                alpha_target_higher_nu,
+                d_target_higher_nu,
+                alpha_target_pml,
+                d_target_pml,
+                n_polynomial,
+                self.is_3d,
+                self._apply_transition_and_pml,
+            )
+            for key_fw2, key_py in items
+        )
+        out_dict = dict(results)
 
         logger.debug("Calculating PML a and b coefficients...")
         axis_list = ["u", "x"] if self.use_isotropic_relaxation else ["u", "w", "x", "y"]
-        for nu in range(1, extended_medium.n_relaxation_mechanisms + 1):
-            for axis in axis_list:
-                (
-                    out_dict[f"a_pml_{axis}{nu}"],
-                    out_dict[f"b_pml_{axis}{nu}"],
-                ) = self._calc_a_and_b(
-                    d_x=out_dict[f"d_{axis}_nu{nu}"],
-                    kappa_x=out_dict[f"kappa_{axis}"],
-                    alpha_x=out_dict[f"alpha_{axis}_nu{nu}"],
-                    dt=extended_medium.grid.dt,
-                )
+        # Build independent tasks (flatten nested loops)
+        tasks = [
+            (nu, axis)
+            for nu in range(1, extended_medium.n_relaxation_mechanisms + 1)
+            for axis in axis_list
+        ]
+
+        def _worker(
+            nu: int,
+            axis: str,
+        ) -> tuple[str, NDArray[np.float64], str, NDArray[np.float64]]:
+            a, b = self._calc_a_and_b(
+                d_x=out_dict[f"d_{axis}_nu{nu}"],
+                kappa_x=out_dict[f"kappa_{axis}"],
+                alpha_x=out_dict[f"alpha_{axis}_nu{nu}"],
+                dt=extended_medium.grid.dt,
+            )
+            # Return keys + values so parent can update dict safely
+            return (f"a_pml_{axis}{nu}", a, f"b_pml_{axis}{nu}", b)
+
+        results = Parallel(
+            n_jobs=self.medium_org.n_jobs,  # use all cores
+            backend="loky",  # process-based; safe default for Python code
+            prefer="processes",
+        )(
+            starmap(delayed(_worker), tasks),
+        )
+
+        for a_key, a_val, b_key, b_val in results:
+            out_dict[a_key] = a_val
+            out_dict[b_key] = b_val
+
         logger.debug("PML a and b coefficients calculation completed.")
 
         logger.debug("Updating extended medium relaxation parameters...")
@@ -731,184 +780,225 @@ class PMLBuilder:
             use_isotropic_relaxation=self.use_isotropic_relaxation,
         )
 
-        tqdm_disable = not logger.isEnabledFor(logging.DEBUG)
+        def _compute_one(
+            key_fw2: str,
+            key_py: str,
+            relaxation_param_dict: dict[str, NDArray[np.float64]],
+            alpha_target_higher_nu: float,
+            d_target_higher_nu: float,
+            alpha_target_pml: float,
+            d_target_pml: float,
+            n_polynomial: float,
+            is_3d: bool,  # noqa: FBT001
+            apply_transition_and_pml_fn: callable,
+        ) -> tuple[str, NDArray[np.float64]]:
+            """Return (key_fw2, computed_array). No side effects."""
+            arr = relaxation_param_dict[key_py]
 
-        for key_fw2, key_py in tqdm(
-            rename_dict.items(),
-            desc="Applying PML to relaxation parameters",
-            total=len(rename_dict),
-            disable=tqdm_disable,
-        ):
-            if (
-                key_fw2 in ["kappa_x", "kappa_u"]
-                or key_fw2 in ["kappa_y", "kappa_v"]
-                or key_fw2 in ["kappa_z", "kappa_w"]
-            ):
-                out_dict[key_fw2] = relaxation_param_dict[key_py].copy()
-            elif (
-                ("alpha_u_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("alpha_v_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("alpha_w_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("alpha_x_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("alpha_y_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("alpha_z_nu" in key_fw2 and "nu1" not in key_fw2)
-            ):
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    relaxation_param_dict[key_py].copy(),
+            if key_fw2 in ["kappa_x", "kappa_u", "kappa_y", "kappa_v", "kappa_z", "kappa_w"]:
+                return key_fw2, arr
+
+            # helper predicates
+            is_alpha = (
+                ("alpha_u_nu" in key_fw2)
+                or ("alpha_v_nu" in key_fw2)
+                or ("alpha_w_nu" in key_fw2)
+                or ("alpha_x_nu" in key_fw2)
+                or ("alpha_y_nu" in key_fw2)
+                or ("alpha_z_nu" in key_fw2)
+            )
+            is_d = (
+                ("d_u_nu" in key_fw2)
+                or ("d_v_nu" in key_fw2)
+                or ("d_w_nu" in key_fw2)
+                or ("d_x_nu" in key_fw2)
+                or ("d_y_nu" in key_fw2)
+                or ("d_z_nu" in key_fw2)
+            )
+            has_nu1 = "nu1" in key_fw2
+
+            if is_alpha and (not has_nu1):
+                out = apply_transition_and_pml_fn(
+                    arr,
                     value_target=alpha_target_higher_nu,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=0,
                     transition_type="cosine",
                     transit_within_transition_layer=True,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=alpha_target_higher_nu,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=1,
                     transition_type="cosine",
                     transit_within_transition_layer=True,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=alpha_target_higher_nu,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=2,
                     transition_type="cosine",
                     transit_within_transition_layer=True,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-            elif (
-                ("d_u_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("d_v_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("d_w_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("d_x_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("d_y_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("d_z_nu" in key_fw2 and "nu1" not in key_fw2)
-            ):
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    relaxation_param_dict[key_py].copy(),
+                return key_fw2, out
+            if is_d and (not has_nu1):
+                out = apply_transition_and_pml_fn(
+                    arr,
                     value_target=d_target_higher_nu,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=0,
                     transition_type="cosine",
                     transit_within_transition_layer=True,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=d_target_higher_nu,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=1,
                     transition_type="cosine",
                     transit_within_transition_layer=True,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=d_target_higher_nu,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=2,
                     transition_type="cosine",
                     transit_within_transition_layer=True,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-            elif (
-                ("alpha_u_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("alpha_v_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("alpha_w_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("alpha_x_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("alpha_y_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("alpha_z_nu" in key_fw2 and "nu1" in key_fw2)
-            ):
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    relaxation_param_dict[key_py].copy(),
+                return key_fw2, out
+            if is_alpha and has_nu1:
+                out = apply_transition_and_pml_fn(
+                    arr,
                     value_target=alpha_target_pml,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=0,
                     transition_type="linear",
                     transit_within_transition_layer=False,
                     transit_within_pml_layer=False,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=alpha_target_pml,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=1,
                     transition_type="linear",
                     transit_within_transition_layer=False,
                     transit_within_pml_layer=False,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=alpha_target_pml,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=2,
                     transition_type="linear",
                     transit_within_transition_layer=False,
                     transit_within_pml_layer=False,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-            elif (
-                ("d_u_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("d_v_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("d_w_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("d_x_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("d_y_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("d_z_nu" in key_fw2 and "nu1" in key_fw2)
-            ):
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    relaxation_param_dict[key_py].copy(),
+                return key_fw2, out
+            if is_d and has_nu1:
+                out = apply_transition_and_pml_fn(
+                    arr,
                     value_target=d_target_pml,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=0,
                     n_polynomial=n_polynomial,
                     transition_type="polynomial",
                     transit_within_transition_layer=False,
                     transit_within_pml_layer=False,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=d_target_pml,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=1,
                     n_polynomial=n_polynomial,
                     transition_type="polynomial",
                     transit_within_transition_layer=False,
                     transit_within_pml_layer=False,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=d_target_pml,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=2,
                     n_polynomial=n_polynomial,
                     transition_type="polynomial",
                     transit_within_transition_layer=False,
                     transit_within_pml_layer=False,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
+                return key_fw2, out
+            error_msg = f"Unhandled key_fw2 pattern: {key_fw2}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        items = list(rename_dict.items())
+        results = Parallel(n_jobs=self.medium_org.n_jobs, backend="threading")(
+            delayed(_compute_one)(
+                key_fw2,
+                key_py,
+                relaxation_param_dict,
+                alpha_target_higher_nu,
+                d_target_higher_nu,
+                alpha_target_pml,
+                d_target_pml,
+                n_polynomial,
+                self.is_3d,
+                self._apply_transition_and_pml,
+            )
+            for key_fw2, key_py in items
+        )
+        out_dict = dict(results)
 
         logger.debug("Calculating PML a and b coefficients...")
         axis_list = ["u", "x"] if self.use_isotropic_relaxation else ["u", "v", "w", "x", "y", "z"]
 
-        for nu in range(1, extended_medium.n_relaxation_mechanisms + 1):
-            for axis in axis_list:
-                (
-                    out_dict[f"a_pml_{axis}{nu}"],
-                    out_dict[f"b_pml_{axis}{nu}"],
-                ) = self._calc_a_and_b(
-                    d_x=out_dict[f"d_{axis}_nu{nu}"],
-                    kappa_x=out_dict[f"kappa_{axis}"],
-                    alpha_x=out_dict[f"alpha_{axis}_nu{nu}"],
-                    dt=extended_medium.grid.dt,
-                )
+        # Build independent tasks (flatten nested loops)
+        tasks = [
+            (nu, axis)
+            for nu in range(1, extended_medium.n_relaxation_mechanisms + 1)
+            for axis in axis_list
+        ]
+
+        def _worker(
+            nu: int,
+            axis: str,
+        ) -> tuple[str, NDArray[np.float64], str, NDArray[np.float64]]:
+            a, b = self._calc_a_and_b(
+                d_x=out_dict[f"d_{axis}_nu{nu}"],
+                kappa_x=out_dict[f"kappa_{axis}"],
+                alpha_x=out_dict[f"alpha_{axis}_nu{nu}"],
+                dt=extended_medium.grid.dt,
+            )
+            # Return keys + values so parent can update dict safely
+            return (f"a_pml_{axis}{nu}", a, f"b_pml_{axis}{nu}", b)
+
+        results = Parallel(
+            n_jobs=self.medium_org.n_jobs,  # use all cores
+            backend="loky",  # process-based; safe default for Python code
+            prefer="processes",
+        )(
+            starmap(delayed(_worker), tasks),
+        )
+
+        for a_key, a_val, b_key, b_val in results:
+            out_dict[a_key] = a_val
+            out_dict[b_key] = b_val
+
         logger.debug("PML a and b coefficients calculation completed.")
 
         logger.debug("Updating extended medium relaxation parameters...")
@@ -1008,6 +1098,8 @@ class PMLBuilder:
 
         # Move axis to 0 for uniform processing
         working_array = np.moveaxis(input_array, axis, 0)
+        # make working_array writeable
+        working_array.setflags(write=True)
 
         # Apply boundary conditions
         working_array[: m_offset + layer_thickness] = value_target

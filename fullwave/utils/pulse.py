@@ -3,6 +3,13 @@
 import numpy as np
 from numpy.typing import NDArray
 
+try:
+    import cupy as cp
+
+    CUPY_AVAILABLE = True
+except ImportError:
+    CUPY_AVAILABLE = False
+
 
 def gaussian_modulated_sinusoidal_signal(
     nt: int,
@@ -15,8 +22,12 @@ def gaussian_modulated_sinusoidal_signal(
     i_layer: int | None = None,
     dt_for_layer_delay: float | None = None,
     cfl_for_layer_delay: float | None = None,
+    *,
+    dtype: np.dtype = np.float64,
 ) -> NDArray[np.float64]:
-    """Generate a pulse signal based on input parameters.
+    """Generate Gaussian-modulated sinusoidal signal.
+
+    Automatically uses GPU (CuPy) if available, otherwise falls back to NumPy.
 
     Parameters
     ----------
@@ -46,27 +57,137 @@ def gaussian_modulated_sinusoidal_signal(
         Courant-Friedrichs-Lewy number. Default is None.
         This variable is used to shift the pulse signal in time
         so that the signal is emmitted within the transducer layer correctly.
+    dtype: data-type
+        Desired data-type for the output array. Default is np.float64.
 
     Returns
     -------
     NDArray[np.float64]: The generated pulse signal.
 
+
     """
-    t = (np.arange(0, nt)) / nt * duration - ncycles / f0
-    t = t - delay_sec
-
-    if i_layer:
-        assert dt_for_layer_delay, "dt must be provided if i_layer is provided"
-        assert cfl_for_layer_delay, "cfl must be provided if i_layer is provided"
-        t = t - (dt_for_layer_delay / cfl_for_layer_delay) * i_layer
-
-    omega0 = 2 * np.pi * f0
-    return (
-        np.multiply(
-            np.exp(
-                -((1.05 * t * omega0 / (ncycles * np.pi)) ** (2 * drop_off)),
-            ),
-            np.sin(t * omega0),
+    if CUPY_AVAILABLE:
+        return _gaussian_modulated_sinusoidal_signal_cupy(
+            nt,
+            duration,
+            ncycles,
+            drop_off,
+            f0,
+            p0,
+            delay_sec,
+            i_layer,
+            dt_for_layer_delay,
+            cfl_for_layer_delay,
+            dtype=dtype,
         )
-        * p0
+    return _gaussian_modulated_sinusoidal_signal_numpy(
+        nt,
+        duration,
+        ncycles,
+        drop_off,
+        f0,
+        p0,
+        delay_sec,
+        i_layer,
+        dt_for_layer_delay,
+        cfl_for_layer_delay,
+        dtype=dtype,
     )
+
+
+def _gaussian_modulated_sinusoidal_signal_cupy(
+    nt: int,
+    duration: float,
+    ncycles: int,
+    drop_off: int,
+    f0: float,
+    p0: float,
+    delay_sec: float,
+    i_layer: int | None,
+    dt_for_layer_delay: float | None,
+    cfl_for_layer_delay: float | None,
+    dtype: np.dtype = np.float64,
+) -> NDArray[np.float64]:
+    """CuPy GPU implementation."""
+    # Build time array on GPU
+    t = cp.arange(nt, dtype=dtype)
+    t *= duration / nt
+    t -= ncycles / f0 + delay_sec
+
+    if i_layer is not None:
+        if dt_for_layer_delay is None:
+            error_msg = "dt_for_layer_delay must be provided if i_layer is provided"
+            raise ValueError(error_msg)
+        if cfl_for_layer_delay is None:
+            error_msg = "cfl_for_layer_delay must be provided if i_layer is provided"
+            raise ValueError(error_msg)
+        t -= (dt_for_layer_delay / cfl_for_layer_delay) * i_layer
+
+    omega0 = 2.0 * cp.pi * f0
+    w_t = t * omega0
+
+    # Compute envelope
+    coeff = 1.05 / (ncycles * cp.pi)
+    a_sq = (coeff * w_t) ** 2
+
+    # Fast path for common drop_off values
+    if drop_off == 1:
+        env = cp.exp(-a_sq)
+    elif drop_off == 2:
+        env = cp.exp(-a_sq * a_sq)
+    else:
+        env = cp.exp(-(a_sq**drop_off))
+
+    # Compute final signal
+    y = env * cp.sin(w_t) * p0
+
+    # Transfer back to CPU as NumPy array
+    return cp.asnumpy(y)
+
+
+def _gaussian_modulated_sinusoidal_signal_numpy(
+    nt: int,
+    duration: float,
+    ncycles: int,
+    drop_off: int,
+    f0: float,
+    p0: float,
+    delay_sec: float,
+    i_layer: int | None,
+    dt_for_layer_delay: float | None,
+    cfl_for_layer_delay: float | None,
+    dtype: np.dtype = np.float64,
+) -> NDArray[np.float64]:
+    """NumPy CPU fallback implementation."""
+    # Build time array
+    dt = duration / nt
+    t_offset = ncycles / f0 + delay_sec
+
+    if i_layer is not None:
+        if dt_for_layer_delay is None:
+            error_msg = "dt_for_layer_delay must be provided if i_layer is provided"
+            raise ValueError(error_msg)
+        if cfl_for_layer_delay is None:
+            error_msg = "cfl_for_layer_delay must be provided if i_layer is provided"
+            raise ValueError(error_msg)
+        t_offset += (dt_for_layer_delay / cfl_for_layer_delay) * i_layer
+
+    t = np.arange(nt, dtype=dtype) * dt - t_offset
+
+    omega0 = 2.0 * np.pi * f0
+    w_t = t * omega0
+
+    # Compute envelope
+    coeff = 1.05 / (ncycles * np.pi)
+    a_sq = (coeff * w_t) ** 2
+
+    # Fast path for common drop_off values
+    if drop_off == 1:
+        env = np.exp(-a_sq)
+    elif drop_off == 2:
+        env = np.exp(-a_sq * a_sq)
+    else:
+        env = np.exp(-(a_sq**drop_off))
+
+    # Compute final signal
+    return env * np.sin(w_t) * p0

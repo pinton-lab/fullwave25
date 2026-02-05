@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numexpr as ne
 import numpy as np
 from joblib import Parallel, delayed
 from numpy.typing import NDArray
@@ -180,17 +181,23 @@ class MediumRelaxationMaps:
             delayed(_compute_time_const_mechanism)(i) for i in range(n_nu)
         )
 
-        # Unpack results and stack
-        time_const_x1_list, time_const_x2_list = zip(*results, strict=True)
-        time_const_x1 = np.stack(time_const_x1_list, axis=-1)
-        time_const_x2 = np.stack(time_const_x2_list, axis=-1)
+        n = len(results)
+        sh = results[0][0].shape
 
+        time_const_x1 = np.empty((*sh, n), dtype=np.float32)
+        time_const_x2 = np.empty((*sh, n), dtype=np.float32)
+
+        for i, (tc1, tc2) in enumerate(results):
+            time_const_x1[..., i] = tc1  # cast happens during assignment
+            time_const_x2[..., i] = tc2
+
+        time_const_x1 = np.ascontiguousarray(time_const_x1, dtype=np.float32)
+        time_const_x2 = np.ascontiguousarray(time_const_x2, dtype=np.float32)
         # =========================================================================
 
         # Sort the nu values based on the time constants
-        sorted_indices_x1 = np.argsort(time_const_x1, axis=-1)
-        sorted_indices_x2 = np.argsort(time_const_x2, axis=-1)  # 3 sec
-
+        sorted_indices_x1 = np.argsort(time_const_x1, axis=-1, kind="quicksort")
+        sorted_indices_x2 = np.argsort(time_const_x2, axis=-1, kind="quicksort")
         # Apply sorting once for all nus
         d_x1_sorted = np.take_along_axis(d_x1, sorted_indices_x1, axis=-1)
         alpha_x1_sorted = np.take_along_axis(alpha_x1, sorted_indices_x1, axis=-1)
@@ -281,35 +288,46 @@ class MediumRelaxationMaps:
 
     @staticmethod
     def _calc_a_and_b(
-        dx: NDArray[np.float64] | float,
-        kappa_x: NDArray[np.float64] | float,
-        alpha_x: NDArray[np.float64] | float,
-        dt: NDArray[np.float64] | float,
+        dx: float | NDArray[np.float64],
+        kappa_x: float | NDArray[np.float64],
+        alpha_x: float | NDArray[np.float64],
+        dt: float | NDArray[np.float64],
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        # Convert inputs to float64 arrays without unnecessary copies
         dx = np.asarray(dx, dtype=np.float64)
         kappa_x = np.asarray(kappa_x, dtype=np.float64)
         alpha_x = np.asarray(alpha_x, dtype=np.float64)
         dt = np.asarray(dt, dtype=np.float64)
 
-        # Common term for the exponential
-        tmp = dx / kappa_x + alpha_x
-        b = np.exp(-tmp * dt)
+        eps = np.finfo(np.float64).eps  # noqa: F841
 
-        # Numerically safe denominator
-        eps = np.finfo(np.float64).eps
-        denom = kappa_x * (dx + kappa_x * alpha_x) + eps
+        # b = exp(-(dx/kappa_x + alpha_x) * dt)
+        b = ne.evaluate("exp(-(dx/kappa_x + alpha_x) * dt)")
 
-        a = dx / denom * (b - 1.0)
+        # denom = kappa_x*(dx + kappa_x*alpha_x) + eps
+        denom = ne.evaluate("kappa_x*(dx + kappa_x*alpha_x) + eps")  # noqa: F841
+
+        # a = dx/denom*(b - 1)
+        a = ne.evaluate("dx/denom*(b - 1)")
+
         return a, b
 
     @staticmethod
     def _calc_time_constants(
-        dx: NDArray[np.float64],
-        kappa: NDArray[np.float64],
-        alpha: NDArray[np.float64],
+        dx: float | NDArray[np.float64],
+        kappa: float | NDArray[np.float64],
+        alpha: float | NDArray[np.float64],
+        out: NDArray[np.float64] | None = None,
     ) -> NDArray[np.float64]:
-        return dx / kappa + alpha
+        dx = np.asarray(dx, dtype=np.float64)
+        kappa = np.asarray(kappa, dtype=np.float64)
+        alpha = np.asarray(alpha, dtype=np.float64)
+
+        if out is None:
+            out = np.empty(np.broadcast(dx, kappa, alpha).shape, dtype=np.float64)
+
+        np.divide(dx, kappa, out=out)  # out = dx/kappa
+        np.add(out, alpha, out=out)  # out += alpha
+        return out
 
     def _calculate_relaxation_coefficients(self) -> dict[str, NDArray[np.float64]]:
         """Calculate relaxation coefficients for all mechanisms.
@@ -384,7 +402,7 @@ class MediumRelaxationMaps:
             relaxation_coefficients = self._calculate_relaxation_coefficients()
             out_dict = {}
             for new_key, key in rename_dict.items():
-                out_dict[new_key] = relaxation_coefficients[key].copy()
+                out_dict[new_key] = relaxation_coefficients[key]
             return out_dict
 
         rename_dict = {
@@ -418,7 +436,7 @@ class MediumRelaxationMaps:
         # extend it to x and y directions and rename the keys to Fullwave2 format
         out_dict = {}
         for new_key, key in rename_dict.items():
-            out_dict[new_key] = relaxation_coefficients[key].copy()
+            out_dict[new_key] = relaxation_coefficients[key]
         logger.debug("Relaxation parameters calculated.")
         return out_dict
 
