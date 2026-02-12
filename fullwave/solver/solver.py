@@ -628,6 +628,7 @@ class Solver:
         record_whole_domain: bool = False,
         sampling_modulus_time_whole_domain: int = 1,
         load_results: bool = True,
+        generate_input_only: bool = False,
     ) -> NDArray[np.float64] | Path:
         r"""Run the fullwave simulation and return the result as a NumPy array.
 
@@ -677,10 +678,20 @@ class Solver:
         load_results : bool
             Whether to load the results from genout.dat after the simulation.
             Default is True. If set to False, it returns the genout.dat file path instead.
+        generate_input_only : bool
+            If True, only generate the input files in the simulation directory and
+            skip launching the external Fullwave executable.
+            In this case the method returns the simulation directory path.
+            Default is False.
 
         Returns
         -------
-            NDArray[np.float64]: The simulation output data as a NumPy array.
+        NDArray[np.float64] | Path
+            The simulation output data as a NumPy array when load_results is True
+            and generate_input_only is False.
+            Otherwise, a Path to either the 'genout.dat' file
+            (when load_results is False) or the simulation directory
+            (when generate_input_only is True).
 
         Raises
         ------
@@ -772,6 +783,13 @@ class Solver:
             f"{end_input_file_writer_time - start_input_file_writer_time:.2e} seconds."
         )
         logger.debug(message)
+
+        if generate_input_only:
+            logger.info(
+                "Input data generation completed in %s. Skipping simulation execution.",
+                simulation_dir,
+            )
+            return simulation_dir
 
         sim_result = self.fullwave_launcher.run(
             simulation_dir,
