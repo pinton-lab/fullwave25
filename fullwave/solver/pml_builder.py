@@ -248,13 +248,21 @@ class PMLBuilder:
             )
 
         logger.debug("building extended source for pml...")
+        extended_grid_shape = tuple(
+            s + 2 * self.num_boundary_points for s in self.source_org.grid_shape
+        )
         self.extended_source = fullwave.Source(
             p0=self.source_org.p0,
-            mask=self._extend_map_for_pml(self.source_org.mask, fill_edge=False),
+            coords=self.source_org.incoords + self.num_boundary_points,
+            grid_shape=extended_grid_shape,
         )
         logger.debug("building extended sensor for pml...")
+        extended_sensor_grid_shape = tuple(
+            s + 2 * self.num_boundary_points for s in self.sensor_org.grid_shape
+        )
         self.extended_sensor = fullwave.Sensor(
-            mask=self._extend_map_for_pml(self.sensor_org.mask, fill_edge=False),
+            coords=self.sensor_org.outcoords + self.num_boundary_points,
+            grid_shape=extended_sensor_grid_shape,
             sampling_modulus_time=self.sensor_org.sampling_modulus_time,
         )
         if self.is_3d:
@@ -1410,12 +1418,20 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             attenuation_builder=self.medium_org.attenuation_builder,
         )
 
+        extended_grid_shape = tuple(
+            s + 2 * self.num_boundary_points for s in self.source_org.grid_shape
+        )
         self.extended_source = fullwave.Source(
             p0=self.source_org.p0,
-            mask=self._extend_map_for_pml(self.source_org.mask, fill_edge=False),
+            coords=self.source_org.incoords + self.num_boundary_points,
+            grid_shape=extended_grid_shape,
+        )
+        extended_sensor_grid_shape = tuple(
+            s + 2 * self.num_boundary_points for s in self.sensor_org.grid_shape
         )
         self.extended_sensor = fullwave.Sensor(
-            mask=self._extend_map_for_pml(self.sensor_org.mask, fill_edge=False),
+            coords=self.sensor_org.outcoords + self.num_boundary_points,
+            grid_shape=extended_sensor_grid_shape,
             sampling_modulus_time=self.sensor_org.sampling_modulus_time,
         )
         if self.is_3d:
