@@ -479,9 +479,11 @@ class PMLBuilder:
         if self.is_3d:
             n_x_extended, n_y_extended, n_z_extended = self.extended_medium.sound_speed.shape
 
-            pml_mask_x = np.zeros((n_x_extended, n_y_extended, n_z_extended), dtype=np.float64)
-            pml_mask_y = np.zeros((n_x_extended, n_y_extended, n_z_extended), dtype=np.float64)
-            pml_mask_z = np.zeros((n_x_extended, n_y_extended, n_z_extended), dtype=np.float64)
+            # Store 1D profiles instead of full 3D arrays to save memory.
+            # Each mask is separable: pml_mask_x[i,j,k] only depends on i.
+            pml_mask_x = np.zeros(n_x_extended, dtype=np.float64)
+            pml_mask_y = np.zeros(n_y_extended, dtype=np.float64)
+            pml_mask_z = np.zeros(n_z_extended, dtype=np.float64)
 
             # PML indices and values
             i = np.arange(self.n_pml_layer, dtype=np.int64)
@@ -496,33 +498,33 @@ class PMLBuilder:
             iz1 = i + (n_z_extended - self.m_spatial_order - self.n_pml_layer)
             iz2 = self.m_spatial_order + self.n_pml_layer - i - 1
 
-            # Fill PML ramps without Python loop
-            pml_mask_x[ix1, :, :] = vals[:, None, None]
-            pml_mask_x[ix2, :, :] = vals[:, None, None]
+            # Fill PML ramps
+            pml_mask_x[ix1] = vals
+            pml_mask_x[ix2] = vals
 
-            pml_mask_y[:, iy1, :] = vals[None, :, None]
-            pml_mask_y[:, iy2, :] = vals[None, :, None]
+            pml_mask_y[iy1] = vals
+            pml_mask_y[iy2] = vals
 
-            pml_mask_z[:, :, iz1] = vals[None, None, :]
-            pml_mask_z[:, :, iz2] = vals[None, None, :]
+            pml_mask_z[iz1] = vals
+            pml_mask_z[iz2] = vals
 
-            # Inner “hard” PML region
-            pml_mask_x[0 : self.m_spatial_order, :, :] = 1.0
-            pml_mask_x[n_x_extended - self.m_spatial_order : n_x_extended, :, :] = 1.0
+            # Inner "hard" PML region
+            pml_mask_x[0 : self.m_spatial_order] = 1.0
+            pml_mask_x[n_x_extended - self.m_spatial_order : n_x_extended] = 1.0
 
-            pml_mask_y[:, 0 : self.m_spatial_order, :] = 1.0
-            pml_mask_y[:, n_y_extended - self.m_spatial_order : n_y_extended, :] = 1.0
+            pml_mask_y[0 : self.m_spatial_order] = 1.0
+            pml_mask_y[n_y_extended - self.m_spatial_order : n_y_extended] = 1.0
 
-            pml_mask_z[:, :, 0 : self.m_spatial_order] = 1.0
-            pml_mask_z[:, :, n_z_extended - self.m_spatial_order : n_z_extended] = 1.0
+            pml_mask_z[0 : self.m_spatial_order] = 1.0
+            pml_mask_z[n_z_extended - self.m_spatial_order : n_z_extended] = 1.0
 
             return pml_mask_x, pml_mask_y, pml_mask_z
 
-        # 2D case
+        # 2D case — store 1D profiles instead of full 2D arrays
         n_x_extended, n_y_extended = self.extended_medium.sound_speed.shape
 
-        pml_mask_x = np.zeros((n_x_extended, n_y_extended), dtype=np.float64)
-        pml_mask_y = np.zeros((n_x_extended, n_y_extended), dtype=np.float64)
+        pml_mask_x = np.zeros(n_x_extended, dtype=np.float64)
+        pml_mask_y = np.zeros(n_y_extended, dtype=np.float64)
 
         i = np.arange(self.n_pml_layer, dtype=np.int64)
         vals = i.astype(np.float64) / self.n_pml_layer
@@ -533,17 +535,17 @@ class PMLBuilder:
         iy1 = i + (n_y_extended - self.m_spatial_order - self.n_pml_layer)
         iy2 = self.m_spatial_order + self.n_pml_layer - i - 1
 
-        pml_mask_x[ix1, :] = vals[:, None]
-        pml_mask_x[ix2, :] = vals[:, None]
+        pml_mask_x[ix1] = vals
+        pml_mask_x[ix2] = vals
 
-        pml_mask_y[:, iy1] = vals[None, :]
-        pml_mask_y[:, iy2] = vals[None, :]
+        pml_mask_y[iy1] = vals
+        pml_mask_y[iy2] = vals
 
-        pml_mask_x[0 : self.m_spatial_order, :] = 1.0
-        pml_mask_x[n_x_extended - self.m_spatial_order : n_x_extended, :] = 1.0
+        pml_mask_x[0 : self.m_spatial_order] = 1.0
+        pml_mask_x[n_x_extended - self.m_spatial_order : n_x_extended] = 1.0
 
-        pml_mask_y[:, 0 : self.m_spatial_order] = 1.0
-        pml_mask_y[:, n_y_extended - self.m_spatial_order : n_y_extended] = 1.0
+        pml_mask_y[0 : self.m_spatial_order] = 1.0
+        pml_mask_y[n_y_extended - self.m_spatial_order : n_y_extended] = 1.0
 
         return pml_mask_x, pml_mask_y
 
@@ -1369,8 +1371,8 @@ class PMLBuilder:
 
         target_map_dict.update(
             [
-                ("PML mask x", self.pml_mask_x),
-                ("PML mask y", self.pml_mask_y),
+                ("PML mask x", self.pml_mask_x[:, None] * np.ones(self.extended_grid.ny)),
+                ("PML mask y", np.ones(self.extended_grid.nx)[:, None] * self.pml_mask_y[None, :]),
                 ("Source mask", self.extended_source.mask),
                 ("Sensor mask", self.extended_sensor.mask),
             ],
