@@ -1412,7 +1412,7 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             beta=self._extend_map_for_pml(self.medium_org.beta),
             alpha_coeff=self._extend_map_for_pml(self.medium_org.alpha_coeff),
             alpha_power=self._extend_map_for_pml(self.medium_org.alpha_power),
-            air_map=self._extend_map_for_pml(self.medium_org.air_map),
+            air_coords=self.medium_org.air_coords + self.num_boundary_points,
             n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
             path_relaxation_parameters_database=self.medium_org.path_relaxation_parameters_database,
             attenuation_builder=self.medium_org.attenuation_builder,
