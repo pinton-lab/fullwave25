@@ -14,6 +14,7 @@ from numpy.typing import NDArray
 from fullwave import Grid
 from fullwave.solver.utils import initialize_relaxation_param_dict
 from fullwave.utils import check_functions, plot_utils
+from fullwave.utils.coordinates import coords_to_map, map_to_coords
 from fullwave.utils.relaxation_parameters import generate_relaxation_params
 
 logger = logging.getLogger("__main__." + __name__)
@@ -27,7 +28,7 @@ class MediumRelaxationMaps:
     sound_speed: NDArray[np.float64]
     density: NDArray[np.float64]
     beta: NDArray[np.float64]
-    air_map: NDArray[np.int64]
+    air_coords: NDArray[np.int64]
     relaxation_param_dict: dict[str, NDArray[np.float64]]
     relaxation_param_dict_for_fw2: dict[str, NDArray[np.float64]]
     use_regression: bool = False
@@ -41,6 +42,7 @@ class MediumRelaxationMaps:
         relaxation_param_dict: dict[str, NDArray[np.float64]],
         *,
         air_map: NDArray[np.int64] | None = None,
+        air_coords: NDArray[np.int64] | None = None,
         n_relaxation_mechanisms: int = 2,
         use_isotropic_relaxation: bool = True,
         n_jobs: int = -1,
@@ -69,6 +71,10 @@ class MediumRelaxationMaps:
         air_map: NDArray[np.int64], optional
             Binary matrix where the medium is air.
             shape: [nx, ny] for 2D, [nx, ny, nz] for 3D
+            Mutually exclusive with air_coords.
+        air_coords: NDArray[np.int64], optional
+            Coordinate array of air positions, shape [n_air, ndim].
+            Mutually exclusive with air_map.
         n_relaxation_mechanisms : int, optional
             Number of relaxation mechanisms, by default 2
         use_isotropic_relaxation : bool, optional
@@ -100,10 +106,16 @@ class MediumRelaxationMaps:
         self.density = density
         self.beta = beta
 
-        if air_map is None:
-            self.air_map = np.zeros_like(self.sound_speed, dtype=bool)
+        if air_coords is not None:
+            if air_map is not None:
+                msg = "air_map and air_coords are mutually exclusive"
+                raise ValueError(msg)
+            self.air_coords = np.atleast_2d(air_coords).astype(np.int64, copy=False)
+        elif air_map is not None:
+            self.air_coords = map_to_coords(np.atleast_2d(air_map))
         else:
-            self.air_map = air_map
+            ndim = 3 if self.is_3d else 2
+            self.air_coords = np.empty((0, ndim), dtype=np.int64)
 
         self.n_jobs = n_jobs
         self.__post_init__()
@@ -274,6 +286,21 @@ class MediumRelaxationMaps:
         return np.multiply(self.sound_speed**2, self.density)
 
     @property
+    def air_map(self) -> NDArray[np.int64]:
+        """Returns the air map.
+
+        it calculates the air map from the air coordinates to reduce the memory usage.
+        """
+        grid_shape = (
+            (self.grid.nx, self.grid.ny, self.grid.nz)
+            if self.is_3d
+            else (self.grid.nx, self.grid.ny)
+        )
+        if self.air_coords.shape[0] == 0:
+            return np.zeros(grid_shape, dtype=int)
+        return coords_to_map(self.air_coords, grid_shape=grid_shape, is_3d=self.is_3d)
+
+    @property
     def n_coords_zero(self) -> int:
         """Return the number of air coordinates.
 
@@ -284,7 +311,7 @@ class MediumRelaxationMaps:
     @property
     def n_air(self) -> int:
         """Return the number of air coordinates."""
-        return self.air_map.sum()
+        return self.air_coords.shape[0]
 
     @staticmethod
     def _calc_a_and_b(
@@ -601,7 +628,7 @@ class MediumExponentialAttenuation:
     density: NDArray[np.float64]
     alpha_exp: NDArray[np.float64]
     beta: NDArray[np.float64]
-    air_map: NDArray[np.int64]
+    air_coords: NDArray[np.int64]
 
     def __init__(
         self,
@@ -612,6 +639,7 @@ class MediumExponentialAttenuation:
         beta: NDArray[np.float64],
         *,
         air_map: NDArray[np.int64] | None = None,
+        air_coords: NDArray[np.int64] | None = None,
     ) -> None:
         """Medium class for Fullwave.
 
@@ -635,6 +663,10 @@ class MediumExponentialAttenuation:
         air_map: NDArray[np.int64], optional
             Binary matrix where the medium is air.
             shape: [nx, ny] for 2D, [nx, ny, nz] for 3D
+            Mutually exclusive with air_coords.
+        air_coords: NDArray[np.int64], optional
+            Coordinate array of air positions, shape [n_air, ndim].
+            Mutually exclusive with air_map.
 
         """
         check_functions.check_instance(grid, Grid)
@@ -646,10 +678,16 @@ class MediumExponentialAttenuation:
         self.alpha_exp = alpha_exp
         self.beta = beta
 
-        if air_map is None:
-            self.air_map = np.zeros_like(self.sound_speed, dtype=bool)
+        if air_coords is not None:
+            if air_map is not None:
+                msg = "air_map and air_coords are mutually exclusive"
+                raise ValueError(msg)
+            self.air_coords = np.atleast_2d(air_coords).astype(np.int64, copy=False)
+        elif air_map is not None:
+            self.air_coords = map_to_coords(np.atleast_2d(air_map))
         else:
-            self.air_map = air_map
+            ndim = 3 if self.is_3d else 2
+            self.air_coords = np.empty((0, ndim), dtype=np.int64)
 
         self.__post_init__()
         self.check_fields()
@@ -681,6 +719,21 @@ class MediumExponentialAttenuation:
         assert self.beta.shape == grid_shape, _error_msg(self.beta, grid_shape)
 
     @property
+    def air_map(self) -> NDArray[np.int64]:
+        """Returns the air map.
+
+        it calculates the air map from the air coordinates to reduce the memory usage.
+        """
+        grid_shape = (
+            (self.grid.nx, self.grid.ny, self.grid.nz)
+            if self.is_3d
+            else (self.grid.nx, self.grid.ny)
+        )
+        if self.air_coords.shape[0] == 0:
+            return np.zeros(grid_shape, dtype=int)
+        return coords_to_map(self.air_coords, grid_shape=grid_shape, is_3d=self.is_3d)
+
+    @property
     def bulk_modulus(self) -> NDArray[np.float64]:
         """Return the bulk_modulus."""
         return np.multiply(self.sound_speed**2, self.density)
@@ -696,7 +749,7 @@ class MediumExponentialAttenuation:
     @property
     def n_air(self) -> int:
         """Return the number of air coordinates."""
-        return self.air_map.sum()
+        return self.air_coords.shape[0]
 
     def plot(
         self,
@@ -795,7 +848,7 @@ class Medium:
     alpha_coeff: NDArray[np.float64]
     alpha_power: NDArray[np.float64]
     beta: NDArray[np.float64]
-    air_map: NDArray[np.int64]
+    air_coords: NDArray[np.int64]
     attenuation_builder: str = "lookup"
 
     def __init__(
@@ -808,6 +861,7 @@ class Medium:
         beta: NDArray[np.float64],
         *,
         air_map: NDArray[np.int64] | None = None,
+        air_coords: NDArray[np.int64] | None = None,
         path_relaxation_parameters_database: Path = Path(__file__).parent
         / "solver"
         / "bins"
@@ -844,6 +898,10 @@ class Medium:
         air_map: NDArray[np.int64], optional
             Binary matrix where the medium is air.
             shape: [nx, ny] for 2D, [nx, ny, nz] for 3D
+            Mutually exclusive with air_coords.
+        air_coords: NDArray[np.int64], optional
+            Coordinate array of air positions, shape [n_air, ndim].
+            Mutually exclusive with air_map.
         path_relaxation_parameters_database : Path, optional
             Path to the relaxation parameters database.
         n_relaxation_mechanisms : int, optional
@@ -879,21 +937,30 @@ class Medium:
         self.alpha_coeff = alpha_coeff
         self.alpha_power = alpha_power
         self.beta = beta
-        if air_map is None:
-            self.air_map = np.zeros_like(self.sound_speed, dtype=bool)
+
+        if air_coords is not None:
+            if air_map is not None:
+                msg = "air_map and air_coords are mutually exclusive"
+                raise ValueError(msg)
+            self.air_coords = np.atleast_2d(air_coords).astype(np.int64, copy=False)
+        elif air_map is not None:
+            self.air_coords = map_to_coords(np.atleast_2d(air_map))
         else:
-            self.air_map = air_map
+            ndim = 3 if self.is_3d else 2
+            self.air_coords = np.empty((0, ndim), dtype=np.int64)
+
         self.path_relaxation_parameters_database = path_relaxation_parameters_database
         self.n_relaxation_mechanisms = n_relaxation_mechanisms
         self.use_isotropic_relaxation = use_isotropic_relaxation
 
-        if self.n_relaxation_mechanisms != 2 and self.air_map.sum() > 0:
+        if self.n_relaxation_mechanisms != 2 and self.n_air > 0:
             warning_msg = (
                 "Warning: Currently, only n_relaxation_mechanisms=2 supports air regions. "
                 "Setting air regions to zero for other n_relaxation_mechanisms."
             )
             logger.warning(warning_msg)
-            self.air_map = np.zeros_like(self.sound_speed, dtype=bool)
+            ndim = 3 if self.is_3d else 2
+            self.air_coords = np.empty((0, ndim), dtype=np.int64)
 
         self.attenuation_builder = attenuation_builder
         self.n_jobs = n_jobs
@@ -931,6 +998,21 @@ class Medium:
         logger.debug("All medium fields have correct shapes.")
 
     @property
+    def air_map(self) -> NDArray[np.int64]:
+        """Returns the air map.
+
+        it calculates the air map from the air coordinates to reduce the memory usage.
+        """
+        grid_shape = (
+            (self.grid.nx, self.grid.ny, self.grid.nz)
+            if self.is_3d
+            else (self.grid.nx, self.grid.ny)
+        )
+        if self.air_coords.shape[0] == 0:
+            return np.zeros(grid_shape, dtype=int)
+        return coords_to_map(self.air_coords, grid_shape=grid_shape, is_3d=self.is_3d)
+
+    @property
     def bulk_modulus(self) -> NDArray[np.float64]:
         """Return the bulk_modulus."""
         return np.multiply(self.sound_speed**2, self.density)
@@ -946,7 +1028,7 @@ class Medium:
     @property
     def n_air(self) -> int:
         """Return the number of air coordinates."""
-        return self.air_map.sum()
+        return self.air_coords.shape[0]
 
     def plot(
         self,
@@ -1100,7 +1182,7 @@ class Medium:
             density=self.density,
             beta=self.beta,
             relaxation_param_dict=relaxation_param_dict,
-            air_map=self.air_map,
+            air_coords=self.air_coords,
             n_relaxation_mechanisms=self.n_relaxation_mechanisms,
             use_isotropic_relaxation=self.use_isotropic_relaxation,
             n_jobs=self.n_jobs,
@@ -1148,7 +1230,7 @@ class Medium:
             density=self.density,
             alpha_exp=alpha_exp,
             beta=self.beta,
-            air_map=self.air_map,
+            air_coords=self.air_coords,
         )
 
     def print_info(self) -> None:
