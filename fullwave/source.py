@@ -22,7 +22,14 @@ class Source:
     incoords: NDArray[np.int64]
     grid_shape: tuple[int, ...]
 
-    def __init__(self, p0: NDArray[np.float64], mask: NDArray[np.bool]) -> None:
+    def __init__(
+        self,
+        p0: NDArray[np.float64],
+        mask: NDArray[np.bool] | None = None,
+        *,
+        coords: NDArray[np.int64] | None = None,
+        grid_shape: tuple[int, ...] | None = None,
+    ) -> None:
         """Source class for Fullwave.
 
         Parameters
@@ -30,21 +37,44 @@ class Source:
         p0 : NDArray[np.float64]
             time varying pressure at each of the source positions given by source.p_mask
             shape: [n_sources, nt]
-        mask : NDArray[np.bool]
+        mask : NDArray[np.bool] | None
             binary matrix specifying the positions of the time varying pressure source distribution
-            shape: [nx, ny] for 2D, [nx, ny, nz] for 3D
+            shape: [nx, ny] for 2D, [nx, ny, nz] for 3D.
+            Mutually exclusive with coords/grid_shape.
+        coords : NDArray[np.int64] | None
+            Coordinate array of source positions, shape [n_sources, ndim].
+            Must be provided together with grid_shape.
+        grid_shape : tuple[int, ...] | None
+            Shape of the computational grid. Required when using coords input.
+
+        Raises
+        ------
+        ValueError
+            If grid_shape is not provided when using coords input.
+            If both mask and coords are provided (mutually exclusive).
+            If neither mask nor coords (with grid_shape) are provided.
 
         """
         self.p0 = np.atleast_2d(p0)
-        mask = np.atleast_2d(mask)
-        self.grid_shape = mask.shape
-        self.is_3d = len(self.grid_shape) == 3
-        incoords = map_to_coords(mask)
-        if self.is_3d:
-            self.incoords = incoords
+
+        if coords is not None:
+            if grid_shape is None:
+                msg = "grid_shape is required when using coords input"
+                raise ValueError(msg)
+            if mask is not None:
+                msg = "mask and coords are mutually exclusive"
+                raise ValueError(msg)
+            self.incoords = np.atleast_2d(coords).astype(np.int64, copy=False)
+            self.grid_shape = tuple(grid_shape)
+        elif mask is not None:
+            mask = np.atleast_2d(mask)
+            self.grid_shape = mask.shape
+            self.incoords = map_to_coords(mask)
         else:
-            # self.incoords = np.stack([incoords[:, 1], incoords[:, 0]]).T
-            self.incoords = incoords
+            msg = "Either mask or coords (with grid_shape) must be provided"
+            raise ValueError(msg)
+
+        self.is_3d = len(self.grid_shape) == 3
         super().__init__()
         self.__post_init__()
         logger.debug("Source instance created.")
@@ -65,11 +95,11 @@ class Source:
             raise ValueError(error_msg)
 
     def validate(self, grid_shape: NDArray[np.int64] | tuple) -> None:
-        """Check if the source mask has the correct shape."""
+        """Check if the source coordinates are consistent with the grid shape."""
         grid_shape = tuple(grid_shape) if isinstance(grid_shape, np.ndarray) else grid_shape
-        assert self.mask.shape == grid_shape, f"{self.mask.shape} != {grid_shape}"
-        assert np.any(self.mask), "No active source found."
-        logger.debug("Source mask validated against grid shape.")
+        assert self.grid_shape == grid_shape, f"{self.grid_shape} != {grid_shape}"
+        assert self.n_sources > 0, "No active source found."
+        logger.debug("Source validated against grid shape.")
 
     @property
     def icmat(self) -> NDArray[np.float64]:

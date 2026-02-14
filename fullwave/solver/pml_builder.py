@@ -228,7 +228,7 @@ class PMLBuilder:
                     key: self._extend_map_for_pml(value)
                     for key, value in self.medium_org.relaxation_param_dict.items()
                 },
-                air_map=self._extend_map_for_pml(self.medium_org.air_map, fill_edge=False),
+                air_coords=self.medium_org.air_coords + self.num_boundary_points,
                 n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
                 n_jobs=self.medium_org.n_jobs,
             )
@@ -240,7 +240,7 @@ class PMLBuilder:
                 beta=self._extend_map_for_pml(self.medium_org.beta),
                 alpha_coeff=self._extend_map_for_pml(self.medium_org.alpha_coeff),
                 alpha_power=self._extend_map_for_pml(self.medium_org.alpha_power),
-                air_map=self._extend_map_for_pml(self.medium_org.air_map, fill_edge=False),
+                air_coords=self.medium_org.air_coords + self.num_boundary_points,
                 n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
                 path_relaxation_parameters_database=self.medium_org.path_relaxation_parameters_database,
                 attenuation_builder=self.medium_org.attenuation_builder,
@@ -248,13 +248,21 @@ class PMLBuilder:
             )
 
         logger.debug("building extended source for pml...")
+        extended_grid_shape = tuple(
+            s + 2 * self.num_boundary_points for s in self.source_org.grid_shape
+        )
         self.extended_source = fullwave.Source(
             p0=self.source_org.p0,
-            mask=self._extend_map_for_pml(self.source_org.mask, fill_edge=False),
+            coords=self.source_org.incoords + self.num_boundary_points,
+            grid_shape=extended_grid_shape,
         )
         logger.debug("building extended sensor for pml...")
+        extended_sensor_grid_shape = tuple(
+            s + 2 * self.num_boundary_points for s in self.sensor_org.grid_shape
+        )
         self.extended_sensor = fullwave.Sensor(
-            mask=self._extend_map_for_pml(self.sensor_org.mask, fill_edge=False),
+            coords=self.sensor_org.outcoords + self.num_boundary_points,
+            grid_shape=extended_sensor_grid_shape,
             sampling_modulus_time=self.sensor_org.sampling_modulus_time,
         )
         if self.is_3d:
@@ -1404,18 +1412,26 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             beta=self._extend_map_for_pml(self.medium_org.beta),
             alpha_coeff=self._extend_map_for_pml(self.medium_org.alpha_coeff),
             alpha_power=self._extend_map_for_pml(self.medium_org.alpha_power),
-            air_map=self._extend_map_for_pml(self.medium_org.air_map),
+            air_coords=self.medium_org.air_coords + self.num_boundary_points,
             n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
             path_relaxation_parameters_database=self.medium_org.path_relaxation_parameters_database,
             attenuation_builder=self.medium_org.attenuation_builder,
         )
 
+        extended_grid_shape = tuple(
+            s + 2 * self.num_boundary_points for s in self.source_org.grid_shape
+        )
         self.extended_source = fullwave.Source(
             p0=self.source_org.p0,
-            mask=self._extend_map_for_pml(self.source_org.mask, fill_edge=False),
+            coords=self.source_org.incoords + self.num_boundary_points,
+            grid_shape=extended_grid_shape,
+        )
+        extended_sensor_grid_shape = tuple(
+            s + 2 * self.num_boundary_points for s in self.sensor_org.grid_shape
         )
         self.extended_sensor = fullwave.Sensor(
-            mask=self._extend_map_for_pml(self.sensor_org.mask, fill_edge=False),
+            coords=self.sensor_org.outcoords + self.num_boundary_points,
+            grid_shape=extended_sensor_grid_shape,
             sampling_modulus_time=self.sensor_org.sampling_modulus_time,
         )
         if self.is_3d:
