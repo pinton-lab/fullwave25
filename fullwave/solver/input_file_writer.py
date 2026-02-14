@@ -1,6 +1,8 @@
 """input generator modules."""
 
+import concurrent.futures
 import logging
+import os
 import shutil
 import time
 from pathlib import Path
@@ -147,11 +149,13 @@ class InputFileWriter:
         simulation_dir = self._work_dir / simulation_dir_name
         simulation_dir.mkdir(parents=True, exist_ok=True)
 
-        self._write_ic(
+        self._init_pending_writes()
+
+        self._queue_ic_write(
             simulation_dir / "icmat.dat",
             np.transpose(self.source.icmat),
         )
-        self._write_coords(simulation_dir / "icc.dat", self.source.incoords)
+        self._queue_coords_write(simulation_dir / "icc.dat", self.source.incoords)
         self._copy_simulation_bin_file(simulation_dir)
 
         if not self.use_exponential_attenuation:
@@ -164,6 +168,7 @@ class InputFileWriter:
                     dim=self._dim,
                 )
             if is_static_map:
+                self._flush_writes()
                 self._build_symbolic_links_for_dat_files(
                     src_dir=self._work_dir.resolve(),
                     dst_dir=simulation_dir.resolve(),
@@ -184,6 +189,8 @@ class InputFileWriter:
                 simulation_dir=dat_output_dir,
                 dim=self._dim,
             )
+
+        self._flush_writes()
         end_file_writer_time = time.time()
         message = f"Input files generated in {end_file_writer_time - time_start:.2e} seconds."
         logger.info(message)
@@ -642,6 +649,78 @@ class InputFileWriter:
         self._dc_map = matlab_round(c_map) - matlab_round(c_map.min()) + 1
         logger.debug("dc map for stencil coefficients set.")
 
+    # --- batch write utils ---
+
+    def _init_pending_writes(self) -> None:
+        """Initialize the pending writes list for batch I/O."""
+        self._pending_writes: list[tuple] = []
+
+    def _queue_matrix_write(
+        self,
+        var_type: DTypeLike,
+        save_path: str | Path,
+        variable_mat: np.ndarray,
+    ) -> None:
+        """Queue a matrix write for later batch execution."""
+        self._pending_writes.append(("matrix", var_type, save_path, variable_mat))
+
+    def _queue_v_abs_write(
+        self,
+        var_type: DTypeLike,
+        save_path: str | Path,
+        variable: NDArray[np.float64 | np.int32] | float,
+    ) -> None:
+        """Queue a scalar write for later batch execution."""
+        self._pending_writes.append(("v_abs", var_type, save_path, variable))
+
+    def _queue_ic_write(self, fname: str | Path, icmat: np.ndarray) -> None:
+        """Queue an initial condition write for later batch execution."""
+        self._pending_writes.append(("ic", fname, icmat))
+
+    def _queue_coords_write(self, fname: str | Path, coords: np.ndarray) -> None:
+        """Queue a coordinates write for later batch execution."""
+        self._pending_writes.append(("coords", fname, coords))
+
+    def _flush_writes(self) -> None:
+        """Submit all pending writes to a thread pool and wait for completion."""
+        pending = self._pending_writes
+        if not pending:
+            return
+
+        max_workers = min(len(pending), os.cpu_count() or 4)
+        logger.debug("Flushing %d pending writes with %d workers", len(pending), max_workers)
+
+        t0 = time.perf_counter()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = []
+            for item in pending:
+                kind = item[0]
+                if kind == "matrix":
+                    _, var_type, save_path, variable_mat = item
+                    futures.append(
+                        executor.submit(self._write_matrix, var_type, save_path, variable_mat),
+                    )
+                elif kind == "v_abs":
+                    _, var_type, save_path, variable = item
+                    futures.append(
+                        executor.submit(self._write_v_abs, var_type, save_path, variable),
+                    )
+                elif kind == "ic":
+                    _, fname, icmat = item
+                    futures.append(executor.submit(self._write_ic, fname, icmat))
+                elif kind == "coords":
+                    _, fname, coords = item
+                    futures.append(executor.submit(self._write_coords, fname, coords))
+
+            # Raise any exceptions from worker threads
+            for future in concurrent.futures.as_completed(futures):
+                future.result()
+
+        t1 = time.perf_counter()
+        logger.debug("All %d writes flushed in %.2e seconds", len(pending), t1 - t0)
+        self._pending_writes.clear()
+
     # --- saving utils ---
 
     def _save_variables_into_dat_file(
@@ -708,7 +787,7 @@ class InputFileWriter:
             if var_name in rename_dict:
                 var_name_fw2 = rename_dict[var_name]
                 save_path = simulation_dir / f"{var_name_fw2}.dat"
-                self._write_matrix(var_type=np.float32, save_path=save_path, variable_mat=var)
+                self._queue_matrix_write(var_type=np.float32, save_path=save_path, variable_mat=var)
 
     def _save_variables_into_dat_file_exponential_attenuation(
         self,
@@ -821,28 +900,28 @@ class InputFileWriter:
         *,
         alpha_exp_map: NDArray[np.float64] | None = None,
     ) -> None:
-        self._write_matrix(
+        self._queue_matrix_write(
             var_type=np.float32,
             save_path=simulation_dir / "c.dat",
             variable_mat=c_map,
         )
-        self._write_matrix(
+        self._queue_matrix_write(
             var_type=np.float32,
             save_path=simulation_dir / "K.dat",
             variable_mat=k_map,
         )
-        self._write_matrix(
+        self._queue_matrix_write(
             var_type=np.float32,
             save_path=simulation_dir / "rho.dat",
             variable_mat=rho_map,
         )
-        self._write_matrix(
+        self._queue_matrix_write(
             var_type=np.float32,
             save_path=simulation_dir / "beta.dat",
             variable_mat=beta_map,
         )
         if alpha_exp_map is not None:
-            self._write_matrix(
+            self._queue_matrix_write(
                 var_type=np.float32,
                 save_path=simulation_dir / "a_exp.dat",
                 variable_mat=alpha_exp_map,
@@ -850,11 +929,11 @@ class InputFileWriter:
 
     def _save_coords(self, simulation_dir: Path) -> None:
         # self._write_coords(simulation_dir / "icc.dat", self.source.incoords)
-        self._write_coords(
+        self._queue_coords_write(
             simulation_dir / "outc.dat",
             self.sensor.outcoords,
         )
-        self._write_coords(
+        self._queue_coords_write(
             simulation_dir / "icczero.dat",
             self.medium.air_coords,
         )
@@ -876,7 +955,7 @@ class InputFileWriter:
             )
         for var_name, var in var_list:
             save_path = simulation_dir / f"{var_name}.dat"
-            self._write_v_abs(np.float32, save_path, var)
+            self._queue_v_abs_write(np.float32, save_path, var)
 
     def _save_coords_params(self, simulation_dir: Path) -> None:
         nt_ic = self.source.icmat.shape[1]
@@ -898,20 +977,20 @@ class InputFileWriter:
             )
         for var_name, var in var_list:
             save_path = simulation_dir / f"{var_name}.dat"
-            self._write_v_abs(np.int32, save_path, var)
+            self._queue_v_abs_write(np.int32, save_path, var)
 
     def _save_d_params(self, simulation_dir: Path, dim: int) -> None:
         # save d and dmap
-        self._write_matrix(np.float32, simulation_dir / "d.dat", self._d)
-        self._write_matrix(np.float32, simulation_dir / "dmap.dat", self._d_map)
+        self._queue_matrix_write(np.float32, simulation_dir / "d.dat", self._d)
+        self._queue_matrix_write(np.float32, simulation_dir / "dmap.dat", self._d_map)
 
         # save ndmap
         ndmap = 1 if dim == 0 else self._d_map.shape[2]
 
-        self._write_v_abs(np.int32, simulation_dir / "ndmap.dat", ndmap)
+        self._queue_v_abs_write(np.int32, simulation_dir / "ndmap.dat", ndmap)
 
         # save dcmap
-        self._write_matrix(
+        self._queue_matrix_write(
             var_type=np.int32,
             save_path=simulation_dir / "dcmap.dat",
             variable_mat=(self._dc_map - 1),
