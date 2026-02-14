@@ -646,7 +646,15 @@ class InputFileWriter:
 
     def _set_dc_map(self, c_map: NDArray[np.float64]) -> None:
         logger.debug("Setting dc map for stencil coefficients.")
-        self._dc_map = matlab_round(c_map) - matlab_round(c_map.min()) + 1
+        c_min_rounded = matlab_round(c_map.min())
+        # In-place operations to avoid large temporaries on the full volume:
+        # equivalent to matlab_round(c_map) - matlab_round(c_map.min()) + 1
+        dc = np.array(c_map, dtype=np.float64)
+        dc += 1e-9
+        np.rint(dc, out=dc)
+        dc -= c_min_rounded
+        dc += 1
+        self._dc_map = dc.astype(np.int64)
         logger.debug("dc map for stencil coefficients set.")
 
     # --- batch write utils ---
