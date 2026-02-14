@@ -46,6 +46,7 @@ class MediumRelaxationMaps:
         n_relaxation_mechanisms: int = 2,
         use_isotropic_relaxation: bool = True,
         n_jobs: int = -1,
+        dtype: type = np.float64,
     ) -> None:
         """Medium class for Fullwave.
 
@@ -87,6 +88,9 @@ class MediumRelaxationMaps:
             unless the anisotropic attenuation is required for the simulation.
         n_jobs : int, optional
             Number of parallel jobs for relaxation parameter calculations.
+        dtype : type, optional
+            Data type for medium arrays. Default is np.float64.
+            Use np.float32 to reduce Python-side memory usage by ~50%.
 
         """
         check_functions.check_compatible_value(
@@ -95,9 +99,10 @@ class MediumRelaxationMaps:
             "Only n_relaxation_mechanisms=2 are supported currently.",
         )
         self.n_relaxation_mechanisms = n_relaxation_mechanisms
+        self.dtype = np.dtype(dtype)
         self.relaxation_param_dict = initialize_relaxation_param_dict(
             n_relaxation_mechanisms=n_relaxation_mechanisms,
-            value=np.zeros_like(sound_speed),
+            value=np.zeros_like(sound_speed, dtype=self.dtype),
         )
         self.grid = grid
         self.is_3d = grid.is_3d
@@ -132,9 +137,9 @@ class MediumRelaxationMaps:
 
     def __post_init__(self) -> None:
         """Post-initialization processing for Medium."""
-        self.sound_speed = np.atleast_2d(self.sound_speed)
-        self.density = np.atleast_2d(self.density)
-        self.beta = np.atleast_2d(self.beta)
+        self.sound_speed = np.atleast_2d(self.sound_speed).astype(self.dtype, copy=False)
+        self.density = np.atleast_2d(self.density).astype(self.dtype, copy=False)
+        self.beta = np.atleast_2d(self.beta).astype(self.dtype, copy=False)
 
     def _update_relaxation_param_dict(
         self,
@@ -288,6 +293,7 @@ class MediumRelaxationMaps:
         kappa_x: float | NDArray[np.float64],
         alpha_x: float | NDArray[np.float64],
         dt: float | NDArray[np.float64],
+        output_dtype: np.dtype | None = None,
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         dx = np.asarray(dx, dtype=np.float64)
         kappa_x = np.asarray(kappa_x, dtype=np.float64)
@@ -304,6 +310,10 @@ class MediumRelaxationMaps:
 
         # a = dx/denom*(b - 1)
         a = ne.evaluate("dx/denom*(b - 1)")
+
+        if output_dtype is not None and output_dtype != np.float64:
+            a = a.astype(output_dtype, copy=False)
+            b = b.astype(output_dtype, copy=False)
 
         return a, b
 
@@ -346,6 +356,7 @@ class MediumRelaxationMaps:
                 kappa_x=self.relaxation_param_dict["kappa_x1"],
                 alpha_x=self.relaxation_param_dict[f"alpha_x1_nu{nu}"],
                 dt=self.grid.dt,
+                output_dtype=self.dtype,
             )
             (
                 relaxation_coefficients[f"a_pml_x2_nu{nu}"],
@@ -355,6 +366,7 @@ class MediumRelaxationMaps:
                 kappa_x=self.relaxation_param_dict["kappa_x2"],
                 alpha_x=self.relaxation_param_dict[f"alpha_x2_nu{nu}"],
                 dt=self.grid.dt,
+                output_dtype=self.dtype,
             )
         return relaxation_coefficients
 
@@ -609,6 +621,7 @@ class MediumExponentialAttenuation:
         *,
         air_map: NDArray[np.int64] | None = None,
         air_coords: NDArray[np.int64] | None = None,
+        dtype: type = np.float64,
     ) -> None:
         """Medium class for Fullwave.
 
@@ -636,11 +649,15 @@ class MediumExponentialAttenuation:
         air_coords: NDArray[np.int64], optional
             Coordinate array of air positions, shape [n_air, ndim].
             Mutually exclusive with air_map.
+        dtype : type, optional
+            Data type for medium arrays. Default is np.float64.
+            Use np.float32 to reduce Python-side memory usage by ~50%.
 
         """
         check_functions.check_instance(grid, Grid)
         self.grid = grid
         self.is_3d = grid.is_3d
+        self.dtype = np.dtype(dtype)
 
         self.sound_speed = sound_speed
         self.density = density
@@ -663,10 +680,10 @@ class MediumExponentialAttenuation:
 
     def __post_init__(self) -> None:
         """Post-initialization processing for Medium."""
-        self.sound_speed = np.atleast_2d(self.sound_speed)
-        self.density = np.atleast_2d(self.density)
-        self.alpha_exp = np.atleast_2d(self.alpha_exp)
-        self.beta = np.atleast_2d(self.beta)
+        self.sound_speed = np.atleast_2d(self.sound_speed).astype(self.dtype, copy=False)
+        self.density = np.atleast_2d(self.density).astype(self.dtype, copy=False)
+        self.alpha_exp = np.atleast_2d(self.alpha_exp).astype(self.dtype, copy=False)
+        self.beta = np.atleast_2d(self.beta).astype(self.dtype, copy=False)
 
     def check_fields(self) -> None:
         """Check if the fields have the correct shape."""
@@ -840,6 +857,7 @@ class Medium:
         attenuation_builder: str = "lookup",
         use_isotropic_relaxation: bool = True,
         n_jobs: int = -1,
+        dtype: type = np.float64,
     ) -> None:
         """Medium class for Fullwave.
 
@@ -889,6 +907,11 @@ class Medium:
         n_jobs : int, optional
             Number of parallel jobs for relaxation parameter calculation.
             Default is -1, which uses all available CPUs.
+        dtype : type, optional
+            Data type for medium arrays. Default is np.float64.
+            Use np.float32 to reduce Python-side memory usage by ~50%.
+            The CUDA solver reads all data as float32, so float32 storage
+            avoids redundant conversion copies.
 
         """
         check_functions.check_compatible_value(
@@ -900,6 +923,7 @@ class Medium:
         check_functions.check_path_exists(path_relaxation_parameters_database)
         self.grid = grid
         self.is_3d = grid.is_3d
+        self.dtype = np.dtype(dtype)
 
         self.sound_speed = sound_speed
         self.density = density
@@ -939,11 +963,11 @@ class Medium:
 
     def __post_init__(self) -> None:
         """Post-initialization processing for Medium."""
-        self.sound_speed = np.atleast_2d(self.sound_speed)
-        self.density = np.atleast_2d(self.density)
-        self.alpha_coeff = np.atleast_2d(self.alpha_coeff)
-        self.alpha_power = np.atleast_2d(self.alpha_power)
-        self.beta = np.atleast_2d(self.beta)
+        self.sound_speed = np.atleast_2d(self.sound_speed).astype(self.dtype, copy=False)
+        self.density = np.atleast_2d(self.density).astype(self.dtype, copy=False)
+        self.alpha_coeff = np.atleast_2d(self.alpha_coeff).astype(self.dtype, copy=False)
+        self.alpha_power = np.atleast_2d(self.alpha_power).astype(self.dtype, copy=False)
+        self.beta = np.atleast_2d(self.beta).astype(self.dtype, copy=False)
 
     def check_fields(self) -> None:
         """Check if the fields have the correct shape."""
@@ -1145,6 +1169,10 @@ class Medium:
                 'Only "lookup" is supported currently.'
             )
             raise ValueError(error_msg)
+        if self.dtype != np.float64:
+            relaxation_param_dict = {
+                k: v.astype(self.dtype, copy=False) for k, v in relaxation_param_dict.items()
+            }
         return MediumRelaxationMaps(
             grid=self.grid,
             sound_speed=self.sound_speed,
@@ -1155,6 +1183,7 @@ class Medium:
             n_relaxation_mechanisms=self.n_relaxation_mechanisms,
             use_isotropic_relaxation=self.use_isotropic_relaxation,
             n_jobs=self.n_jobs,
+            dtype=self.dtype,
         )
 
     def _db_mhz_cm_to_a_exp(
@@ -1203,6 +1232,7 @@ class Medium:
             alpha_exp=alpha_exp,
             beta=self.beta,
             air_coords=self.air_coords,
+            dtype=self.dtype,
         )
 
     def print_info(self) -> None:
