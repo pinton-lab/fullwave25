@@ -60,7 +60,7 @@ try:
     __version__ = version("fullwave")
 except PackageNotFoundError:
     # Update via bump-my-version, not manually
-    __version__ = "1.2.1-dev8"
+    __version__ = "1.2.1-dev9"
 
 VERSION = __version__  # for convenience
 logger.info("Fullwave version: %s", __version__)
