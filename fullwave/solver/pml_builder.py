@@ -1,5 +1,6 @@
 """Perfectly Matched Layer (PML) setup for Fullwave."""
 
+import concurrent.futures
 import logging
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -114,7 +115,7 @@ class PMLBuilder:
     pml_mask_x: NDArray[np.float64] = field(init=False)
     pml_mask_y: NDArray[np.float64] = field(init=False)
 
-    def __init__(
+    def __init__(  # noqa: PLR0915
         self,
         grid: fullwave.Grid,
         medium: fullwave.Medium,
@@ -216,36 +217,99 @@ class PMLBuilder:
             ppw=self.grid_org.ppw,
             cfl=self.grid_org.cfl,
         )
+        logger.debug("building extended grid for pml...done")
 
         logger.debug("building extended medium for pml...")
         if isinstance(self.medium_org, fullwave.MediumRelaxationMaps):
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future_sound_speed = executor.submit(
+                    self._extend_map_for_pml,
+                    self.medium_org.sound_speed,
+                )
+                future_density = executor.submit(
+                    self._extend_map_for_pml,
+                    self.medium_org.density,
+                )
+                future_beta = executor.submit(
+                    self._extend_map_for_pml,
+                    self.medium_org.beta,
+                )
+                future_alpha_coeff = executor.submit(
+                    self._extend_map_for_pml,
+                    self.medium_org.alpha_coeff,
+                )
+                future_alpha_power = executor.submit(
+                    self._extend_map_for_pml,
+                    self.medium_org.alpha_power,
+                )
+                future_relaxation_param_dict = {
+                    key: executor.submit(self._extend_map_for_pml, value)
+                    for key, value in self.medium_org.relaxation_param_dict.items()
+                }
+
+                extended_sound_speed = future_sound_speed.result()
+                extended_density = future_density.result()
+                extended_beta = future_beta.result()
+                extended_alpha_coeff = future_alpha_coeff.result()
+                extended_alpha_power = future_alpha_power.result()
+                extended_relaxation_param_dict = {
+                    key: future.result() for key, future in future_relaxation_param_dict.items()
+                }
+
             self.extended_medium = fullwave.MediumRelaxationMaps(
                 grid=self.extended_grid,
-                sound_speed=self._extend_map_for_pml(self.medium_org.sound_speed),
-                density=self._extend_map_for_pml(self.medium_org.density),
-                beta=self._extend_map_for_pml(self.medium_org.beta),
-                relaxation_param_dict={
-                    key: self._extend_map_for_pml(value)
-                    for key, value in self.medium_org.relaxation_param_dict.items()
-                },
+                sound_speed=extended_sound_speed,
+                density=extended_density,
+                beta=extended_beta,
+                alpha_coeff=extended_alpha_coeff,
+                alpha_power=extended_alpha_power,
+                relaxation_param_dict=extended_relaxation_param_dict,
                 air_coords=self.medium_org.air_coords + self.num_boundary_points,
                 n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
                 n_jobs=self.medium_org.n_jobs,
             )
         else:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future_sound_speed = executor.submit(
+                    self._extend_map_for_pml,
+                    self.medium_org.sound_speed,
+                )
+                future_density = executor.submit(
+                    self._extend_map_for_pml,
+                    self.medium_org.density,
+                )
+                future_beta = executor.submit(
+                    self._extend_map_for_pml,
+                    self.medium_org.beta,
+                )
+                future_alpha_coeff = executor.submit(
+                    self._extend_map_for_pml,
+                    self.medium_org.alpha_coeff,
+                )
+                future_alpha_power = executor.submit(
+                    self._extend_map_for_pml,
+                    self.medium_org.alpha_power,
+                )
+
+                extended_sound_speed = future_sound_speed.result()
+                extended_density = future_density.result()
+                extended_beta = future_beta.result()
+                extended_alpha_coeff = future_alpha_coeff.result()
+                extended_alpha_power = future_alpha_power.result()
             self.extended_medium = fullwave.Medium(
                 grid=self.extended_grid,
-                sound_speed=self._extend_map_for_pml(self.medium_org.sound_speed),
-                density=self._extend_map_for_pml(self.medium_org.density),
-                beta=self._extend_map_for_pml(self.medium_org.beta),
-                alpha_coeff=self._extend_map_for_pml(self.medium_org.alpha_coeff),
-                alpha_power=self._extend_map_for_pml(self.medium_org.alpha_power),
+                sound_speed=extended_sound_speed,
+                density=extended_density,
+                beta=extended_beta,
+                alpha_coeff=extended_alpha_coeff,
+                alpha_power=extended_alpha_power,
                 air_coords=self.medium_org.air_coords + self.num_boundary_points,
                 n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
                 path_relaxation_parameters_database=self.medium_org.path_relaxation_parameters_database,
                 attenuation_builder=self.medium_org.attenuation_builder,
                 n_jobs=self.medium_org.n_jobs,
             )
+        logger.debug("building extended medium for pml...done")
 
         logger.debug("building extended source for pml...")
         extended_grid_shape = tuple(
@@ -256,6 +320,8 @@ class PMLBuilder:
             coords=self.source_org.incoords + self.num_boundary_points,
             grid_shape=extended_grid_shape,
         )
+        logger.debug("building extended source for pml...done")
+
         logger.debug("building extended sensor for pml...")
         extended_sensor_grid_shape = tuple(
             s + 2 * self.num_boundary_points for s in self.sensor_org.grid_shape
@@ -265,6 +331,7 @@ class PMLBuilder:
             grid_shape=extended_sensor_grid_shape,
             sampling_modulus_time=self.sensor_org.sampling_modulus_time,
         )
+        logger.debug("building extended sensor for pml...done")
         if self.is_3d:
             self.pml_mask_x, self.pml_mask_y, self.pml_mask_z = self._localize_pml_region()
         else:
@@ -331,28 +398,82 @@ class PMLBuilder:
         """
         return self.n_air
 
+    # def _extend_map_for_pml(
+    #     self,
+    #     input_map: NDArray[np.float64 | np.int64 | np.bool],
+    #     *,
+    #     fill_edge: bool = True,
+    # ) -> NDArray[np.float64 | np.int64 | np.bool]:
+    #     kwargs = {} if fill_edge else {"constant_values": 0}
+    #     return np.pad(
+    #         input_map,
+    #         pad_width=self.num_boundary_points,
+    #         mode="edge" if fill_edge else "constant",
+    #         **kwargs,
+    #     )
+
     def _extend_map_for_pml(
         self,
-        input_map: NDArray[np.float64 | np.int64 | np.bool],
+        input_map: NDArray[np.float64 | np.int64 | np.bool_],
         *,
         fill_edge: bool = True,
-    ) -> NDArray[np.float64 | np.int64 | np.bool]:
-        kwargs = {} if fill_edge else {"constant_values": 0}
-        return np.pad(
-            input_map,
-            pad_width=self.num_boundary_points,
-            mode="edge" if fill_edge else "constant",
-            **kwargs,
-        )
+    ) -> NDArray[np.float64 | np.int64 | np.bool_]:
+        """Fast version using pre-allocation and direct assignment instead of np.pad."""
+        pad = self.num_boundary_points
 
-    def _extend_relaxation_param_dict(
-        self,
-        relaxation_param_dict: dict[str, NDArray[np.float64 | np.int64 | np.bool]],
-    ) -> dict[str, NDArray[np.float64 | np.int64 | np.bool]]:
-        output_dict = {}
-        for key, value in relaxation_param_dict.items():
-            output_dict[key] = self._extend_map_for_pml(value)
-        return output_dict
+        # Pre-allocate output array with correct dtype
+        if self.is_3d:
+            nx, ny, nz = input_map.shape
+            output = np.empty((nx + 2 * pad, ny + 2 * pad, nz + 2 * pad), dtype=input_map.dtype)
+
+            # Fill center with original data (single copy)
+            output[pad : pad + nx, pad : pad + ny, pad : pad + nz] = input_map
+
+            if fill_edge:
+                # Fill edges efficiently using broadcasting
+                # X boundaries
+                output[:pad, pad : pad + ny, pad : pad + nz] = input_map[0:1, :, :]
+                output[pad + nx :, pad : pad + ny, pad : pad + nz] = input_map[-1:, :, :]
+
+                # Y boundaries (now includes X corners)
+                output[:, :pad, pad : pad + nz] = output[:, pad : pad + 1, pad : pad + nz]
+                output[:, pad + ny :, pad : pad + nz] = output[
+                    :,
+                    pad + ny - 1 : pad + ny,
+                    pad : pad + nz,
+                ]
+
+                # Z boundaries (now includes all corners)
+                output[:, :, :pad] = output[:, :, pad : pad + 1]
+                output[:, :, pad + nz :] = output[:, :, pad + nz - 1 : pad + nz]
+            else:
+                # Fill with zeros
+                output[:pad, :, :] = 0
+                output[pad + nx :, :, :] = 0
+                output[:, :pad, :] = 0
+                output[:, pad + ny :, :] = 0
+                output[:, :, :pad] = 0
+                output[:, :, pad + nz :] = 0
+        else:  # 2D case
+            nx, ny = input_map.shape
+            output = np.empty((nx + 2 * pad, ny + 2 * pad), dtype=input_map.dtype)
+
+            # Fill center
+            output[pad : pad + nx, pad : pad + ny] = input_map
+
+            if fill_edge:
+                # Fill edges
+                output[:pad, pad : pad + ny] = input_map[0:1, :]
+                output[pad + nx :, pad : pad + ny] = input_map[-1:, :]
+                output[:, :pad] = output[:, pad : pad + 1]
+                output[:, pad + ny :] = output[:, pad + ny - 1 : pad + ny]
+            else:
+                output[:pad, :] = 0
+                output[pad + nx :, :] = 0
+                output[:, :pad] = 0
+                output[:, pad + ny :] = 0
+
+        return output
 
     def _localize_pml_region(self) -> tuple[NDArray[np.float64], ...]:
         if self.is_3d:
@@ -1398,18 +1519,49 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             cfl=self.grid_org.cfl,
         )
 
+        logger.debug("building extended medium for pml...")
+        # run _extend_map_for_pml in parallel for all medium properties since it is a bottleneck
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future_sound_speed = executor.submit(
+                self._extend_map_for_pml,
+                self.medium_org.sound_speed,
+            )
+            future_density = executor.submit(
+                self._extend_map_for_pml,
+                self.medium_org.density,
+            )
+            future_beta = executor.submit(
+                self._extend_map_for_pml,
+                self.medium_org.beta,
+            )
+            future_alpha_coeff = executor.submit(
+                self._extend_map_for_pml,
+                self.medium_org.alpha_coeff,
+            )
+            future_alpha_power = executor.submit(
+                self._extend_map_for_pml,
+                self.medium_org.alpha_power,
+            )
+
+            extended_sound_speed = future_sound_speed.result()
+            extended_density = future_density.result()
+            extended_beta = future_beta.result()
+            extended_alpha_coeff = future_alpha_coeff.result()
+            extended_alpha_power = future_alpha_power.result()
+
         self.extended_medium = fullwave.Medium(
             grid=self.extended_grid,
-            sound_speed=self._extend_map_for_pml(self.medium_org.sound_speed),
-            density=self._extend_map_for_pml(self.medium_org.density),
-            beta=self._extend_map_for_pml(self.medium_org.beta),
-            alpha_coeff=self._extend_map_for_pml(self.medium_org.alpha_coeff),
-            alpha_power=self._extend_map_for_pml(self.medium_org.alpha_power),
+            sound_speed=extended_sound_speed,
+            density=extended_density,
+            beta=extended_beta,
+            alpha_coeff=extended_alpha_coeff,
+            alpha_power=extended_alpha_power,
             air_coords=self.medium_org.air_coords + self.num_boundary_points,
             n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
             path_relaxation_parameters_database=self.medium_org.path_relaxation_parameters_database,
             attenuation_builder=self.medium_org.attenuation_builder,
         )
+        logger.debug("Extended medium for PML built successfully.")
 
         extended_grid_shape = tuple(
             s + 2 * self.num_boundary_points for s in self.source_org.grid_shape
@@ -1427,10 +1579,14 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             grid_shape=extended_sensor_grid_shape,
             sampling_modulus_time=self.sensor_org.sampling_modulus_time,
         )
+        logger.debug("Extended source and sensor for PML built successfully.")
+
+        logger.debug("Localizing PML region...")
         if self.is_3d:
             self.pml_mask_x, self.pml_mask_y, self.pml_mask_z = self._localize_pml_region()
         else:
             self.pml_mask_x, self.pml_mask_y = self._localize_pml_region()
+        logger.debug("PML region localized successfully.")
 
         self.pml_layer_m = self.extended_grid.dx * self.n_pml_layer
         # self.transition_layer_m = self.extended_grid.dx * self.n_transition_layer
@@ -1462,21 +1618,27 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
 
         """
         if use_pml:
+            logger.debug("Building extended medium for PML...")
             extended_medium: fullwave.MediumExponentialAttenuation = (
                 self.extended_medium.build_exponential()
             )
+            logger.debug("Extended medium for PML built successfully.")
             if self.is_3d:
+                logger.debug("Applying 3D PML to the extended medium...")
                 return self._apply_pml_3d(
                     extended_medium=extended_medium,
                 )
 
+            logger.debug("Applying 2D PML to the extended medium...")
             return self._apply_pml_2d(
                 extended_medium=extended_medium,
             )
 
+        logger.debug("PML is disabled. Building extended medium without applying PML...")
         extended_medium: fullwave.MediumExponentialAttenuation = (
             self.extended_medium.build_exponential()
         )
+        logger.debug("Extended medium built successfully without applying PML.")
         return extended_medium
 
     @staticmethod
