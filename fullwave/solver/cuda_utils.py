@@ -13,7 +13,7 @@ import ctypes
 import json
 import logging
 from collections.abc import Callable
-from functools import wraps
+from functools import lru_cache, wraps
 from typing import Any
 
 logger = logging.getLogger("__main__." + __name__)
@@ -212,6 +212,7 @@ def cuCtxDetach(ctx):  # noqa: ANN001, ANN201, D103, N802
 
 
 # Main function to get CUDA device specs
+@lru_cache(maxsize=1)
 def get_cuda_device_specs() -> list[dict[str, Any]]:
     """Generate spec for each GPU device with format.
 
@@ -314,6 +315,7 @@ def get_cuda_device_specs() -> list[dict[str, Any]]:
     return device_specs
 
 
+@lru_cache(maxsize=1)
 def get_cuda_architecture() -> list[dict[str, Any]]:
     """Get CUDA architecture information for each GPU device.
 
@@ -352,10 +354,7 @@ def get_cuda_architecture() -> list[dict[str, Any]]:
         )
         compute_capability = (cc_major.value, cc_minor.value)
         spec["compute_capability"] = compute_capability
-        context = ctypes.c_void_p()
-        if cuCtxCreate(ctypes.byref(context), 0, device) == CUDA_SUCCESS:
-            spec["architecture"] = SEMVER_TO_ARCH.get(compute_capability, "unknown")
-            cuCtxDetach(context)
+        spec["architecture"] = SEMVER_TO_ARCH.get(compute_capability, "unknown")
 
         device_specs.append(spec)
     return device_specs

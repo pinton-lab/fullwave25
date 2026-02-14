@@ -2,13 +2,13 @@
 
 import logging
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numexpr as ne
 import numpy as np
-from joblib import Parallel, delayed
 from numpy.typing import NDArray
 
 from fullwave import Grid
@@ -151,82 +151,51 @@ class MediumRelaxationMaps:
         n_nu = self.n_relaxation_mechanisms
         kappa_x1 = relaxation_param_updates["kappa_x1"]
         kappa_x2 = relaxation_param_updates["kappa_x2"]
-        base_shape = kappa_x1.shape
 
-        # Pre-allocate stacked arrays: (..., n_nu)
-        d_x1 = np.empty((*base_shape, n_nu), dtype=np.float64)
-        alpha_x1 = np.empty_like(d_x1)
-        d_x2 = np.empty((*base_shape, n_nu), dtype=np.float64)
-        alpha_x2 = np.empty_like(d_x2)
+        # Work directly with lists of contiguous array references.
+        # This eliminates the costly copies into non-contiguous stacked array slices.
+        d_x1 = [relaxation_param_updates[f"d_x1_nu{i + 1}"] for i in range(n_nu)]
+        a_x1 = [relaxation_param_updates[f"alpha_x1_nu{i + 1}"] for i in range(n_nu)]
+        d_x2 = [relaxation_param_updates[f"d_x2_nu{i + 1}"] for i in range(n_nu)]
+        a_x2 = [relaxation_param_updates[f"alpha_x2_nu{i + 1}"] for i in range(n_nu)]
 
-        # Fill stacked arrays from dict
-        for i in range(n_nu):
-            nu = i + 1
-            d_x1[..., i] = relaxation_param_updates[f"d_x1_nu{nu}"]
-            alpha_x1[..., i] = relaxation_param_updates[f"alpha_x1_nu{nu}"]
-            d_x2[..., i] = relaxation_param_updates[f"d_x2_nu{nu}"]
-            alpha_x2[..., i] = relaxation_param_updates[f"alpha_x2_nu{nu}"]
+        # Vectorized compare-and-swap sort by time constant (d/kappa + alpha).
+        # O(n_nu^2) vectorized passes — each comparison and swap is a full
+        # SIMD/cache-friendly pass over contiguous arrays.
+        # x1 and x2 directions are independent, so run in parallel threads
+        # (numpy/numexpr release the GIL during computation).
+        def _sort_by_time_const(
+            d_arrays: list[NDArray[np.float64]],
+            a_arrays: list[NDArray[np.float64]],
+            kappa: NDArray[np.float64],  # noqa: ARG001
+        ) -> None:
+            for i in range(n_nu):
+                for j in range(i + 1, n_nu):
+                    di, dj = d_arrays[i], d_arrays[j]
+                    ai, aj = a_arrays[i], a_arrays[j]
+                    swap = ne.evaluate("di / kappa + ai > dj / kappa + aj")
+                    d_arrays[i] = np.where(swap, dj, di)
+                    d_arrays[j] = np.where(swap, di, dj)
+                    a_arrays[i] = np.where(swap, aj, ai)
+                    a_arrays[j] = np.where(swap, ai, aj)
 
-        # Broadcast kappa
-        kappa_x1_b = np.broadcast_to(kappa_x1[..., None], d_x1.shape)
-        kappa_x2_b = np.broadcast_to(kappa_x2[..., None], d_x2.shape)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            fut_x1 = pool.submit(_sort_by_time_const, d_x1, a_x1, kappa_x1)
+            fut_x2 = pool.submit(_sort_by_time_const, d_x2, a_x2, kappa_x2)
+            fut_x1.result()
+            fut_x2.result()
 
-        # ============ PARALLEL: compute time constants per mechanism ============
-        def _compute_time_const_mechanism(
-            i_nu: int,
-        ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-            return (
-                self._calc_time_constants(
-                    dx=d_x1[..., i_nu],
-                    kappa=kappa_x1_b[..., i_nu],
-                    alpha=alpha_x1[..., i_nu],
-                ),
-                self._calc_time_constants(
-                    dx=d_x2[..., i_nu],
-                    kappa=kappa_x2_b[..., i_nu],
-                    alpha=alpha_x2[..., i_nu],
-                ),
-            )
-
-        # Run in parallel (n_jobs=-1 uses all CPUs; tune if needed)
-        results = Parallel(n_jobs=self.n_jobs)(
-            delayed(_compute_time_const_mechanism)(i) for i in range(n_nu)
-        )
-
-        n = len(results)
-        sh = results[0][0].shape
-
-        time_const_x1 = np.empty((*sh, n), dtype=np.float32)
-        time_const_x2 = np.empty((*sh, n), dtype=np.float32)
-
-        for i, (tc1, tc2) in enumerate(results):
-            time_const_x1[..., i] = tc1  # cast happens during assignment
-            time_const_x2[..., i] = tc2
-
-        time_const_x1 = np.ascontiguousarray(time_const_x1, dtype=np.float32)
-        time_const_x2 = np.ascontiguousarray(time_const_x2, dtype=np.float32)
-        # =========================================================================
-
-        # Sort the nu values based on the time constants
-        sorted_indices_x1 = np.argsort(time_const_x1, axis=-1, kind="quicksort")
-        sorted_indices_x2 = np.argsort(time_const_x2, axis=-1, kind="quicksort")
-        # Apply sorting once for all nus
-        d_x1_sorted = np.take_along_axis(d_x1, sorted_indices_x1, axis=-1)
-        alpha_x1_sorted = np.take_along_axis(alpha_x1, sorted_indices_x1, axis=-1)
-        d_x2_sorted = np.take_along_axis(d_x2, sorted_indices_x2, axis=-1)
-        alpha_x2_sorted = np.take_along_axis(alpha_x2, sorted_indices_x2, axis=-1)
-
-        # Write back into relaxation_param_dict
+        # Write results into relaxation_param_dict
         param_dict = self.relaxation_param_dict
         param_dict["kappa_x1"] = np.atleast_2d(kappa_x1)
         param_dict["kappa_x2"] = np.atleast_2d(kappa_x2)
 
         for i in range(n_nu):
             nu = i + 1
-            param_dict[f"d_x1_nu{nu}"] = np.atleast_2d(d_x1_sorted[..., i])
-            param_dict[f"alpha_x1_nu{nu}"] = np.atleast_2d(alpha_x1_sorted[..., i])
-            param_dict[f"d_x2_nu{nu}"] = np.atleast_2d(d_x2_sorted[..., i])
-            param_dict[f"alpha_x2_nu{nu}"] = np.atleast_2d(alpha_x2_sorted[..., i])
+            param_dict[f"d_x1_nu{nu}"] = np.atleast_2d(d_x1[i])
+            param_dict[f"alpha_x1_nu{nu}"] = np.atleast_2d(a_x1[i])
+            param_dict[f"d_x2_nu{nu}"] = np.atleast_2d(d_x2[i])
+            param_dict[f"alpha_x2_nu{nu}"] = np.atleast_2d(a_x2[i])
 
         # Cache and check keys
         desired_key_set = getattr(

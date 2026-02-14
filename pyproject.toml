@@ -30,7 +30,12 @@ classifiers = [
 
 [project.optional-dependencies] # --extra
 test = ["pytest", "tomli>=2.3.0"]
-dev = ["pre-commit==4.1.0", "pytest>=8.3.5", "ruff>=0.12.9"]
+dev = [
+    "pre-commit==4.1.0",
+    "pytest>=8.3.5",
+    "ruff>=0.12.9",
+    "line-profiler>=5.0.1",
+]
 examples = [
     "jupyter>=1.0.0",
     "ipykernel>=6.28.0",
