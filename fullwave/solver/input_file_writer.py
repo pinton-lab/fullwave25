@@ -36,6 +36,7 @@ class InputFileWriter:
         validate_input: bool = True,
         use_exponential_attenuation: bool = False,
         use_isotropic_relaxation: bool = False,
+        release_after_write: bool = False,
     ) -> None:
         """Initialize the InputGeneratorBase instance.
 
@@ -70,6 +71,10 @@ class InputFileWriter:
             This option omits the anisotropic relaxation mechanisms to model the attenuation.
             We usually recommend using isotropic relaxation mechanisms
             unless the anisotropic attenuation is required for the simulation.
+        release_after_write : bool, optional
+            Whether to release the variable from memory after writing to file.
+            This can help reduce memory usage when generating input files for large simulations.
+            default is False.
 
         """
         logger.debug("Initializing InputFileWriter instance.")
@@ -94,6 +99,7 @@ class InputFileWriter:
         self.sensor = sensor
         self.is_3d = self.grid.is_3d
         self.use_exponential_attenuation = use_exponential_attenuation
+        self.release_after_write = release_after_write
 
         self._dim = int(
             np.rint(self.medium.sound_speed.max()) - np.rint(self.medium.sound_speed.min()),
@@ -734,19 +740,45 @@ class InputFileWriter:
                 if kind == "matrix":
                     _, var_type, save_path, variable_mat = item
                     futures.append(
-                        executor.submit(self._write_matrix, var_type, save_path, variable_mat),
+                        executor.submit(
+                            self._write_matrix,
+                            var_type,
+                            save_path,
+                            variable_mat,
+                            self.release_after_write,
+                        ),
                     )
                 elif kind == "v_abs":
                     _, var_type, save_path, variable = item
                     futures.append(
-                        executor.submit(self._write_v_abs, var_type, save_path, variable),
+                        executor.submit(
+                            self._write_v_abs,
+                            var_type,
+                            save_path,
+                            variable,
+                            self.release_after_write,
+                        ),
                     )
                 elif kind == "ic":
                     _, fname, icmat = item
-                    futures.append(executor.submit(self._write_ic, fname, icmat))
+                    futures.append(
+                        executor.submit(
+                            self._write_ic,
+                            fname,
+                            icmat,
+                            self.release_after_write,
+                        ),
+                    )
                 elif kind == "coords":
                     _, fname, coords = item
-                    futures.append(executor.submit(self._write_coords, fname, coords))
+                    futures.append(
+                        executor.submit(
+                            self._write_coords,
+                            fname,
+                            coords,
+                            self.release_after_write,
+                        ),
+                    )
 
             # Raise any exceptions from worker threads
             for future in concurrent.futures.as_completed(futures):
@@ -1014,7 +1046,11 @@ class InputFileWriter:
             save_path = simulation_dir / f"{var_name}.dat"
             self._queue_v_abs_write(np.int32, save_path, var)
 
-    def _save_d_params(self, simulation_dir: Path, dim: int) -> None:
+    def _save_d_params(
+        self,
+        simulation_dir: Path,
+        dim: int,
+    ) -> None:
         # save d and dmap
         self._queue_matrix_write(np.float32, simulation_dir / "d.dat", self._d)
         self._queue_matrix_write(np.float32, simulation_dir / "dmap.dat", self._d_map)
@@ -1039,7 +1075,11 @@ class InputFileWriter:
         )
 
     @staticmethod
-    def _write_ic(fname: str | Path, icmat: np.ndarray) -> None:
+    def _write_ic(
+        fname: str | Path,
+        icmat: np.ndarray,
+        release_after_write: bool = True,  # noqa: FBT001, FBT002
+    ) -> None:
         logger.debug("Writing initial condition matrix to %s", fname, stacklevel=2)
 
         t0 = time.perf_counter()
@@ -1051,9 +1091,15 @@ class InputFileWriter:
         t1 = time.perf_counter()
 
         logger.debug("Initial condition matrix written in %.2e seconds", t1 - t0, stacklevel=2)
+        if release_after_write:
+            del icmat
 
     @staticmethod
-    def _write_coords(fname: str | Path, coords: np.ndarray) -> None:
+    def _write_coords(
+        fname: str | Path,
+        coords: np.ndarray,
+        release_after_write: bool = True,  # noqa: FBT001, FBT002
+    ) -> None:
         logger.debug("Writing coordinates to %s", fname, stacklevel=2)
 
         t0 = time.perf_counter()
@@ -1068,20 +1114,26 @@ class InputFileWriter:
 
         t1 = time.perf_counter()
         logger.debug("Coordinates written in %.2e seconds", t1 - t0, stacklevel=2)
+        if release_after_write:
+            del coords
 
     @staticmethod
     def _write_v_abs(
         var_type: DTypeLike,
         save_path: str | Path,
         variable: NDArray[np.float64 | np.int32] | float,
+        release_after_write: bool = True,  # noqa: FBT001, FBT002
     ) -> None:
         np.array(variable).astype(var_type).tofile(save_path)
+        if release_after_write:
+            del variable
 
     @staticmethod
     def _write_matrix(
         var_type: DTypeLike,
         save_path: str | Path,
         variable_mat: np.ndarray,
+        release_after_write: bool = True,  # noqa: FBT001, FBT002
     ) -> None:
         logger.debug("Writing matrix to %s", save_path, stacklevel=2)
         t0 = time.perf_counter()
@@ -1097,3 +1149,6 @@ class InputFileWriter:
 
         t1 = time.perf_counter()
         logger.debug("Matrix written in %.2e seconds", t1 - t0, stacklevel=2)
+        # release memory by deleting the original variable_mat reference
+        if release_after_write:
+            del variable_mat

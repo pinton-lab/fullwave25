@@ -629,6 +629,7 @@ class Solver:
         sampling_modulus_time_whole_domain: int = 1,
         load_results: bool = True,
         generate_input_only: bool = False,
+        release_after_write: bool = False,
     ) -> NDArray[np.float64] | Path:
         r"""Run the fullwave simulation and return the result as a NumPy array.
 
@@ -683,6 +684,11 @@ class Solver:
             skip launching the external Fullwave executable.
             In this case the method returns the simulation directory path.
             Default is False.
+        release_after_write : bool
+            Whether to release the input files after writing them.
+            If True, the memory used by the input files will be released after writing them to disk.
+            This is useful when run_on_memory is True to free up memory space for the simulation
+            or when the input files are large. Default is False.
 
         Returns
         -------
@@ -771,6 +777,7 @@ class Solver:
             path_fullwave_simulation_bin=self.path_fullwave_simulation_bin,
             use_exponential_attenuation=self.use_exponential_attenuation,
             use_isotropic_relaxation=self.use_isotropic_relaxation,
+            release_after_write=release_after_write,
         )
         simulation_dir = input_file_writer.run(
             simulation_dir_name,
