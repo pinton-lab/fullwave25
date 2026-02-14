@@ -644,17 +644,44 @@ class InputFileWriter:
                 -4.20967682664542e-7,
             )
 
-    def _set_dc_map(self, c_map: NDArray[np.float64]) -> None:
+    def _set_dc_map(self, c_map: np.ndarray) -> None:
+        """Compute the discretised sound-speed index map.
+
+        For large 3-D maps the naive approach allocates a full float64 copy
+        and makes several sequential passes.
+        This version processes the first axis in chunks using a thread pool so
+        that (a) peak memory stays bounded and (b) multiple cores share the work.
+        """
         logger.debug("Setting dc map for stencil coefficients.")
         c_min_rounded = matlab_round(c_map.min())
-        # In-place operations to avoid large temporaries on the full volume:
-        # equivalent to matlab_round(c_map) - matlab_round(c_map.min()) + 1
-        dc = np.array(c_map, dtype=np.float64)
-        dc += 1e-9
-        np.rint(dc, out=dc)
-        dc -= c_min_rounded
-        dc += 1
-        self._dc_map = dc.astype(np.int64)
+        offset = float(-c_min_rounded + 1)
+
+        result = np.empty(c_map.shape, dtype=np.int32)
+
+        n_slabs = c_map.shape[0]
+        # Each chunk is one or more slabs along axis-0.  Keep chunks large
+        # enough to amortise thread overhead but small enough to fit in cache.
+        max_workers = min(n_slabs, os.cpu_count() or 4)
+        chunk_size = max(1, -(-n_slabs // max_workers))  # ceil division
+
+        def _process_chunk(start: int) -> None:
+            end = min(start + chunk_size, n_slabs)
+            chunk = c_map[start:end].astype(np.float64)
+            chunk += 1e-9
+            np.rint(chunk, out=chunk)
+            chunk += offset
+            result[start:end] = chunk.astype(np.int32)
+
+        if n_slabs <= chunk_size:
+            # Small array - no threading overhead.
+            _process_chunk(0)
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = [pool.submit(_process_chunk, s) for s in range(0, n_slabs, chunk_size)]
+                for f in concurrent.futures.as_completed(futures):
+                    f.result()  # propagate exceptions
+
+        self._dc_map = result
         logger.debug("dc map for stencil coefficients set.")
 
     # --- batch write utils ---
