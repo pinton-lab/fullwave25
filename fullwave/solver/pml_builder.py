@@ -355,81 +355,74 @@ class PMLBuilder:
         return output_dict
 
     def _localize_pml_region(self) -> tuple[NDArray[np.float64], ...]:
-        pml_mask_x: NDArray[np.float64]
-        pml_mask_y: NDArray[np.float64]
-        pml_mask_z: NDArray[np.float64]
         if self.is_3d:
             n_x_extended, n_y_extended, n_z_extended = self.extended_medium.sound_speed.shape
 
-            pml_mask_x = np.zeros((n_x_extended, n_y_extended, n_z_extended))
-            pml_mask_y = np.zeros((n_x_extended, n_y_extended, n_z_extended))
-            pml_mask_z = np.zeros((n_x_extended, n_y_extended, n_z_extended))
-            for i in range(self.n_pml_layer):
-                pml_mask_x[
-                    i + (n_x_extended - self.m_spatial_order - self.n_pml_layer),
-                    :,
-                    :,
-                ] = i / self.n_pml_layer
+            pml_mask_x = np.zeros((n_x_extended, n_y_extended, n_z_extended), dtype=np.float64)
+            pml_mask_y = np.zeros((n_x_extended, n_y_extended, n_z_extended), dtype=np.float64)
+            pml_mask_z = np.zeros((n_x_extended, n_y_extended, n_z_extended), dtype=np.float64)
 
-                pml_mask_x[self.m_spatial_order + self.n_pml_layer - i - 1, :, :] = (
-                    i / self.n_pml_layer
-                )
+            # PML indices and values
+            i = np.arange(self.n_pml_layer, dtype=np.int64)
+            vals = i.astype(np.float64) / self.n_pml_layer
 
-                pml_mask_y[
-                    :,
-                    i + (n_y_extended - self.m_spatial_order - self.n_pml_layer),
-                    :,
-                ] = i / self.n_pml_layer
+            ix1 = i + (n_x_extended - self.m_spatial_order - self.n_pml_layer)
+            ix2 = self.m_spatial_order + self.n_pml_layer - i - 1
 
-                pml_mask_y[:, self.m_spatial_order + self.n_pml_layer - i - 1, :] = (
-                    i / self.n_pml_layer
-                )
+            iy1 = i + (n_y_extended - self.m_spatial_order - self.n_pml_layer)
+            iy2 = self.m_spatial_order + self.n_pml_layer - i - 1
 
-                pml_mask_z[
-                    :,
-                    :,
-                    i + (n_z_extended - self.m_spatial_order - self.n_pml_layer),
-                ] = i / self.n_pml_layer
+            iz1 = i + (n_z_extended - self.m_spatial_order - self.n_pml_layer)
+            iz2 = self.m_spatial_order + self.n_pml_layer - i - 1
 
-                pml_mask_z[:, :, self.m_spatial_order + self.n_pml_layer - i - 1] = (
-                    i / self.n_pml_layer
-                )
+            # Fill PML ramps without Python loop
+            pml_mask_x[ix1, :, :] = vals[:, None, None]
+            pml_mask_x[ix2, :, :] = vals[:, None, None]
 
-            pml_mask_x[0 : self.m_spatial_order, :, :] = 1
-            pml_mask_x[n_x_extended - self.m_spatial_order : n_x_extended, :, :] = 1
+            pml_mask_y[:, iy1, :] = vals[None, :, None]
+            pml_mask_y[:, iy2, :] = vals[None, :, None]
 
-            pml_mask_y[:, 0 : self.m_spatial_order, :] = 1
-            pml_mask_y[:, n_y_extended - self.m_spatial_order : n_y_extended, :] = 1
+            pml_mask_z[:, :, iz1] = vals[None, None, :]
+            pml_mask_z[:, :, iz2] = vals[None, None, :]
 
-            pml_mask_z[:, :, 0 : self.m_spatial_order] = 1
-            pml_mask_z[:, :, n_z_extended - self.m_spatial_order : n_z_extended] = 1
+            # Inner “hard” PML region
+            pml_mask_x[0 : self.m_spatial_order, :, :] = 1.0
+            pml_mask_x[n_x_extended - self.m_spatial_order : n_x_extended, :, :] = 1.0
+
+            pml_mask_y[:, 0 : self.m_spatial_order, :] = 1.0
+            pml_mask_y[:, n_y_extended - self.m_spatial_order : n_y_extended, :] = 1.0
+
+            pml_mask_z[:, :, 0 : self.m_spatial_order] = 1.0
+            pml_mask_z[:, :, n_z_extended - self.m_spatial_order : n_z_extended] = 1.0
+
             return pml_mask_x, pml_mask_y, pml_mask_z
 
+        # 2D case
         n_x_extended, n_y_extended = self.extended_medium.sound_speed.shape
 
-        pml_mask_x = np.zeros((n_x_extended, n_y_extended))
-        pml_mask_y = np.zeros((n_x_extended, n_y_extended))
+        pml_mask_x = np.zeros((n_x_extended, n_y_extended), dtype=np.float64)
+        pml_mask_y = np.zeros((n_x_extended, n_y_extended), dtype=np.float64)
 
-        for i in range(self.n_pml_layer):
-            pml_mask_x[
-                i + (n_x_extended - self.m_spatial_order - self.n_pml_layer),
-                :,
-            ] = i / self.n_pml_layer
+        i = np.arange(self.n_pml_layer, dtype=np.int64)
+        vals = i.astype(np.float64) / self.n_pml_layer
 
-            pml_mask_x[self.m_spatial_order + self.n_pml_layer - i - 1, :] = i / self.n_pml_layer
+        ix1 = i + (n_x_extended - self.m_spatial_order - self.n_pml_layer)
+        ix2 = self.m_spatial_order + self.n_pml_layer - i - 1
 
-            pml_mask_y[
-                :,
-                i + (n_y_extended - self.m_spatial_order - self.n_pml_layer),
-            ] = i / self.n_pml_layer
+        iy1 = i + (n_y_extended - self.m_spatial_order - self.n_pml_layer)
+        iy2 = self.m_spatial_order + self.n_pml_layer - i - 1
 
-            pml_mask_y[:, self.m_spatial_order + self.n_pml_layer - i - 1] = i / self.n_pml_layer
+        pml_mask_x[ix1, :] = vals[:, None]
+        pml_mask_x[ix2, :] = vals[:, None]
 
-        pml_mask_x[0 : self.m_spatial_order, :] = 1
-        pml_mask_x[n_x_extended - self.m_spatial_order : n_x_extended, :] = 1
+        pml_mask_y[:, iy1] = vals[None, :]
+        pml_mask_y[:, iy2] = vals[None, :]
 
-        pml_mask_y[:, 0 : self.m_spatial_order] = 1
-        pml_mask_y[:, n_y_extended - self.m_spatial_order : n_y_extended] = 1
+        pml_mask_x[0 : self.m_spatial_order, :] = 1.0
+        pml_mask_x[n_x_extended - self.m_spatial_order : n_x_extended, :] = 1.0
+
+        pml_mask_y[:, 0 : self.m_spatial_order] = 1.0
+        pml_mask_y[:, n_y_extended - self.m_spatial_order : n_y_extended] = 1.0
 
         return pml_mask_x, pml_mask_y
 
@@ -1523,7 +1516,7 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
         return mask
 
     @staticmethod
-    def _mask_body_3d(nx: int, ny: int, nz: int, n_body: int) -> NDArray[np.float64]:
+    def _mask_body_3d(nx: int, ny: int, nz: int, n_body: int) -> NDArray[np.float32]:
         """Create a mask for the PML region.
 
         Parameters
@@ -1543,24 +1536,30 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             A 3D numpy array representing the PML mask.
 
         """
-        # Create coordinate grids (1-based indices like MATLAB)
-        x = np.arange(1, nx + 1)[:, None, None]
-        y = np.arange(1, ny + 1)[None, :, None]
-        z = np.arange(1, nz + 1)[None, None, :]
 
-        # Distances from each side boundary
-        ri = np.where(x <= n_body, n_body - x + 1, np.where(x > nx - n_body, x - (nx - n_body), 0))
-        rj = np.where(y <= n_body, n_body - y + 1, np.where(y > ny - n_body, y - (ny - n_body), 0))
-        rk = np.where(z <= n_body, n_body - z + 1, np.where(z > nz - n_body, z - (nz - n_body), 0))
+        def edge_distance_1d(n: int, n_body: int) -> NDArray[np.float32]:
+            d = np.zeros(n, dtype=np.float32)
+            if n_body <= 0:
+                return d
+            d[:n_body] = np.arange(n_body, 0, -1, dtype=np.float32)
+            d[-n_body:] = np.arange(1, n_body + 1, dtype=np.float32)
+            return d
 
-        # Compute mask
-        mask = np.sqrt(ri**2 + rj**2 + rk**2)
+        rx = edge_distance_1d(nx, n_body)[:, None, None]  # noqa: F841
+        ry = edge_distance_1d(ny, n_body)[None, :, None]  # noqa: F841
+        rz = edge_distance_1d(nz, n_body)[None, None, :]  # noqa: F841
 
-        # Normalize
-        if mask.max() > 0:
-            mask /= mask.max()
+        # 1) compute squared distance with numexpr (no reduction here)
+        mask_sq = ne.evaluate("rx*rx + ry*ry + rz*rz")  # shape (nx, ny, nz), float32
 
-        return mask
+        # 2) reduction done by NumPy, then scalar sqrt
+        mmax = float(np.sqrt(mask_sq.max()))
+        if mmax > 0.0:
+            # 3) normalize in squared space (still via numexpr, elementwise only)
+            mask_sq = ne.evaluate("mask_sq / (mmax*mmax)")
+
+        # 4) final sqrt elementwise
+        return ne.evaluate("1 - sqrt(mask_sq)")
 
     def _apply_pml_3d(
         self,
@@ -1572,7 +1571,7 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             nz=extended_medium.alpha_exp.shape[2],
             n_body=self.num_boundary_points,
         )
-        extended_medium.alpha_exp *= 1 - a_mask
+        extended_medium.alpha_exp *= a_mask
         return extended_medium
 
     def _apply_pml_2d(
@@ -1584,5 +1583,5 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             ny=extended_medium.alpha_exp.shape[1],
             n_body=self.num_boundary_points,
         )
-        extended_medium.alpha_exp *= 1 - a_mask
+        extended_medium.alpha_exp *= a_mask
         return extended_medium
