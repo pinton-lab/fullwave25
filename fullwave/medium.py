@@ -1207,10 +1207,13 @@ class Medium:
             shape: [nx, ny] for 2D, [nx, ny, nz] for 3D
 
         """
-        np_factor = -10 * np.log10(np.exp(-1))  # equivalent to -db(exp(-1)) in MATLAB
-        f0 = self.grid.omega / (2.0 * np.pi * 1e6)
-        texp = alpha_coeff / 2.0 * f0 * self.grid.c0 / (1e-2 * np_factor)
-        return np.exp(-self.grid.dt * texp)
+        # Scalars
+        np_factor = -10.0 * np.log10(np.exp(-1.0))  # scalar
+        f0 = self.grid.omega / (2.0 * np.pi * 1e6)  # scalar
+        att_factor_dt = -self.grid.dt * 0.5 * f0 * self.grid.c0 / (1e-2 * np_factor)
+
+        # numexpr: exp(att_factor_dt * alpha_coeff)
+        return ne.evaluate("exp(att * a)", local_dict={"a": alpha_coeff, "att": att_factor_dt})
 
     def build_exponential(self) -> MediumExponentialAttenuation:
         """Build MediumExponentialAttenuation from alpha and power maps.
