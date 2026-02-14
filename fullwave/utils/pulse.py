@@ -3,13 +3,6 @@
 import numpy as np
 from numpy.typing import NDArray
 
-try:
-    import cupy as cp
-
-    CUPY_AVAILABLE = True
-except ImportError:
-    CUPY_AVAILABLE = False
-
 
 def gaussian_modulated_sinusoidal_signal(
     nt: int,
@@ -26,8 +19,6 @@ def gaussian_modulated_sinusoidal_signal(
     dtype: np.dtype = np.float64,
 ) -> NDArray[np.float64]:
     """Generate Gaussian-modulated sinusoidal signal.
-
-    Automatically uses GPU (CuPy) if available, otherwise falls back to NumPy.
 
     Parameters
     ----------
@@ -66,99 +57,6 @@ def gaussian_modulated_sinusoidal_signal(
 
 
     """
-    if CUPY_AVAILABLE:
-        return _gaussian_modulated_sinusoidal_signal_cupy(
-            nt,
-            duration,
-            ncycles,
-            drop_off,
-            f0,
-            p0,
-            delay_sec,
-            i_layer,
-            dt_for_layer_delay,
-            cfl_for_layer_delay,
-            dtype=dtype,
-        )
-    return _gaussian_modulated_sinusoidal_signal_numpy(
-        nt,
-        duration,
-        ncycles,
-        drop_off,
-        f0,
-        p0,
-        delay_sec,
-        i_layer,
-        dt_for_layer_delay,
-        cfl_for_layer_delay,
-        dtype=dtype,
-    )
-
-
-def _gaussian_modulated_sinusoidal_signal_cupy(
-    nt: int,
-    duration: float,
-    ncycles: int,
-    drop_off: int,
-    f0: float,
-    p0: float,
-    delay_sec: float,
-    i_layer: int | None,
-    dt_for_layer_delay: float | None,
-    cfl_for_layer_delay: float | None,
-    dtype: np.dtype = np.float64,
-) -> NDArray[np.float64]:
-    """CuPy GPU implementation."""
-    # Build time array on GPU
-    t = cp.arange(nt, dtype=dtype)
-    t *= duration / nt
-    t -= ncycles / f0 + delay_sec
-
-    if i_layer is not None:
-        if dt_for_layer_delay is None:
-            error_msg = "dt_for_layer_delay must be provided if i_layer is provided"
-            raise ValueError(error_msg)
-        if cfl_for_layer_delay is None:
-            error_msg = "cfl_for_layer_delay must be provided if i_layer is provided"
-            raise ValueError(error_msg)
-        t -= (dt_for_layer_delay / cfl_for_layer_delay) * i_layer
-
-    omega0 = 2.0 * cp.pi * f0
-    w_t = t * omega0
-
-    # Compute envelope
-    coeff = 1.05 / (ncycles * cp.pi)
-    a_sq = (coeff * w_t) ** 2
-
-    # Fast path for common drop_off values
-    if drop_off == 1:
-        env = cp.exp(-a_sq)
-    elif drop_off == 2:
-        env = cp.exp(-a_sq * a_sq)
-    else:
-        env = cp.exp(-(a_sq**drop_off))
-
-    # Compute final signal
-    y = env * cp.sin(w_t) * p0
-
-    # Transfer back to CPU as NumPy array
-    return cp.asnumpy(y)
-
-
-def _gaussian_modulated_sinusoidal_signal_numpy(
-    nt: int,
-    duration: float,
-    ncycles: int,
-    drop_off: int,
-    f0: float,
-    p0: float,
-    delay_sec: float,
-    i_layer: int | None,
-    dt_for_layer_delay: float | None,
-    cfl_for_layer_delay: float | None,
-    dtype: np.dtype = np.float64,
-) -> NDArray[np.float64]:
-    """NumPy CPU fallback implementation."""
     # Build time array
     dt = duration / nt
     t_offset = ncycles / f0 + delay_sec
