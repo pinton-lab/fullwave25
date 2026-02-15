@@ -2,13 +2,13 @@
 
 import logging
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numexpr as ne
 import numpy as np
-from joblib import Parallel, delayed
 from numpy.typing import NDArray
 
 from fullwave import Grid
@@ -46,6 +46,7 @@ class MediumRelaxationMaps:
         n_relaxation_mechanisms: int = 2,
         use_isotropic_relaxation: bool = True,
         n_jobs: int = -1,
+        dtype: type = np.float64,
     ) -> None:
         """Medium class for Fullwave.
 
@@ -87,6 +88,9 @@ class MediumRelaxationMaps:
             unless the anisotropic attenuation is required for the simulation.
         n_jobs : int, optional
             Number of parallel jobs for relaxation parameter calculations.
+        dtype : type, optional
+            Data type for medium arrays. Default is np.float64.
+            Use np.float32 to reduce Python-side memory usage by ~50%.
 
         """
         check_functions.check_compatible_value(
@@ -95,9 +99,10 @@ class MediumRelaxationMaps:
             "Only n_relaxation_mechanisms=2 are supported currently.",
         )
         self.n_relaxation_mechanisms = n_relaxation_mechanisms
+        self.dtype = np.dtype(dtype)
         self.relaxation_param_dict = initialize_relaxation_param_dict(
             n_relaxation_mechanisms=n_relaxation_mechanisms,
-            value=np.zeros_like(sound_speed),
+            value=np.zeros_like(sound_speed, dtype=self.dtype),
         )
         self.grid = grid
         self.is_3d = grid.is_3d
@@ -132,9 +137,9 @@ class MediumRelaxationMaps:
 
     def __post_init__(self) -> None:
         """Post-initialization processing for Medium."""
-        self.sound_speed = np.atleast_2d(self.sound_speed)
-        self.density = np.atleast_2d(self.density)
-        self.beta = np.atleast_2d(self.beta)
+        self.sound_speed = np.atleast_2d(self.sound_speed).astype(self.dtype, copy=False)
+        self.density = np.atleast_2d(self.density).astype(self.dtype, copy=False)
+        self.beta = np.atleast_2d(self.beta).astype(self.dtype, copy=False)
 
     def _update_relaxation_param_dict(
         self,
@@ -151,82 +156,51 @@ class MediumRelaxationMaps:
         n_nu = self.n_relaxation_mechanisms
         kappa_x1 = relaxation_param_updates["kappa_x1"]
         kappa_x2 = relaxation_param_updates["kappa_x2"]
-        base_shape = kappa_x1.shape
 
-        # Pre-allocate stacked arrays: (..., n_nu)
-        d_x1 = np.empty((*base_shape, n_nu), dtype=np.float64)
-        alpha_x1 = np.empty_like(d_x1)
-        d_x2 = np.empty((*base_shape, n_nu), dtype=np.float64)
-        alpha_x2 = np.empty_like(d_x2)
+        # Work directly with lists of contiguous array references.
+        # This eliminates the costly copies into non-contiguous stacked array slices.
+        d_x1 = [relaxation_param_updates[f"d_x1_nu{i + 1}"] for i in range(n_nu)]
+        a_x1 = [relaxation_param_updates[f"alpha_x1_nu{i + 1}"] for i in range(n_nu)]
+        d_x2 = [relaxation_param_updates[f"d_x2_nu{i + 1}"] for i in range(n_nu)]
+        a_x2 = [relaxation_param_updates[f"alpha_x2_nu{i + 1}"] for i in range(n_nu)]
 
-        # Fill stacked arrays from dict
-        for i in range(n_nu):
-            nu = i + 1
-            d_x1[..., i] = relaxation_param_updates[f"d_x1_nu{nu}"]
-            alpha_x1[..., i] = relaxation_param_updates[f"alpha_x1_nu{nu}"]
-            d_x2[..., i] = relaxation_param_updates[f"d_x2_nu{nu}"]
-            alpha_x2[..., i] = relaxation_param_updates[f"alpha_x2_nu{nu}"]
+        # Vectorized compare-and-swap sort by time constant (d/kappa + alpha).
+        # O(n_nu^2) vectorized passes — each comparison and swap is a full
+        # SIMD/cache-friendly pass over contiguous arrays.
+        # x1 and x2 directions are independent, so run in parallel threads
+        # (numpy/numexpr release the GIL during computation).
+        def _sort_by_time_const(
+            d_arrays: list[NDArray[np.float64]],
+            a_arrays: list[NDArray[np.float64]],
+            kappa: NDArray[np.float64],  # noqa: ARG001
+        ) -> None:
+            for i in range(n_nu):
+                for j in range(i + 1, n_nu):
+                    di, dj = d_arrays[i], d_arrays[j]
+                    ai, aj = a_arrays[i], a_arrays[j]
+                    swap = ne.evaluate("di / kappa + ai > dj / kappa + aj")
+                    d_arrays[i] = np.where(swap, dj, di)
+                    d_arrays[j] = np.where(swap, di, dj)
+                    a_arrays[i] = np.where(swap, aj, ai)
+                    a_arrays[j] = np.where(swap, ai, aj)
 
-        # Broadcast kappa
-        kappa_x1_b = np.broadcast_to(kappa_x1[..., None], d_x1.shape)
-        kappa_x2_b = np.broadcast_to(kappa_x2[..., None], d_x2.shape)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            fut_x1 = pool.submit(_sort_by_time_const, d_x1, a_x1, kappa_x1)
+            fut_x2 = pool.submit(_sort_by_time_const, d_x2, a_x2, kappa_x2)
+            fut_x1.result()
+            fut_x2.result()
 
-        # ============ PARALLEL: compute time constants per mechanism ============
-        def _compute_time_const_mechanism(
-            i_nu: int,
-        ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-            return (
-                self._calc_time_constants(
-                    dx=d_x1[..., i_nu],
-                    kappa=kappa_x1_b[..., i_nu],
-                    alpha=alpha_x1[..., i_nu],
-                ),
-                self._calc_time_constants(
-                    dx=d_x2[..., i_nu],
-                    kappa=kappa_x2_b[..., i_nu],
-                    alpha=alpha_x2[..., i_nu],
-                ),
-            )
-
-        # Run in parallel (n_jobs=-1 uses all CPUs; tune if needed)
-        results = Parallel(n_jobs=self.n_jobs)(
-            delayed(_compute_time_const_mechanism)(i) for i in range(n_nu)
-        )
-
-        n = len(results)
-        sh = results[0][0].shape
-
-        time_const_x1 = np.empty((*sh, n), dtype=np.float32)
-        time_const_x2 = np.empty((*sh, n), dtype=np.float32)
-
-        for i, (tc1, tc2) in enumerate(results):
-            time_const_x1[..., i] = tc1  # cast happens during assignment
-            time_const_x2[..., i] = tc2
-
-        time_const_x1 = np.ascontiguousarray(time_const_x1, dtype=np.float32)
-        time_const_x2 = np.ascontiguousarray(time_const_x2, dtype=np.float32)
-        # =========================================================================
-
-        # Sort the nu values based on the time constants
-        sorted_indices_x1 = np.argsort(time_const_x1, axis=-1, kind="quicksort")
-        sorted_indices_x2 = np.argsort(time_const_x2, axis=-1, kind="quicksort")
-        # Apply sorting once for all nus
-        d_x1_sorted = np.take_along_axis(d_x1, sorted_indices_x1, axis=-1)
-        alpha_x1_sorted = np.take_along_axis(alpha_x1, sorted_indices_x1, axis=-1)
-        d_x2_sorted = np.take_along_axis(d_x2, sorted_indices_x2, axis=-1)
-        alpha_x2_sorted = np.take_along_axis(alpha_x2, sorted_indices_x2, axis=-1)
-
-        # Write back into relaxation_param_dict
+        # Write results into relaxation_param_dict
         param_dict = self.relaxation_param_dict
         param_dict["kappa_x1"] = np.atleast_2d(kappa_x1)
         param_dict["kappa_x2"] = np.atleast_2d(kappa_x2)
 
         for i in range(n_nu):
             nu = i + 1
-            param_dict[f"d_x1_nu{nu}"] = np.atleast_2d(d_x1_sorted[..., i])
-            param_dict[f"alpha_x1_nu{nu}"] = np.atleast_2d(alpha_x1_sorted[..., i])
-            param_dict[f"d_x2_nu{nu}"] = np.atleast_2d(d_x2_sorted[..., i])
-            param_dict[f"alpha_x2_nu{nu}"] = np.atleast_2d(alpha_x2_sorted[..., i])
+            param_dict[f"d_x1_nu{nu}"] = np.atleast_2d(d_x1[i])
+            param_dict[f"alpha_x1_nu{nu}"] = np.atleast_2d(a_x1[i])
+            param_dict[f"d_x2_nu{nu}"] = np.atleast_2d(d_x2[i])
+            param_dict[f"alpha_x2_nu{nu}"] = np.atleast_2d(a_x2[i])
 
         # Cache and check keys
         desired_key_set = getattr(
@@ -319,6 +293,7 @@ class MediumRelaxationMaps:
         kappa_x: float | NDArray[np.float64],
         alpha_x: float | NDArray[np.float64],
         dt: float | NDArray[np.float64],
+        output_dtype: np.dtype | None = None,
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         dx = np.asarray(dx, dtype=np.float64)
         kappa_x = np.asarray(kappa_x, dtype=np.float64)
@@ -335,6 +310,10 @@ class MediumRelaxationMaps:
 
         # a = dx/denom*(b - 1)
         a = ne.evaluate("dx/denom*(b - 1)")
+
+        if output_dtype is not None and output_dtype != np.float64:
+            a = a.astype(output_dtype, copy=False)
+            b = b.astype(output_dtype, copy=False)
 
         return a, b
 
@@ -377,6 +356,7 @@ class MediumRelaxationMaps:
                 kappa_x=self.relaxation_param_dict["kappa_x1"],
                 alpha_x=self.relaxation_param_dict[f"alpha_x1_nu{nu}"],
                 dt=self.grid.dt,
+                output_dtype=self.dtype,
             )
             (
                 relaxation_coefficients[f"a_pml_x2_nu{nu}"],
@@ -386,6 +366,7 @@ class MediumRelaxationMaps:
                 kappa_x=self.relaxation_param_dict["kappa_x2"],
                 alpha_x=self.relaxation_param_dict[f"alpha_x2_nu{nu}"],
                 dt=self.grid.dt,
+                output_dtype=self.dtype,
             )
         return relaxation_coefficients
 
@@ -640,6 +621,7 @@ class MediumExponentialAttenuation:
         *,
         air_map: NDArray[np.int64] | None = None,
         air_coords: NDArray[np.int64] | None = None,
+        dtype: type = np.float64,
     ) -> None:
         """Medium class for Fullwave.
 
@@ -667,11 +649,15 @@ class MediumExponentialAttenuation:
         air_coords: NDArray[np.int64], optional
             Coordinate array of air positions, shape [n_air, ndim].
             Mutually exclusive with air_map.
+        dtype : type, optional
+            Data type for medium arrays. Default is np.float64.
+            Use np.float32 to reduce Python-side memory usage by ~50%.
 
         """
         check_functions.check_instance(grid, Grid)
         self.grid = grid
         self.is_3d = grid.is_3d
+        self.dtype = np.dtype(dtype)
 
         self.sound_speed = sound_speed
         self.density = density
@@ -694,10 +680,10 @@ class MediumExponentialAttenuation:
 
     def __post_init__(self) -> None:
         """Post-initialization processing for Medium."""
-        self.sound_speed = np.atleast_2d(self.sound_speed)
-        self.density = np.atleast_2d(self.density)
-        self.alpha_exp = np.atleast_2d(self.alpha_exp)
-        self.beta = np.atleast_2d(self.beta)
+        self.sound_speed = np.atleast_2d(self.sound_speed).astype(self.dtype, copy=False)
+        self.density = np.atleast_2d(self.density).astype(self.dtype, copy=False)
+        self.alpha_exp = np.atleast_2d(self.alpha_exp).astype(self.dtype, copy=False)
+        self.beta = np.atleast_2d(self.beta).astype(self.dtype, copy=False)
 
     def check_fields(self) -> None:
         """Check if the fields have the correct shape."""
@@ -871,6 +857,7 @@ class Medium:
         attenuation_builder: str = "lookup",
         use_isotropic_relaxation: bool = True,
         n_jobs: int = -1,
+        dtype: type = np.float64,
     ) -> None:
         """Medium class for Fullwave.
 
@@ -920,6 +907,11 @@ class Medium:
         n_jobs : int, optional
             Number of parallel jobs for relaxation parameter calculation.
             Default is -1, which uses all available CPUs.
+        dtype : type, optional
+            Data type for medium arrays. Default is np.float64.
+            Use np.float32 to reduce Python-side memory usage by ~50%.
+            The CUDA solver reads all data as float32, so float32 storage
+            avoids redundant conversion copies.
 
         """
         check_functions.check_compatible_value(
@@ -931,6 +923,7 @@ class Medium:
         check_functions.check_path_exists(path_relaxation_parameters_database)
         self.grid = grid
         self.is_3d = grid.is_3d
+        self.dtype = np.dtype(dtype)
 
         self.sound_speed = sound_speed
         self.density = density
@@ -970,11 +963,11 @@ class Medium:
 
     def __post_init__(self) -> None:
         """Post-initialization processing for Medium."""
-        self.sound_speed = np.atleast_2d(self.sound_speed)
-        self.density = np.atleast_2d(self.density)
-        self.alpha_coeff = np.atleast_2d(self.alpha_coeff)
-        self.alpha_power = np.atleast_2d(self.alpha_power)
-        self.beta = np.atleast_2d(self.beta)
+        self.sound_speed = np.atleast_2d(self.sound_speed).astype(self.dtype, copy=False)
+        self.density = np.atleast_2d(self.density).astype(self.dtype, copy=False)
+        self.alpha_coeff = np.atleast_2d(self.alpha_coeff).astype(self.dtype, copy=False)
+        self.alpha_power = np.atleast_2d(self.alpha_power).astype(self.dtype, copy=False)
+        self.beta = np.atleast_2d(self.beta).astype(self.dtype, copy=False)
 
     def check_fields(self) -> None:
         """Check if the fields have the correct shape."""
@@ -1176,6 +1169,10 @@ class Medium:
                 'Only "lookup" is supported currently.'
             )
             raise ValueError(error_msg)
+        if self.dtype != np.float64:
+            relaxation_param_dict = {
+                k: v.astype(self.dtype, copy=False) for k, v in relaxation_param_dict.items()
+            }
         return MediumRelaxationMaps(
             grid=self.grid,
             sound_speed=self.sound_speed,
@@ -1186,6 +1183,7 @@ class Medium:
             n_relaxation_mechanisms=self.n_relaxation_mechanisms,
             use_isotropic_relaxation=self.use_isotropic_relaxation,
             n_jobs=self.n_jobs,
+            dtype=self.dtype,
         )
 
     def _db_mhz_cm_to_a_exp(
@@ -1234,6 +1232,7 @@ class Medium:
             alpha_exp=alpha_exp,
             beta=self.beta,
             air_coords=self.air_coords,
+            dtype=self.dtype,
         )
 
     def print_info(self) -> None:

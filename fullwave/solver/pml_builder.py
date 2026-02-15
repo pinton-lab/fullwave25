@@ -267,6 +267,7 @@ class PMLBuilder:
                 air_coords=self.medium_org.air_coords + self.num_boundary_points,
                 n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
                 n_jobs=self.medium_org.n_jobs,
+                dtype=getattr(self.medium_org, "dtype", np.float64),
             )
         else:
             with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -308,6 +309,7 @@ class PMLBuilder:
                 path_relaxation_parameters_database=self.medium_org.path_relaxation_parameters_database,
                 attenuation_builder=self.medium_org.attenuation_builder,
                 n_jobs=self.medium_org.n_jobs,
+                dtype=getattr(self.medium_org, "dtype", np.float64),
             )
         logger.debug("building extended medium for pml...done")
 
@@ -555,6 +557,7 @@ class PMLBuilder:
         kappa_x: float | NDArray[np.float64],
         alpha_x: float | NDArray[np.float64],
         dt: float | NDArray[np.float64],
+        output_dtype: np.dtype | None = None,
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         d_x = np.asarray(d_x, dtype=np.float64)
         kappa_x = np.asarray(kappa_x, dtype=np.float64)
@@ -571,6 +574,10 @@ class PMLBuilder:
 
         # a = dx/denom*(b - 1)
         a = ne.evaluate("d_x/denom*(b - 1)")
+
+        if output_dtype is not None and output_dtype != np.float64:
+            a = a.astype(output_dtype, copy=False)
+            b = b.astype(output_dtype, copy=False)
 
         return a, b
 
@@ -815,6 +822,8 @@ class PMLBuilder:
             for axis in axis_list
         ]
 
+        medium_dtype = getattr(extended_medium, "dtype", None)
+
         def _worker(
             nu: int,
             axis: str,
@@ -824,6 +833,7 @@ class PMLBuilder:
                 kappa_x=out_dict[f"kappa_{axis}"],
                 alpha_x=out_dict[f"alpha_{axis}_nu{nu}"],
                 dt=extended_medium.grid.dt,
+                output_dtype=medium_dtype,
             )
             # Return keys + values so parent can update dict safely
             return (f"a_pml_{axis}{nu}", a, f"b_pml_{axis}{nu}", b)
@@ -850,7 +860,7 @@ class PMLBuilder:
 
         return extended_medium
 
-    def _apply_pml_3d(
+    def _apply_pml_3d(  # noqa: PLR0915
         self,
         extended_medium: fullwave.MediumRelaxationMaps,
         theoritical_reflection_coefficient: float,
@@ -1098,6 +1108,8 @@ class PMLBuilder:
             for axis in axis_list
         ]
 
+        medium_dtype = getattr(extended_medium, "dtype", None)
+
         def _worker(
             nu: int,
             axis: str,
@@ -1107,6 +1119,7 @@ class PMLBuilder:
                 kappa_x=out_dict[f"kappa_{axis}"],
                 alpha_x=out_dict[f"alpha_{axis}_nu{nu}"],
                 dt=extended_medium.grid.dt,
+                output_dtype=medium_dtype,
             )
             # Return keys + values so parent can update dict safely
             return (f"a_pml_{axis}{nu}", a, f"b_pml_{axis}{nu}", b)
@@ -1562,6 +1575,7 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
             path_relaxation_parameters_database=self.medium_org.path_relaxation_parameters_database,
             attenuation_builder=self.medium_org.attenuation_builder,
+            dtype=getattr(self.medium_org, "dtype", np.float64),
         )
         logger.debug("Extended medium for PML built successfully.")
 
