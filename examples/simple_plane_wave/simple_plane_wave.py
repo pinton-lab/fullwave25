@@ -72,6 +72,10 @@ def main() -> None:
     # --- define the acoustic source ---
     #
 
+    ncycles = 2
+    drop_off = 2
+    delay_max_steps = 0
+
     # initialize the pressure source mask
     p_mask = np.zeros((grid.nx, grid.ny), dtype=bool)
 
@@ -79,8 +83,10 @@ def main() -> None:
     element_thickness_px = 3
     p_mask[0:element_thickness_px, :] = True
 
+    tail_length = int((ncycles + drop_off) / f0 * (1 / grid.dt)) + delay_max_steps
+
     # define the pressure source [n_sources, nt]d
-    p0 = np.zeros((p_mask.sum(), grid.nt))  # [n_sources, nt]
+    p0 = np.zeros((p_mask.sum(), tail_length))  # [n_sources, nt]
 
     # The order of p_coordinates corresponds to the order of sources in p0
     p_coordinates = map_to_coords(p_mask)
@@ -91,8 +97,8 @@ def main() -> None:
             nt=grid.nt,  # number of time steps
             f0=f0,  # center frequency [Hz]
             duration=duration,  # duration [s]
-            ncycles=2,  # number of cycles
-            drop_off=2,  # drop off factor
+            ncycles=ncycles,  # number of cycles
+            drop_off=drop_off,  # drop off factor
             p0=1e5,  # maximum amplitude [Pa]
             i_layer=i_thickness,
             dt_for_layer_delay=grid.dt,
@@ -101,8 +107,7 @@ def main() -> None:
 
         # assign the source signal to the corresponding layer
         n_y = p_coordinates.shape[0] // element_thickness_px
-        p0[n_y * i_thickness : n_y * (i_thickness + 1), :] = p0_vec.copy()
-
+        p0[n_y * i_thickness : n_y * (i_thickness + 1), :] = p0_vec[:tail_length]
     # setup the Source instance
     source = fullwave.Source(p0, p_mask)
 
@@ -126,6 +131,7 @@ def main() -> None:
         source=source,
         sensor=sensor,
         run_on_memory=False,
+        # use_exponential_attenuation=False,
     )
     # fw_solver.summary()
     # execute the solver
