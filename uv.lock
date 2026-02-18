@@ -735,10 +735,9 @@ wheels = [
 
 [[package]]
 name = "fullwave25"
-version = "1.2.1.dev15"
+version = "1.2.1.dev16"
 source = { editable = "." }
 dependencies = [
-    { name = "cupy-cuda12x" },
     { name = "joblib" },
     { name = "matplotlib" },
     { name = "numba" },
@@ -779,7 +778,6 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cupy-cuda12x", specifier = ">=13.6.0" },
     { name = "cupy-cuda12x", marker = "extra == 'examples'", specifier = ">=13.6.0" },
     { name = "ipykernel", marker = "extra == 'examples'", specifier = ">=6.28.0" },
     { name = "joblib", specifier = ">=1.5.3" },
