@@ -3,7 +3,6 @@
 import concurrent.futures
 import logging
 import os
-import shutil
 import time
 from pathlib import Path
 
@@ -1069,10 +1068,10 @@ class InputFileWriter:
         )
 
     def _copy_simulation_bin_file(self, simulation_dir: Path) -> None:
-        shutil.copy(
-            src=self.path_fullwave_simulation_bin,
-            dst=simulation_dir / self.path_fullwave_simulation_bin.name,
-        )
+        dst = simulation_dir / self.path_fullwave_simulation_bin.name
+        if dst.exists() or dst.is_symlink():
+            dst.unlink()
+        dst.symlink_to(self.path_fullwave_simulation_bin.resolve())
 
     @staticmethod
     def _write_ic(
