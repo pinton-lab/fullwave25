@@ -1658,7 +1658,7 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
         return extended_medium
 
     @staticmethod
-    def _mask_body_2d(nx: int, ny: int, n_body: int) -> NDArray[np.float64]:
+    def _mask_body_2d(nx: int, ny: int, n_body: int) -> NDArray[np.float32]:
         """Create a mask for the PML region.
 
         Parameters
@@ -1672,26 +1672,30 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
 
         Returns
         -------
-        NDArray[np.float64]
-            A 3D numpy array representing the PML mask.
+        NDArray[np.float32]
+            A 2D numpy array representing the PML mask.
+            Interior (body) region is 1, PML boundary approaches 0.
 
         """
-        # Create coordinate grids (1-based indices like MATLAB)
-        x = np.arange(1, nx + 1)[:, None]
-        y = np.arange(1, ny + 1)[None, :]
 
-        # Distances from each side boundary
-        ri = np.where(x <= n_body, n_body - x + 1, np.where(x > nx - n_body, x - (nx - n_body), 0))
-        rj = np.where(y <= n_body, n_body - y + 1, np.where(y > ny - n_body, y - (ny - n_body), 0))
+        def edge_distance_1d(n: int, n_body: int) -> NDArray[np.float32]:
+            d = np.zeros(n, dtype=np.float32)
+            if n_body <= 0:
+                return d
+            d[:n_body] = np.arange(n_body, 0, -1, dtype=np.float32)
+            d[-n_body:] = np.arange(1, n_body + 1, dtype=np.float32)
+            return d
 
-        # Compute mask
-        mask = np.sqrt(ri**2 + rj**2)
+        rx = edge_distance_1d(nx, n_body)[:, None]  # noqa: F841
+        ry = edge_distance_1d(ny, n_body)[None, :]  # noqa: F841
 
-        # Normalize
-        if mask.max() > 0:
-            mask /= mask.max()
+        mask_sq = ne.evaluate("rx*rx + ry*ry")
 
-        return mask
+        mmax = float(np.sqrt(mask_sq.max()))
+        if mmax > 0.0:
+            mask_sq = ne.evaluate("mask_sq / (mmax*mmax)")
+
+        return ne.evaluate("1 - sqrt(mask_sq)")
 
     @staticmethod
     def _mask_body_3d(nx: int, ny: int, nz: int, n_body: int) -> NDArray[np.float32]:
