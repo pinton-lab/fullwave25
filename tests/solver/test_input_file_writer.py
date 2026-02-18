@@ -6,6 +6,7 @@ import pytest
 
 from fullwave.solver.input_file_writer import InputFileWriter
 from fullwave.utils import check_functions
+from fullwave.utils.numerical import matlab_round
 
 
 # Utility to create dummy Fullwave objects
@@ -28,7 +29,7 @@ def create_dummy_objects():
         beta=np.array([0.5, 0.5], dtype=np.float64),
         relaxation_param_dict_for_fw2={"a_pml_u1": np.array([[1.0]], dtype=np.float64)},
         n_relaxation_mechanisms=1,
-        air_map=np.array([0, 1], dtype=bool),
+        air_coords=np.array([[0, 0], [1, 1]], dtype=np.int64),
         n_air=1,
     )
     source = SimpleNamespace(
@@ -129,3 +130,51 @@ def test_run_static_creates_symbolic_links(tmp_path, work_and_bin, monkeypatch):
     assert dst_file.is_symlink(), "c.dat is not a symbolic link."
     # Verify that the symlink points to the correct source.
     assert dst_file.samefile(src_file)
+
+
+def _dc_map_original(c_map: np.ndarray) -> np.ndarray:
+    """Original _set_dc_map logic before in-place optimization."""
+    return matlab_round(c_map) - matlab_round(c_map.min()) + 1
+
+
+def _dc_map_optimized(c_map: np.ndarray) -> np.ndarray:
+    """Optimized _set_dc_map logic using in-place operations."""
+    c_min_rounded = matlab_round(c_map.min())
+    dc = np.array(c_map, dtype=np.float64)
+    dc += 1e-9
+    np.rint(dc, out=dc)
+    dc -= c_min_rounded
+    dc += 1
+    return dc.astype(np.int64)
+
+
+@pytest.mark.parametrize(
+    "c_map",
+    [
+        # Uniform medium
+        np.full((100, 80), 1540.0),
+        # Integer values (no rounding ambiguity)
+        np.arange(1400, 1600).reshape(40, 5).astype(np.float64),
+        # Values near 0.5 boundaries to stress MATLAB-style rounding
+        np.array([1499.5, 1500.0, 1500.5, 1501.4999, 1501.5001], dtype=np.float64),
+        # Random realistic sound speeds (soft tissue range)
+        np.random.default_rng(42).uniform(1400, 1600, size=(200, 150)),
+        # Single element
+        np.array([1540.0]),
+        # Negative offset to check subtraction of min
+        np.array([100.3, 200.7, 300.1, 400.9], dtype=np.float64),
+    ],
+    ids=[
+        "uniform",
+        "integer_range",
+        "half_boundaries",
+        "random_2d",
+        "single_element",
+        "negative_offset",
+    ],
+)
+def test_dc_map_optimized_matches_original(c_map):
+    """Verify that the in-place optimized _set_dc_map produces identical results."""
+    original = _dc_map_original(c_map)
+    optimized = _dc_map_optimized(c_map)
+    np.testing.assert_array_equal(original, optimized)

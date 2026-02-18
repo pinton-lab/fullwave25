@@ -21,40 +21,68 @@ class Sensor:
     outcoords: NDArray[np.int64]
     sampling_modulus_time: int = 1
 
-    def __init__(self, mask: NDArray[np.bool], sampling_modulus_time: int = 1) -> None:
+    def __init__(
+        self,
+        mask: NDArray[np.bool] | None = None,
+        sampling_modulus_time: int = 1,
+        *,
+        coords: NDArray[np.int64] | None = None,
+        grid_shape: tuple[int, ...] | None = None,
+    ) -> None:
         """Sensor class for Fullwave.
 
         Parameters
         ----------
-        mask : NDArray[np.bool]
+        mask : NDArray[np.bool] | None
             Binary matrix where the pressure is recorded at each time-step
-            shape: [nx, ny] for 2D, [nx, ny, nz] for 3D
+            shape: [nx, ny] for 2D, [nx, ny, nz] for 3D.
+            Mutually exclusive with coords/grid_shape.
         sampling_modulus_time: int
             Sampling modulus in time. Default is 1 (record at every time step).
             Changing this value to n will record the pressure every n time steps.
             It reduces the size of the output data.
+        coords : NDArray[np.int64] | None
+            Coordinate array of sensor positions, shape [n_sensors, ndim].
+            Must be provided together with grid_shape.
+        grid_shape : tuple[int, ...] | None
+            Shape of the computational grid. Required when using coords input.
+
+        Raises
+        ------
+        ValueError
+            If grid_shape is not provided when using coords input.
+            If both mask and coords are provided (mutually exclusive).
+            If neither mask nor coords (with grid_shape) is provided.
 
         """
-        mask = np.atleast_2d(mask)
+        if coords is not None:
+            if grid_shape is None:
+                msg = "grid_shape is required when using coords input"
+                raise ValueError(msg)
+            if mask is not None:
+                msg = "mask and coords are mutually exclusive"
+                raise ValueError(msg)
+            self.outcoords = np.atleast_2d(coords).astype(np.int64, copy=False)
+            self.grid_shape = tuple(grid_shape)
+        elif mask is not None:
+            mask = np.atleast_2d(mask)
+            self.grid_shape = mask.shape
+            self.outcoords = map_to_coords(mask)
+        else:
+            msg = "Either mask or coords (with grid_shape) must be provided"
+            raise ValueError(msg)
 
-        self.grid_shape = mask.shape
         self.sampling_modulus_time = sampling_modulus_time
         self.is_3d = len(self.grid_shape) == 3
-        outcoords = map_to_coords(mask)
-        if self.is_3d:
-            self.outcoords = outcoords
-        else:
-            # self.outcoords = np.stack([outcoords[:, 1], outcoords[:, 0]]).T
-            self.outcoords = outcoords
         super().__init__()
         logger.debug("Sensor instance created.")
 
     def validate(self, grid_shape: NDArray[np.int64] | tuple) -> None:
-        """Check if the source mask has the correct shape."""
+        """Check if the sensor coordinates are consistent with the grid shape."""
         grid_shape = tuple(grid_shape) if isinstance(grid_shape, np.ndarray) else grid_shape
-        assert self.mask.shape == grid_shape, f"{self.mask.shape} != {grid_shape}"
-        assert np.any(self.mask), "No active sensor found."
-        logger.debug("Sensor mask validated against grid shape.")
+        assert self.grid_shape == grid_shape, f"{self.grid_shape} != {grid_shape}"
+        assert self.n_sensors > 0, "No active sensor found."
+        logger.debug("Sensor validated against grid shape.")
 
     @property
     def mask(self) -> NDArray[np.int64]:

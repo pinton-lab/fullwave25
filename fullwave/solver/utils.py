@@ -1,6 +1,7 @@
 """utils module for Fullwave solver."""
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -65,6 +66,22 @@ def load_dat_and_reshape(
     return data.reshape(-1, n_sensors).T
 
 
+def _relaxation_param_keys(n_relaxation_mechanisms: int) -> list[str]:
+    """Return the ordered list of relaxation parameter keys."""
+    keys = ["kappa_x1", "kappa_x2"]
+    for i_relax in range(n_relaxation_mechanisms):
+        suffix = f"nu{i_relax + 1}"
+        keys.extend(
+            [
+                f"d_x1_{suffix}",
+                f"alpha_x1_{suffix}",
+                f"d_x2_{suffix}",
+                f"alpha_x2_{suffix}",
+            ],
+        )
+    return keys
+
+
 def initialize_relaxation_param_dict(
     n_relaxation_mechanisms: int = 2,
     value: NDArray[np.float64] | None = None,
@@ -76,14 +93,17 @@ def initialize_relaxation_param_dict(
 
     """
     logger.debug("Initializing relaxation parameter dictionary.")
-    out_dict: dict = {}
-    out_dict["kappa_x1"] = value.copy() if value is not None else None
-    out_dict["kappa_x2"] = value.copy() if value is not None else None
-    for i_relax in range(n_relaxation_mechanisms):
-        out_dict[f"d_x1_nu{i_relax + 1}"] = value.copy() if value is not None else None
-        out_dict[f"alpha_x1_nu{i_relax + 1}"] = value.copy() if value is not None else None
-        out_dict[f"d_x2_nu{i_relax + 1}"] = value.copy() if value is not None else None
-        out_dict[f"alpha_x2_nu{i_relax + 1}"] = value.copy() if value is not None else None
+    keys = _relaxation_param_keys(n_relaxation_mechanisms)
+
+    if value is None:
+        out_dict = dict.fromkeys(keys)
+    else:
+        # Parallelize array copies across threads. NumPy releases the GIL
+        # during memory operations so this scales with memory bandwidth.
+        with ThreadPoolExecutor(max_workers=len(keys)) as executor:
+            copies = list(executor.map(lambda _: value.copy(), keys))
+        out_dict = dict(zip(keys, copies, strict=False))
+
     logger.debug("Relaxation parameter dictionary initialized.")
     return out_dict
 

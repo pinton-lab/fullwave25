@@ -19,9 +19,9 @@ def normalize_255(image: np.ndarray) -> np.ndarray:
     return (image - image.min()) / (image.max() - image.min() + 1e-6) * 255
 
 
-def matlab_round(value: float) -> int:
-    """MATLAB style rounding of a value."""
-    return np.round(value + 1e-9).astype(int)
+def matlab_round(x: float) -> int:
+    """MATLAB style rounding of a x."""
+    return np.rint(np.asarray(x, dtype=np.float64) + 1e-9).astype(np.int64)
 
 
 def matlab_gaussian_filter(image: np.ndarray, sigma: float) -> np.ndarray:

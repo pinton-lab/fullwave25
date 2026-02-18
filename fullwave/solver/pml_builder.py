@@ -1,15 +1,18 @@
 """Perfectly Matched Layer (PML) setup for Fullwave."""
 
+import concurrent.futures
 import logging
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from functools import cached_property
+from itertools import starmap
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numexpr as ne
 import numpy as np
+from joblib import Parallel, delayed
 from numpy.typing import NDArray
-from tqdm import tqdm
 
 import fullwave
 from fullwave.solver.utils import initialize_relaxation_param_dict
@@ -112,7 +115,7 @@ class PMLBuilder:
     pml_mask_x: NDArray[np.float64] = field(init=False)
     pml_mask_y: NDArray[np.float64] = field(init=False)
 
-    def __init__(
+    def __init__(  # noqa: PLR0915
         self,
         grid: fullwave.Grid,
         medium: fullwave.Medium,
@@ -214,47 +217,123 @@ class PMLBuilder:
             ppw=self.grid_org.ppw,
             cfl=self.grid_org.cfl,
         )
+        logger.debug("building extended grid for pml...done")
 
         logger.debug("building extended medium for pml...")
         if isinstance(self.medium_org, fullwave.MediumRelaxationMaps):
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future_sound_speed = executor.submit(
+                    self._extend_map_for_pml,
+                    self.medium_org.sound_speed,
+                )
+                future_density = executor.submit(
+                    self._extend_map_for_pml,
+                    self.medium_org.density,
+                )
+                future_beta = executor.submit(
+                    self._extend_map_for_pml,
+                    self.medium_org.beta,
+                )
+                future_alpha_coeff = executor.submit(
+                    self._extend_map_for_pml,
+                    self.medium_org.alpha_coeff,
+                )
+                future_alpha_power = executor.submit(
+                    self._extend_map_for_pml,
+                    self.medium_org.alpha_power,
+                )
+                future_relaxation_param_dict = {
+                    key: executor.submit(self._extend_map_for_pml, value)
+                    for key, value in self.medium_org.relaxation_param_dict.items()
+                }
+
+                extended_sound_speed = future_sound_speed.result()
+                extended_density = future_density.result()
+                extended_beta = future_beta.result()
+                extended_alpha_coeff = future_alpha_coeff.result()
+                extended_alpha_power = future_alpha_power.result()
+                extended_relaxation_param_dict = {
+                    key: future.result() for key, future in future_relaxation_param_dict.items()
+                }
+
             self.extended_medium = fullwave.MediumRelaxationMaps(
                 grid=self.extended_grid,
-                sound_speed=self._extend_map_for_pml(self.medium_org.sound_speed),
-                density=self._extend_map_for_pml(self.medium_org.density),
-                beta=self._extend_map_for_pml(self.medium_org.beta),
-                relaxation_param_dict={
-                    key: self._extend_map_for_pml(value)
-                    for key, value in self.medium_org.relaxation_param_dict.items()
-                },
-                air_map=self._extend_map_for_pml(self.medium_org.air_map, fill_edge=False),
+                sound_speed=extended_sound_speed,
+                density=extended_density,
+                beta=extended_beta,
+                alpha_coeff=extended_alpha_coeff,
+                alpha_power=extended_alpha_power,
+                relaxation_param_dict=extended_relaxation_param_dict,
+                air_coords=self.medium_org.air_coords + self.num_boundary_points,
                 n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
                 n_jobs=self.medium_org.n_jobs,
+                dtype=getattr(self.medium_org, "dtype", np.float64),
             )
         else:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future_sound_speed = executor.submit(
+                    self._extend_map_for_pml,
+                    self.medium_org.sound_speed,
+                )
+                future_density = executor.submit(
+                    self._extend_map_for_pml,
+                    self.medium_org.density,
+                )
+                future_beta = executor.submit(
+                    self._extend_map_for_pml,
+                    self.medium_org.beta,
+                )
+                future_alpha_coeff = executor.submit(
+                    self._extend_map_for_pml,
+                    self.medium_org.alpha_coeff,
+                )
+                future_alpha_power = executor.submit(
+                    self._extend_map_for_pml,
+                    self.medium_org.alpha_power,
+                )
+
+                extended_sound_speed = future_sound_speed.result()
+                extended_density = future_density.result()
+                extended_beta = future_beta.result()
+                extended_alpha_coeff = future_alpha_coeff.result()
+                extended_alpha_power = future_alpha_power.result()
             self.extended_medium = fullwave.Medium(
                 grid=self.extended_grid,
-                sound_speed=self._extend_map_for_pml(self.medium_org.sound_speed),
-                density=self._extend_map_for_pml(self.medium_org.density),
-                beta=self._extend_map_for_pml(self.medium_org.beta),
-                alpha_coeff=self._extend_map_for_pml(self.medium_org.alpha_coeff),
-                alpha_power=self._extend_map_for_pml(self.medium_org.alpha_power),
-                air_map=self._extend_map_for_pml(self.medium_org.air_map, fill_edge=False),
+                sound_speed=extended_sound_speed,
+                density=extended_density,
+                beta=extended_beta,
+                alpha_coeff=extended_alpha_coeff,
+                alpha_power=extended_alpha_power,
+                air_coords=self.medium_org.air_coords + self.num_boundary_points,
                 n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
                 path_relaxation_parameters_database=self.medium_org.path_relaxation_parameters_database,
                 attenuation_builder=self.medium_org.attenuation_builder,
                 n_jobs=self.medium_org.n_jobs,
+                dtype=getattr(self.medium_org, "dtype", np.float64),
             )
+        logger.debug("building extended medium for pml...done")
 
         logger.debug("building extended source for pml...")
+        extended_grid_shape = tuple(
+            s + 2 * self.num_boundary_points for s in self.source_org.grid_shape
+        )
         self.extended_source = fullwave.Source(
             p0=self.source_org.p0,
-            mask=self._extend_map_for_pml(self.source_org.mask, fill_edge=False),
+            coords=self.source_org.incoords + self.num_boundary_points,
+            grid_shape=extended_grid_shape,
         )
+        logger.debug("building extended source for pml...done")
+
         logger.debug("building extended sensor for pml...")
+        extended_sensor_grid_shape = tuple(
+            s + 2 * self.num_boundary_points for s in self.sensor_org.grid_shape
+        )
         self.extended_sensor = fullwave.Sensor(
-            mask=self._extend_map_for_pml(self.sensor_org.mask, fill_edge=False),
+            coords=self.sensor_org.outcoords + self.num_boundary_points,
+            grid_shape=extended_sensor_grid_shape,
             sampling_modulus_time=self.sensor_org.sampling_modulus_time,
         )
+        logger.debug("building extended sensor for pml...done")
         if self.is_3d:
             self.pml_mask_x, self.pml_mask_y, self.pml_mask_z = self._localize_pml_region()
         else:
@@ -321,130 +400,185 @@ class PMLBuilder:
         """
         return self.n_air
 
+    # def _extend_map_for_pml(
+    #     self,
+    #     input_map: NDArray[np.float64 | np.int64 | np.bool],
+    #     *,
+    #     fill_edge: bool = True,
+    # ) -> NDArray[np.float64 | np.int64 | np.bool]:
+    #     kwargs = {} if fill_edge else {"constant_values": 0}
+    #     return np.pad(
+    #         input_map,
+    #         pad_width=self.num_boundary_points,
+    #         mode="edge" if fill_edge else "constant",
+    #         **kwargs,
+    #     )
+
     def _extend_map_for_pml(
         self,
-        input_map: NDArray[np.float64 | np.int64 | np.bool],
+        input_map: NDArray[np.float64 | np.int64 | np.bool_],
         *,
         fill_edge: bool = True,
-    ) -> NDArray[np.float64 | np.int64 | np.bool]:
-        kwargs = {} if fill_edge else {"constant_values": 0}
-        return np.pad(
-            input_map,
-            pad_width=self.num_boundary_points,
-            mode="edge" if fill_edge else "constant",
-            **kwargs,
-        )
+    ) -> NDArray[np.float64 | np.int64 | np.bool_]:
+        """Fast version using pre-allocation and direct assignment instead of np.pad."""
+        pad = self.num_boundary_points
 
-    def _extend_relaxation_param_dict(
-        self,
-        relaxation_param_dict: dict[str, NDArray[np.float64 | np.int64 | np.bool]],
-    ) -> dict[str, NDArray[np.float64 | np.int64 | np.bool]]:
-        output_dict = {}
-        for key, value in relaxation_param_dict.items():
-            output_dict[key] = self._extend_map_for_pml(value)
-        return output_dict
+        # Pre-allocate output array with correct dtype
+        if self.is_3d:
+            nx, ny, nz = input_map.shape
+            output = np.empty((nx + 2 * pad, ny + 2 * pad, nz + 2 * pad), dtype=input_map.dtype)
+
+            # Fill center with original data (single copy)
+            output[pad : pad + nx, pad : pad + ny, pad : pad + nz] = input_map
+
+            if fill_edge:
+                # Fill edges efficiently using broadcasting
+                # X boundaries
+                output[:pad, pad : pad + ny, pad : pad + nz] = input_map[0:1, :, :]
+                output[pad + nx :, pad : pad + ny, pad : pad + nz] = input_map[-1:, :, :]
+
+                # Y boundaries (now includes X corners)
+                output[:, :pad, pad : pad + nz] = output[:, pad : pad + 1, pad : pad + nz]
+                output[:, pad + ny :, pad : pad + nz] = output[
+                    :,
+                    pad + ny - 1 : pad + ny,
+                    pad : pad + nz,
+                ]
+
+                # Z boundaries (now includes all corners)
+                output[:, :, :pad] = output[:, :, pad : pad + 1]
+                output[:, :, pad + nz :] = output[:, :, pad + nz - 1 : pad + nz]
+            else:
+                # Fill with zeros
+                output[:pad, :, :] = 0
+                output[pad + nx :, :, :] = 0
+                output[:, :pad, :] = 0
+                output[:, pad + ny :, :] = 0
+                output[:, :, :pad] = 0
+                output[:, :, pad + nz :] = 0
+        else:  # 2D case
+            nx, ny = input_map.shape
+            output = np.empty((nx + 2 * pad, ny + 2 * pad), dtype=input_map.dtype)
+
+            # Fill center
+            output[pad : pad + nx, pad : pad + ny] = input_map
+
+            if fill_edge:
+                # Fill edges
+                output[:pad, pad : pad + ny] = input_map[0:1, :]
+                output[pad + nx :, pad : pad + ny] = input_map[-1:, :]
+                output[:, :pad] = output[:, pad : pad + 1]
+                output[:, pad + ny :] = output[:, pad + ny - 1 : pad + ny]
+            else:
+                output[:pad, :] = 0
+                output[pad + nx :, :] = 0
+                output[:, :pad] = 0
+                output[:, pad + ny :] = 0
+
+        return output
 
     def _localize_pml_region(self) -> tuple[NDArray[np.float64], ...]:
-        pml_mask_x: NDArray[np.float64]
-        pml_mask_y: NDArray[np.float64]
-        pml_mask_z: NDArray[np.float64]
         if self.is_3d:
             n_x_extended, n_y_extended, n_z_extended = self.extended_medium.sound_speed.shape
 
-            pml_mask_x = np.zeros((n_x_extended, n_y_extended, n_z_extended))
-            pml_mask_y = np.zeros((n_x_extended, n_y_extended, n_z_extended))
-            pml_mask_z = np.zeros((n_x_extended, n_y_extended, n_z_extended))
-            for i in range(self.n_pml_layer):
-                pml_mask_x[
-                    i + (n_x_extended - self.m_spatial_order - self.n_pml_layer),
-                    :,
-                    :,
-                ] = i / self.n_pml_layer
+            # Store 1D profiles instead of full 3D arrays to save memory.
+            # Each mask is separable: pml_mask_x[i,j,k] only depends on i.
+            pml_mask_x = np.zeros(n_x_extended, dtype=np.float64)
+            pml_mask_y = np.zeros(n_y_extended, dtype=np.float64)
+            pml_mask_z = np.zeros(n_z_extended, dtype=np.float64)
 
-                pml_mask_x[self.m_spatial_order + self.n_pml_layer - i - 1, :, :] = (
-                    i / self.n_pml_layer
-                )
+            # PML indices and values
+            i = np.arange(self.n_pml_layer, dtype=np.int64)
+            vals = i.astype(np.float64) / self.n_pml_layer
 
-                pml_mask_y[
-                    :,
-                    i + (n_y_extended - self.m_spatial_order - self.n_pml_layer),
-                    :,
-                ] = i / self.n_pml_layer
+            ix1 = i + (n_x_extended - self.m_spatial_order - self.n_pml_layer)
+            ix2 = self.m_spatial_order + self.n_pml_layer - i - 1
 
-                pml_mask_y[:, self.m_spatial_order + self.n_pml_layer - i - 1, :] = (
-                    i / self.n_pml_layer
-                )
+            iy1 = i + (n_y_extended - self.m_spatial_order - self.n_pml_layer)
+            iy2 = self.m_spatial_order + self.n_pml_layer - i - 1
 
-                pml_mask_z[
-                    :,
-                    :,
-                    i + (n_z_extended - self.m_spatial_order - self.n_pml_layer),
-                ] = i / self.n_pml_layer
+            iz1 = i + (n_z_extended - self.m_spatial_order - self.n_pml_layer)
+            iz2 = self.m_spatial_order + self.n_pml_layer - i - 1
 
-                pml_mask_z[:, :, self.m_spatial_order + self.n_pml_layer - i - 1] = (
-                    i / self.n_pml_layer
-                )
+            # Fill PML ramps
+            pml_mask_x[ix1] = vals
+            pml_mask_x[ix2] = vals
 
-            pml_mask_x[0 : self.m_spatial_order, :, :] = 1
-            pml_mask_x[n_x_extended - self.m_spatial_order : n_x_extended, :, :] = 1
+            pml_mask_y[iy1] = vals
+            pml_mask_y[iy2] = vals
 
-            pml_mask_y[:, 0 : self.m_spatial_order, :] = 1
-            pml_mask_y[:, n_y_extended - self.m_spatial_order : n_y_extended, :] = 1
+            pml_mask_z[iz1] = vals
+            pml_mask_z[iz2] = vals
 
-            pml_mask_z[:, :, 0 : self.m_spatial_order] = 1
-            pml_mask_z[:, :, n_z_extended - self.m_spatial_order : n_z_extended] = 1
+            # Inner "hard" PML region
+            pml_mask_x[0 : self.m_spatial_order] = 1.0
+            pml_mask_x[n_x_extended - self.m_spatial_order : n_x_extended] = 1.0
+
+            pml_mask_y[0 : self.m_spatial_order] = 1.0
+            pml_mask_y[n_y_extended - self.m_spatial_order : n_y_extended] = 1.0
+
+            pml_mask_z[0 : self.m_spatial_order] = 1.0
+            pml_mask_z[n_z_extended - self.m_spatial_order : n_z_extended] = 1.0
+
             return pml_mask_x, pml_mask_y, pml_mask_z
 
+        # 2D case — store 1D profiles instead of full 2D arrays
         n_x_extended, n_y_extended = self.extended_medium.sound_speed.shape
 
-        pml_mask_x = np.zeros((n_x_extended, n_y_extended))
-        pml_mask_y = np.zeros((n_x_extended, n_y_extended))
+        pml_mask_x = np.zeros(n_x_extended, dtype=np.float64)
+        pml_mask_y = np.zeros(n_y_extended, dtype=np.float64)
 
-        for i in range(self.n_pml_layer):
-            pml_mask_x[
-                i + (n_x_extended - self.m_spatial_order - self.n_pml_layer),
-                :,
-            ] = i / self.n_pml_layer
+        i = np.arange(self.n_pml_layer, dtype=np.int64)
+        vals = i.astype(np.float64) / self.n_pml_layer
 
-            pml_mask_x[self.m_spatial_order + self.n_pml_layer - i - 1, :] = i / self.n_pml_layer
+        ix1 = i + (n_x_extended - self.m_spatial_order - self.n_pml_layer)
+        ix2 = self.m_spatial_order + self.n_pml_layer - i - 1
 
-            pml_mask_y[
-                :,
-                i + (n_y_extended - self.m_spatial_order - self.n_pml_layer),
-            ] = i / self.n_pml_layer
+        iy1 = i + (n_y_extended - self.m_spatial_order - self.n_pml_layer)
+        iy2 = self.m_spatial_order + self.n_pml_layer - i - 1
 
-            pml_mask_y[:, self.m_spatial_order + self.n_pml_layer - i - 1] = i / self.n_pml_layer
+        pml_mask_x[ix1] = vals
+        pml_mask_x[ix2] = vals
 
-        pml_mask_x[0 : self.m_spatial_order, :] = 1
-        pml_mask_x[n_x_extended - self.m_spatial_order : n_x_extended, :] = 1
+        pml_mask_y[iy1] = vals
+        pml_mask_y[iy2] = vals
 
-        pml_mask_y[:, 0 : self.m_spatial_order] = 1
-        pml_mask_y[:, n_y_extended - self.m_spatial_order : n_y_extended] = 1
+        pml_mask_x[0 : self.m_spatial_order] = 1.0
+        pml_mask_x[n_x_extended - self.m_spatial_order : n_x_extended] = 1.0
+
+        pml_mask_y[0 : self.m_spatial_order] = 1.0
+        pml_mask_y[n_y_extended - self.m_spatial_order : n_y_extended] = 1.0
 
         return pml_mask_x, pml_mask_y
 
     @staticmethod
     def _calc_a_and_b(
-        d_x: NDArray[np.float64] | float,
-        kappa_x: NDArray[np.float64] | float,
-        alpha_x: NDArray[np.float64] | float,
-        dt: NDArray[np.float64] | float,
+        d_x: float | NDArray[np.float64],
+        kappa_x: float | NDArray[np.float64],
+        alpha_x: float | NDArray[np.float64],
+        dt: float | NDArray[np.float64],
+        output_dtype: np.dtype | None = None,
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        # Convert inputs to float64 arrays without unnecessary copies
         d_x = np.asarray(d_x, dtype=np.float64)
         kappa_x = np.asarray(kappa_x, dtype=np.float64)
         alpha_x = np.asarray(alpha_x, dtype=np.float64)
         dt = np.asarray(dt, dtype=np.float64)
 
-        # Common term for the exponential
-        tmp = d_x / kappa_x + alpha_x
-        b = np.exp(-tmp * dt)
+        eps = np.finfo(np.float64).eps  # noqa: F841
 
-        # Numerically safe denominator
-        eps = np.finfo(np.float64).eps
-        denom = kappa_x * (d_x + kappa_x * alpha_x) + eps
+        # b = exp(-(dx/kappa_x + alpha_x) * dt)
+        b = ne.evaluate("exp(-(d_x/kappa_x + alpha_x) * dt)")
 
-        a = d_x / denom * (b - 1.0)
+        # denom = kappa_x*(dx + kappa_x*alpha_x) + eps
+        denom = ne.evaluate("kappa_x*(d_x + kappa_x*alpha_x) + eps")  # noqa: F841
+
+        # a = dx/denom*(b - 1)
+        a = ne.evaluate("d_x/denom*(b - 1)")
+
+        if output_dtype is not None and output_dtype != np.float64:
+            a = a.astype(output_dtype, copy=False)
+            b = b.astype(output_dtype, copy=False)
+
         return a, b
 
     def run(self, *, use_pml: bool = True) -> fullwave.MediumRelaxationMaps:
@@ -469,7 +603,7 @@ class PMLBuilder:
                     n_polynomial=self.n_polynomial,
                 )
 
-            return self._apply_pml(
+            return self._apply_pml_2d(
                 extended_medium=extended_medium,
                 theoritical_reflection_coefficient=self.theoritical_reflection_coefficient,
                 n_polynomial=self.n_polynomial,
@@ -478,7 +612,7 @@ class PMLBuilder:
         extended_medium: fullwave.MediumRelaxationMaps = self.extended_medium.build()
         return extended_medium
 
-    def _apply_pml(
+    def _apply_pml_2d(
         self,
         extended_medium: fullwave.MediumRelaxationMaps,
         theoritical_reflection_coefficient: float,
@@ -533,140 +667,189 @@ class PMLBuilder:
             use_isotropic_relaxation=self.use_isotropic_relaxation,
         )
 
-        # if logger is debug, use tqdm for progress bar
-        tqdm_disable = not logger.isEnabledFor(logging.DEBUG)
+        def _compute_one(
+            key_fw2: str,
+            key_py: str,
+            relaxation_param_dict: dict[str, NDArray[np.float64]],
+            alpha_target_higher_nu: float,
+            d_target_higher_nu: float,
+            alpha_target_pml: float,
+            d_target_pml: float,
+            n_polynomial: float,
+            is_3d: bool,  # noqa: FBT001
+            apply_transition_and_pml_fn: callable,
+        ) -> tuple[str, NDArray[np.float64]]:
+            """Return (key_fw2, computed_array). No side effects."""
+            arr = relaxation_param_dict[key_py]
 
-        for key_fw2, key_py in tqdm(
-            rename_dict.items(),
-            desc="Applying PML to relaxation parameters",
-            total=len(rename_dict),
-            disable=tqdm_disable,
-        ):
             if key_fw2 in ["kappa_x", "kappa_u", "kappa_y", "kappa_w"]:
-                out_dict[key_fw2] = relaxation_param_dict[key_py].copy()
-            elif (
-                ("alpha_u_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("alpha_x_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("alpha_w_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("alpha_y_nu" in key_fw2 and "nu1" not in key_fw2)
-            ):
-                # out_dict[key_fw2] = relaxation_param_dict[key_py].copy()
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    relaxation_param_dict[key_py].copy(),
+                return key_fw2, arr
+
+            # helper predicates
+            is_alpha = (
+                ("alpha_u_nu" in key_fw2)
+                or ("alpha_x_nu" in key_fw2)
+                or ("alpha_w_nu" in key_fw2)
+                or ("alpha_y_nu" in key_fw2)
+            )
+            is_d = (
+                ("d_u_nu" in key_fw2)
+                or ("d_x_nu" in key_fw2)
+                or ("d_w_nu" in key_fw2)
+                or ("d_y_nu" in key_fw2)
+            )
+            has_nu1 = "nu1" in key_fw2
+
+            if is_alpha and (not has_nu1):
+                out = apply_transition_and_pml_fn(
+                    arr,
                     value_target=alpha_target_higher_nu,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=0,
                     transition_type="cosine",
                     transit_within_transition_layer=True,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
-                    # relaxation_param_dict[key_py].copy(),
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=alpha_target_higher_nu,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=1,
                     transition_type="cosine",
                     transit_within_transition_layer=True,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-            elif (
-                ("d_u_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("d_x_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("d_w_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("d_y_nu" in key_fw2 and "nu1" not in key_fw2)
-            ):
-                # out_dict[key_fw2] = relaxation_param_dict[key_py].copy()
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    relaxation_param_dict[key_py].copy(),
+                return key_fw2, out
+
+            if is_d and (not has_nu1):
+                out = apply_transition_and_pml_fn(
+                    arr,
                     value_target=d_target_higher_nu,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=0,
                     transition_type="cosine",
                     transit_within_transition_layer=True,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
-                    # relaxation_param_dict[key_py].copy(),
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=d_target_higher_nu,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=1,
                     transition_type="cosine",
                     transit_within_transition_layer=True,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-            elif (
-                ("alpha_u_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("alpha_x_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("alpha_w_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("alpha_y_nu" in key_fw2 and "nu1" in key_fw2)
-            ):
-                # out_dict[key_fw2] = relaxation_param_dict[key_py].copy()
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    relaxation_param_dict[key_py].copy(),
+                return key_fw2, out
+
+            if is_alpha and has_nu1:
+                out = apply_transition_and_pml_fn(
+                    arr,
                     value_target=alpha_target_pml,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=0,
                     transition_type="linear",
                     transit_within_transition_layer=False,
                     transit_within_pml_layer=False,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
-                    # relaxation_param_dict[key_py].copy(),
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=alpha_target_pml,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=1,
                     transition_type="linear",
                     transit_within_transition_layer=False,
                     transit_within_pml_layer=False,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-            elif (
-                ("d_u_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("d_x_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("d_w_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("d_y_nu" in key_fw2 and "nu1" in key_fw2)
-            ):
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    relaxation_param_dict[key_py].copy(),
+                return key_fw2, out
+
+            if is_d and has_nu1:
+                out = apply_transition_and_pml_fn(
+                    arr,
                     value_target=d_target_pml,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=0,
                     n_polynomial=n_polynomial,
                     transition_type="polynomial",
                     transit_within_transition_layer=False,
                     transit_within_pml_layer=False,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
-                    # relaxation_param_dict[key_py].copy(),
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=d_target_pml,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=1,
                     n_polynomial=n_polynomial,
                     transition_type="polynomial",
                     transit_within_transition_layer=False,
                     transit_within_pml_layer=False,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
+                return key_fw2, out
+
+            error_msg = f"Unhandled key_fw2 pattern: {key_fw2}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        items = list(rename_dict.items())
+
+        results = Parallel(n_jobs=self.medium_org.n_jobs, backend="threading")(
+            delayed(_compute_one)(
+                key_fw2,
+                key_py,
+                relaxation_param_dict,
+                alpha_target_higher_nu,
+                d_target_higher_nu,
+                alpha_target_pml,
+                d_target_pml,
+                n_polynomial,
+                self.is_3d,
+                self._apply_transition_and_pml,
+            )
+            for key_fw2, key_py in items
+        )
+        out_dict = dict(results)
 
         logger.debug("Calculating PML a and b coefficients...")
         axis_list = ["u", "x"] if self.use_isotropic_relaxation else ["u", "w", "x", "y"]
-        for nu in range(1, extended_medium.n_relaxation_mechanisms + 1):
-            for axis in axis_list:
-                (
-                    out_dict[f"a_pml_{axis}{nu}"],
-                    out_dict[f"b_pml_{axis}{nu}"],
-                ) = self._calc_a_and_b(
-                    d_x=out_dict[f"d_{axis}_nu{nu}"],
-                    kappa_x=out_dict[f"kappa_{axis}"],
-                    alpha_x=out_dict[f"alpha_{axis}_nu{nu}"],
-                    dt=extended_medium.grid.dt,
-                )
+        # Build independent tasks (flatten nested loops)
+        tasks = [
+            (nu, axis)
+            for nu in range(1, extended_medium.n_relaxation_mechanisms + 1)
+            for axis in axis_list
+        ]
+
+        medium_dtype = getattr(extended_medium, "dtype", None)
+
+        def _worker(
+            nu: int,
+            axis: str,
+        ) -> tuple[str, NDArray[np.float64], str, NDArray[np.float64]]:
+            a, b = self._calc_a_and_b(
+                d_x=out_dict[f"d_{axis}_nu{nu}"],
+                kappa_x=out_dict[f"kappa_{axis}"],
+                alpha_x=out_dict[f"alpha_{axis}_nu{nu}"],
+                dt=extended_medium.grid.dt,
+                output_dtype=medium_dtype,
+            )
+            # Return keys + values so parent can update dict safely
+            return (f"a_pml_{axis}{nu}", a, f"b_pml_{axis}{nu}", b)
+
+        results = Parallel(
+            n_jobs=self.medium_org.n_jobs,  # use all cores
+            backend="loky",  # process-based; safe default for Python code
+            prefer="processes",
+        )(
+            starmap(delayed(_worker), tasks),
+        )
+
+        for a_key, a_val, b_key, b_val in results:
+            out_dict[a_key] = a_val
+            out_dict[b_key] = b_val
+
         logger.debug("PML a and b coefficients calculation completed.")
 
         logger.debug("Updating extended medium relaxation parameters...")
@@ -677,7 +860,7 @@ class PMLBuilder:
 
         return extended_medium
 
-    def _apply_pml_3d(
+    def _apply_pml_3d(  # noqa: PLR0915
         self,
         extended_medium: fullwave.MediumRelaxationMaps,
         theoritical_reflection_coefficient: float,
@@ -731,184 +914,228 @@ class PMLBuilder:
             use_isotropic_relaxation=self.use_isotropic_relaxation,
         )
 
-        tqdm_disable = not logger.isEnabledFor(logging.DEBUG)
+        def _compute_one(
+            key_fw2: str,
+            key_py: str,
+            relaxation_param_dict: dict[str, NDArray[np.float64]],
+            alpha_target_higher_nu: float,
+            d_target_higher_nu: float,
+            alpha_target_pml: float,
+            d_target_pml: float,
+            n_polynomial: float,
+            is_3d: bool,  # noqa: FBT001
+            apply_transition_and_pml_fn: callable,
+        ) -> tuple[str, NDArray[np.float64]]:
+            """Return (key_fw2, computed_array). No side effects."""
+            arr = relaxation_param_dict[key_py]
 
-        for key_fw2, key_py in tqdm(
-            rename_dict.items(),
-            desc="Applying PML to relaxation parameters",
-            total=len(rename_dict),
-            disable=tqdm_disable,
-        ):
-            if (
-                key_fw2 in ["kappa_x", "kappa_u"]
-                or key_fw2 in ["kappa_y", "kappa_v"]
-                or key_fw2 in ["kappa_z", "kappa_w"]
-            ):
-                out_dict[key_fw2] = relaxation_param_dict[key_py].copy()
-            elif (
-                ("alpha_u_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("alpha_v_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("alpha_w_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("alpha_x_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("alpha_y_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("alpha_z_nu" in key_fw2 and "nu1" not in key_fw2)
-            ):
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    relaxation_param_dict[key_py].copy(),
+            if key_fw2 in ["kappa_x", "kappa_u", "kappa_y", "kappa_v", "kappa_z", "kappa_w"]:
+                return key_fw2, arr
+
+            # helper predicates
+            is_alpha = (
+                ("alpha_u_nu" in key_fw2)
+                or ("alpha_v_nu" in key_fw2)
+                or ("alpha_w_nu" in key_fw2)
+                or ("alpha_x_nu" in key_fw2)
+                or ("alpha_y_nu" in key_fw2)
+                or ("alpha_z_nu" in key_fw2)
+            )
+            is_d = (
+                ("d_u_nu" in key_fw2)
+                or ("d_v_nu" in key_fw2)
+                or ("d_w_nu" in key_fw2)
+                or ("d_x_nu" in key_fw2)
+                or ("d_y_nu" in key_fw2)
+                or ("d_z_nu" in key_fw2)
+            )
+            has_nu1 = "nu1" in key_fw2
+
+            if is_alpha and (not has_nu1):
+                out = apply_transition_and_pml_fn(
+                    arr,
                     value_target=alpha_target_higher_nu,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=0,
                     transition_type="cosine",
                     transit_within_transition_layer=True,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=alpha_target_higher_nu,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=1,
                     transition_type="cosine",
                     transit_within_transition_layer=True,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=alpha_target_higher_nu,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=2,
                     transition_type="cosine",
                     transit_within_transition_layer=True,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-            elif (
-                ("d_u_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("d_v_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("d_w_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("d_x_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("d_y_nu" in key_fw2 and "nu1" not in key_fw2)
-                or ("d_z_nu" in key_fw2 and "nu1" not in key_fw2)
-            ):
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    relaxation_param_dict[key_py].copy(),
+                return key_fw2, out
+            if is_d and (not has_nu1):
+                out = apply_transition_and_pml_fn(
+                    arr,
                     value_target=d_target_higher_nu,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=0,
                     transition_type="cosine",
                     transit_within_transition_layer=True,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=d_target_higher_nu,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=1,
                     transition_type="cosine",
                     transit_within_transition_layer=True,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=d_target_higher_nu,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=2,
                     transition_type="cosine",
                     transit_within_transition_layer=True,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-            elif (
-                ("alpha_u_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("alpha_v_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("alpha_w_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("alpha_x_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("alpha_y_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("alpha_z_nu" in key_fw2 and "nu1" in key_fw2)
-            ):
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    relaxation_param_dict[key_py].copy(),
+                return key_fw2, out
+            if is_alpha and has_nu1:
+                out = apply_transition_and_pml_fn(
+                    arr,
                     value_target=alpha_target_pml,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=0,
                     transition_type="linear",
                     transit_within_transition_layer=False,
                     transit_within_pml_layer=False,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=alpha_target_pml,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=1,
                     transition_type="linear",
                     transit_within_transition_layer=False,
                     transit_within_pml_layer=False,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=alpha_target_pml,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=2,
                     transition_type="linear",
                     transit_within_transition_layer=False,
                     transit_within_pml_layer=False,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-            elif (
-                ("d_u_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("d_v_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("d_w_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("d_x_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("d_y_nu" in key_fw2 and "nu1" in key_fw2)
-                or ("d_z_nu" in key_fw2 and "nu1" in key_fw2)
-            ):
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    relaxation_param_dict[key_py].copy(),
+                return key_fw2, out
+            if is_d and has_nu1:
+                out = apply_transition_and_pml_fn(
+                    arr,
                     value_target=d_target_pml,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=0,
                     n_polynomial=n_polynomial,
                     transition_type="polynomial",
                     transit_within_transition_layer=False,
                     transit_within_pml_layer=False,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=d_target_pml,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=1,
                     n_polynomial=n_polynomial,
                     transition_type="polynomial",
                     transit_within_transition_layer=False,
                     transit_within_pml_layer=False,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
-                out_dict[key_fw2] = self._apply_transition_and_pml(
-                    out_dict[key_fw2],
+                out = apply_transition_and_pml_fn(
+                    out,
                     value_target=d_target_pml,
-                    array_shape=relaxation_param_dict[key_py].shape,
+                    array_shape=arr.shape,
                     axis=2,
                     n_polynomial=n_polynomial,
                     transition_type="polynomial",
                     transit_within_transition_layer=False,
                     transit_within_pml_layer=False,
-                    is_3d=self.is_3d,
+                    is_3d=is_3d,
                 )
+                return key_fw2, out
+            error_msg = f"Unhandled key_fw2 pattern: {key_fw2}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        items = list(rename_dict.items())
+        results = Parallel(n_jobs=self.medium_org.n_jobs, backend="threading")(
+            delayed(_compute_one)(
+                key_fw2,
+                key_py,
+                relaxation_param_dict,
+                alpha_target_higher_nu,
+                d_target_higher_nu,
+                alpha_target_pml,
+                d_target_pml,
+                n_polynomial,
+                self.is_3d,
+                self._apply_transition_and_pml,
+            )
+            for key_fw2, key_py in items
+        )
+        out_dict = dict(results)
 
         logger.debug("Calculating PML a and b coefficients...")
         axis_list = ["u", "x"] if self.use_isotropic_relaxation else ["u", "v", "w", "x", "y", "z"]
 
-        for nu in range(1, extended_medium.n_relaxation_mechanisms + 1):
-            for axis in axis_list:
-                (
-                    out_dict[f"a_pml_{axis}{nu}"],
-                    out_dict[f"b_pml_{axis}{nu}"],
-                ) = self._calc_a_and_b(
-                    d_x=out_dict[f"d_{axis}_nu{nu}"],
-                    kappa_x=out_dict[f"kappa_{axis}"],
-                    alpha_x=out_dict[f"alpha_{axis}_nu{nu}"],
-                    dt=extended_medium.grid.dt,
-                )
+        # Build independent tasks (flatten nested loops)
+        tasks = [
+            (nu, axis)
+            for nu in range(1, extended_medium.n_relaxation_mechanisms + 1)
+            for axis in axis_list
+        ]
+
+        medium_dtype = getattr(extended_medium, "dtype", None)
+
+        def _worker(
+            nu: int,
+            axis: str,
+        ) -> tuple[str, NDArray[np.float64], str, NDArray[np.float64]]:
+            a, b = self._calc_a_and_b(
+                d_x=out_dict[f"d_{axis}_nu{nu}"],
+                kappa_x=out_dict[f"kappa_{axis}"],
+                alpha_x=out_dict[f"alpha_{axis}_nu{nu}"],
+                dt=extended_medium.grid.dt,
+                output_dtype=medium_dtype,
+            )
+            # Return keys + values so parent can update dict safely
+            return (f"a_pml_{axis}{nu}", a, f"b_pml_{axis}{nu}", b)
+
+        results = Parallel(
+            n_jobs=self.medium_org.n_jobs,  # use all cores
+            backend="loky",  # process-based; safe default for Python code
+            prefer="processes",
+        )(
+            starmap(delayed(_worker), tasks),
+        )
+
+        for a_key, a_val, b_key, b_val in results:
+            out_dict[a_key] = a_val
+            out_dict[b_key] = b_val
+
         logger.debug("PML a and b coefficients calculation completed.")
 
         logger.debug("Updating extended medium relaxation parameters...")
@@ -1008,6 +1235,8 @@ class PMLBuilder:
 
         # Move axis to 0 for uniform processing
         working_array = np.moveaxis(input_array, axis, 0)
+        # make working_array writeable
+        working_array.setflags(write=True)
 
         # Apply boundary conditions
         working_array[: m_offset + layer_thickness] = value_target
@@ -1155,8 +1384,8 @@ class PMLBuilder:
 
         target_map_dict.update(
             [
-                ("PML mask x", self.pml_mask_x),
-                ("PML mask y", self.pml_mask_y),
+                ("PML mask x", self.pml_mask_x[:, None] * np.ones(self.extended_grid.ny)),
+                ("PML mask y", np.ones(self.extended_grid.nx)[:, None] * self.pml_mask_y[None, :]),
                 ("Source mask", self.extended_source.mask),
                 ("Sensor mask", self.extended_sensor.mask),
             ],
@@ -1305,31 +1534,75 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             cfl=self.grid_org.cfl,
         )
 
+        logger.debug("building extended medium for pml...")
+        # run _extend_map_for_pml in parallel for all medium properties since it is a bottleneck
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future_sound_speed = executor.submit(
+                self._extend_map_for_pml,
+                self.medium_org.sound_speed,
+            )
+            future_density = executor.submit(
+                self._extend_map_for_pml,
+                self.medium_org.density,
+            )
+            future_beta = executor.submit(
+                self._extend_map_for_pml,
+                self.medium_org.beta,
+            )
+            future_alpha_coeff = executor.submit(
+                self._extend_map_for_pml,
+                self.medium_org.alpha_coeff,
+            )
+            future_alpha_power = executor.submit(
+                self._extend_map_for_pml,
+                self.medium_org.alpha_power,
+            )
+
+            extended_sound_speed = future_sound_speed.result()
+            extended_density = future_density.result()
+            extended_beta = future_beta.result()
+            extended_alpha_coeff = future_alpha_coeff.result()
+            extended_alpha_power = future_alpha_power.result()
+
         self.extended_medium = fullwave.Medium(
             grid=self.extended_grid,
-            sound_speed=self._extend_map_for_pml(self.medium_org.sound_speed),
-            density=self._extend_map_for_pml(self.medium_org.density),
-            beta=self._extend_map_for_pml(self.medium_org.beta),
-            alpha_coeff=self._extend_map_for_pml(self.medium_org.alpha_coeff),
-            alpha_power=self._extend_map_for_pml(self.medium_org.alpha_power),
-            air_map=self._extend_map_for_pml(self.medium_org.air_map),
+            sound_speed=extended_sound_speed,
+            density=extended_density,
+            beta=extended_beta,
+            alpha_coeff=extended_alpha_coeff,
+            alpha_power=extended_alpha_power,
+            air_coords=self.medium_org.air_coords + self.num_boundary_points,
             n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
             path_relaxation_parameters_database=self.medium_org.path_relaxation_parameters_database,
             attenuation_builder=self.medium_org.attenuation_builder,
+            dtype=getattr(self.medium_org, "dtype", np.float64),
         )
+        logger.debug("Extended medium for PML built successfully.")
 
+        extended_grid_shape = tuple(
+            s + 2 * self.num_boundary_points for s in self.source_org.grid_shape
+        )
         self.extended_source = fullwave.Source(
             p0=self.source_org.p0,
-            mask=self._extend_map_for_pml(self.source_org.mask, fill_edge=False),
+            coords=self.source_org.incoords + self.num_boundary_points,
+            grid_shape=extended_grid_shape,
+        )
+        extended_sensor_grid_shape = tuple(
+            s + 2 * self.num_boundary_points for s in self.sensor_org.grid_shape
         )
         self.extended_sensor = fullwave.Sensor(
-            mask=self._extend_map_for_pml(self.sensor_org.mask, fill_edge=False),
+            coords=self.sensor_org.outcoords + self.num_boundary_points,
+            grid_shape=extended_sensor_grid_shape,
             sampling_modulus_time=self.sensor_org.sampling_modulus_time,
         )
+        logger.debug("Extended source and sensor for PML built successfully.")
+
+        logger.debug("Localizing PML region...")
         if self.is_3d:
             self.pml_mask_x, self.pml_mask_y, self.pml_mask_z = self._localize_pml_region()
         else:
             self.pml_mask_x, self.pml_mask_y = self._localize_pml_region()
+        logger.debug("PML region localized successfully.")
 
         self.pml_layer_m = self.extended_grid.dx * self.n_pml_layer
         # self.transition_layer_m = self.extended_grid.dx * self.n_transition_layer
@@ -1361,25 +1634,31 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
 
         """
         if use_pml:
+            logger.debug("Building extended medium for PML...")
             extended_medium: fullwave.MediumExponentialAttenuation = (
                 self.extended_medium.build_exponential()
             )
+            logger.debug("Extended medium for PML built successfully.")
             if self.is_3d:
+                logger.debug("Applying 3D PML to the extended medium...")
                 return self._apply_pml_3d(
                     extended_medium=extended_medium,
                 )
 
+            logger.debug("Applying 2D PML to the extended medium...")
             return self._apply_pml_2d(
                 extended_medium=extended_medium,
             )
 
+        logger.debug("PML is disabled. Building extended medium without applying PML...")
         extended_medium: fullwave.MediumExponentialAttenuation = (
             self.extended_medium.build_exponential()
         )
+        logger.debug("Extended medium built successfully without applying PML.")
         return extended_medium
 
     @staticmethod
-    def _mask_body_2d(nx: int, ny: int, n_body: int) -> NDArray[np.float64]:
+    def _mask_body_2d(nx: int, ny: int, n_body: int) -> NDArray[np.float32]:
         """Create a mask for the PML region.
 
         Parameters
@@ -1393,29 +1672,33 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
 
         Returns
         -------
-        NDArray[np.float64]
-            A 3D numpy array representing the PML mask.
+        NDArray[np.float32]
+            A 2D numpy array representing the PML mask.
+            Interior (body) region is 1, PML boundary approaches 0.
 
         """
-        # Create coordinate grids (1-based indices like MATLAB)
-        x = np.arange(1, nx + 1)[:, None]
-        y = np.arange(1, ny + 1)[None, :]
 
-        # Distances from each side boundary
-        ri = np.where(x <= n_body, n_body - x + 1, np.where(x > nx - n_body, x - (nx - n_body), 0))
-        rj = np.where(y <= n_body, n_body - y + 1, np.where(y > ny - n_body, y - (ny - n_body), 0))
+        def edge_distance_1d(n: int, n_body: int) -> NDArray[np.float32]:
+            d = np.zeros(n, dtype=np.float32)
+            if n_body <= 0:
+                return d
+            d[:n_body] = np.arange(n_body, 0, -1, dtype=np.float32)
+            d[-n_body:] = np.arange(1, n_body + 1, dtype=np.float32)
+            return d
 
-        # Compute mask
-        mask = np.sqrt(ri**2 + rj**2)
+        rx = edge_distance_1d(nx, n_body)[:, None]  # noqa: F841
+        ry = edge_distance_1d(ny, n_body)[None, :]  # noqa: F841
 
-        # Normalize
-        if mask.max() > 0:
-            mask /= mask.max()
+        mask_sq = ne.evaluate("rx*rx + ry*ry")
 
-        return mask
+        mmax = float(np.sqrt(mask_sq.max()))
+        if mmax > 0.0:
+            mask_sq = ne.evaluate("mask_sq / (mmax*mmax)")
+
+        return ne.evaluate("1 - sqrt(mask_sq)")
 
     @staticmethod
-    def _mask_body_3d(nx: int, ny: int, nz: int, n_body: int) -> NDArray[np.float64]:
+    def _mask_body_3d(nx: int, ny: int, nz: int, n_body: int) -> NDArray[np.float32]:
         """Create a mask for the PML region.
 
         Parameters
@@ -1435,24 +1718,30 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             A 3D numpy array representing the PML mask.
 
         """
-        # Create coordinate grids (1-based indices like MATLAB)
-        x = np.arange(1, nx + 1)[:, None, None]
-        y = np.arange(1, ny + 1)[None, :, None]
-        z = np.arange(1, nz + 1)[None, None, :]
 
-        # Distances from each side boundary
-        ri = np.where(x <= n_body, n_body - x + 1, np.where(x > nx - n_body, x - (nx - n_body), 0))
-        rj = np.where(y <= n_body, n_body - y + 1, np.where(y > ny - n_body, y - (ny - n_body), 0))
-        rk = np.where(z <= n_body, n_body - z + 1, np.where(z > nz - n_body, z - (nz - n_body), 0))
+        def edge_distance_1d(n: int, n_body: int) -> NDArray[np.float32]:
+            d = np.zeros(n, dtype=np.float32)
+            if n_body <= 0:
+                return d
+            d[:n_body] = np.arange(n_body, 0, -1, dtype=np.float32)
+            d[-n_body:] = np.arange(1, n_body + 1, dtype=np.float32)
+            return d
 
-        # Compute mask
-        mask = np.sqrt(ri**2 + rj**2 + rk**2)
+        rx = edge_distance_1d(nx, n_body)[:, None, None]  # noqa: F841
+        ry = edge_distance_1d(ny, n_body)[None, :, None]  # noqa: F841
+        rz = edge_distance_1d(nz, n_body)[None, None, :]  # noqa: F841
 
-        # Normalize
-        if mask.max() > 0:
-            mask /= mask.max()
+        # 1) compute squared distance with numexpr (no reduction here)
+        mask_sq = ne.evaluate("rx*rx + ry*ry + rz*rz")  # shape (nx, ny, nz), float32
 
-        return mask
+        # 2) reduction done by NumPy, then scalar sqrt
+        mmax = float(np.sqrt(mask_sq.max()))
+        if mmax > 0.0:
+            # 3) normalize in squared space (still via numexpr, elementwise only)
+            mask_sq = ne.evaluate("mask_sq / (mmax*mmax)")
+
+        # 4) final sqrt elementwise
+        return ne.evaluate("1 - sqrt(mask_sq)")
 
     def _apply_pml_3d(
         self,
@@ -1464,7 +1753,7 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             nz=extended_medium.alpha_exp.shape[2],
             n_body=self.num_boundary_points,
         )
-        extended_medium.alpha_exp *= 1 - a_mask
+        extended_medium.alpha_exp *= a_mask
         return extended_medium
 
     def _apply_pml_2d(
@@ -1476,5 +1765,5 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             ny=extended_medium.alpha_exp.shape[1],
             n_body=self.num_boundary_points,
         )
-        extended_medium.alpha_exp *= 1 - a_mask
+        extended_medium.alpha_exp *= a_mask
         return extended_medium

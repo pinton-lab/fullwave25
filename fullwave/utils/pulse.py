@@ -15,8 +15,10 @@ def gaussian_modulated_sinusoidal_signal(
     i_layer: int | None = None,
     dt_for_layer_delay: float | None = None,
     cfl_for_layer_delay: float | None = None,
+    *,
+    dtype: np.dtype = np.float64,
 ) -> NDArray[np.float64]:
-    """Generate a pulse signal based on input parameters.
+    """Generate Gaussian-modulated sinusoidal signal.
 
     Parameters
     ----------
@@ -46,27 +48,44 @@ def gaussian_modulated_sinusoidal_signal(
         Courant-Friedrichs-Lewy number. Default is None.
         This variable is used to shift the pulse signal in time
         so that the signal is emmitted within the transducer layer correctly.
+    dtype: data-type
+        Desired data-type for the output array. Default is np.float64.
 
     Returns
     -------
     NDArray[np.float64]: The generated pulse signal.
 
+
     """
-    t = (np.arange(0, nt)) / nt * duration - ncycles / f0
-    t = t - delay_sec
+    # Build time array
+    dt = duration / nt
+    t_offset = ncycles / f0 + delay_sec
 
-    if i_layer:
-        assert dt_for_layer_delay, "dt must be provided if i_layer is provided"
-        assert cfl_for_layer_delay, "cfl must be provided if i_layer is provided"
-        t = t - (dt_for_layer_delay / cfl_for_layer_delay) * i_layer
+    if i_layer is not None:
+        if dt_for_layer_delay is None:
+            error_msg = "dt_for_layer_delay must be provided if i_layer is provided"
+            raise ValueError(error_msg)
+        if cfl_for_layer_delay is None:
+            error_msg = "cfl_for_layer_delay must be provided if i_layer is provided"
+            raise ValueError(error_msg)
+        t_offset += (dt_for_layer_delay / cfl_for_layer_delay) * i_layer
 
-    omega0 = 2 * np.pi * f0
-    return (
-        np.multiply(
-            np.exp(
-                -((1.05 * t * omega0 / (ncycles * np.pi)) ** (2 * drop_off)),
-            ),
-            np.sin(t * omega0),
-        )
-        * p0
-    )
+    t = np.arange(nt, dtype=dtype) * dt - t_offset
+
+    omega0 = 2.0 * np.pi * f0
+    w_t = t * omega0
+
+    # Compute envelope
+    coeff = 1.05 / (ncycles * np.pi)
+    a_sq = (coeff * w_t) ** 2
+
+    # Fast path for common drop_off values
+    if drop_off == 1:
+        env = np.exp(-a_sq)
+    elif drop_off == 2:
+        env = np.exp(-a_sq * a_sq)
+    else:
+        env = np.exp(-(a_sq**drop_off))
+
+    # Compute final signal
+    return env * np.sin(w_t) * p0

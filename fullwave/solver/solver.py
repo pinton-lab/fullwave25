@@ -628,6 +628,8 @@ class Solver:
         record_whole_domain: bool = False,
         sampling_modulus_time_whole_domain: int = 1,
         load_results: bool = True,
+        generate_input_only: bool = False,
+        release_after_write: bool = False,
     ) -> NDArray[np.float64] | Path:
         r"""Run the fullwave simulation and return the result as a NumPy array.
 
@@ -677,10 +679,25 @@ class Solver:
         load_results : bool
             Whether to load the results from genout.dat after the simulation.
             Default is True. If set to False, it returns the genout.dat file path instead.
+        generate_input_only : bool
+            If True, only generate the input files in the simulation directory and
+            skip launching the external Fullwave executable.
+            In this case the method returns the simulation directory path.
+            Default is False.
+        release_after_write : bool
+            Whether to release the input files after writing them.
+            If True, the memory used by the input files will be released after writing them to disk.
+            This is useful when run_on_memory is True to free up memory space for the simulation
+            or when the input files are large. Default is False.
 
         Returns
         -------
-            NDArray[np.float64]: The simulation output data as a NumPy array.
+        NDArray[np.float64] | Path
+            The simulation output data as a NumPy array when load_results is True
+            and generate_input_only is False.
+            Otherwise, a Path to either the 'genout.dat' file
+            (when load_results is False) or the simulation directory
+            (when generate_input_only is True).
 
         Raises
         ------
@@ -760,6 +777,7 @@ class Solver:
             path_fullwave_simulation_bin=self.path_fullwave_simulation_bin,
             use_exponential_attenuation=self.use_exponential_attenuation,
             use_isotropic_relaxation=self.use_isotropic_relaxation,
+            release_after_write=release_after_write,
         )
         simulation_dir = input_file_writer.run(
             simulation_dir_name,
@@ -772,6 +790,13 @@ class Solver:
             f"{end_input_file_writer_time - start_input_file_writer_time:.2e} seconds."
         )
         logger.debug(message)
+
+        if generate_input_only:
+            logger.info(
+                "Input data generation completed in %s. Skipping simulation execution.",
+                simulation_dir,
+            )
+            return simulation_dir
 
         sim_result = self.fullwave_launcher.run(
             simulation_dir,

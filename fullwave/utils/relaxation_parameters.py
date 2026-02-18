@@ -17,44 +17,42 @@ from fullwave.solver.utils import initialize_relaxation_param_dict
 logger = logging.getLogger("__main__." + __name__)
 
 
-@nb.njit(inline="always")
-def _lower_bound(a: NDArray[np.float64], x: float) -> int:
-    lo, hi = 0, a.size
-    while lo < hi:
-        mid = (lo + hi) >> 1
-        if a[mid] < x:
-            lo = mid + 1
-        else:
-            hi = mid
-    return lo
-
-
-@nb.njit(inline="always")
-def _upper_bound(a: NDArray[np.float64], x: float) -> int:
-    lo, hi = 0, a.size
-    while lo < hi:
-        mid = (lo + hi) >> 1
-        if a[mid] <= x:
-            lo = mid + 1
-        else:
-            hi = mid
-    return lo
-
-
-@nb.njit(parallel=True)
+@nb.njit(parallel=True, fastmath=True)
 def _searchsorted_parallel_sorted_a(
     a_sorted: NDArray[np.float64],
     v_flat: NDArray[np.float64],
     *,
     side_is_right: bool,
 ) -> NDArray[np.int64]:
-    out = np.empty(v_flat.size, dtype=np.int64)
+    n = a_sorted.size
+    m = v_flat.size
+    out = np.empty(m, dtype=np.int64)
+
     if side_is_right:
-        for i in nb.prange(v_flat.size):
-            out[i] = _upper_bound(a_sorted, v_flat[i])
+        for i in nb.prange(m):
+            x = v_flat[i]
+            lo = 0
+            hi = n
+            while lo < hi:
+                mid = (lo + hi) >> 1
+                if a_sorted[mid] <= x:
+                    lo = mid + 1
+                else:
+                    hi = mid
+            out[i] = lo
     else:
-        for i in nb.prange(v_flat.size):
-            out[i] = _lower_bound(a_sorted, v_flat[i])
+        for i in nb.prange(m):
+            x = v_flat[i]
+            lo = 0
+            hi = n
+            while lo < hi:
+                mid = (lo + hi) >> 1
+                if a_sorted[mid] < x:
+                    lo = mid + 1
+                else:
+                    hi = mid
+            out[i] = lo
+
     return out
 
 
@@ -110,6 +108,60 @@ def searchsorted_parallel(
     return out
 
 
+@nb.njit(parallel=True, fastmath=True)
+def _map_parameters_fused_kernel(
+    input_flat: NDArray[np.float64],
+    alpha_sorted: NDArray[np.float64],
+    power_sorted: NDArray[np.float64],
+    look_up_table: NDArray[np.float64],
+    invalid_matrix: NDArray[np.bool_],
+    output_flat: NDArray[np.float64],
+    has_invalid: NDArray[np.bool_],
+) -> None:
+    """Fused kernel: searchsorted + clip + invalid check + LUT lookup in one pass."""
+    n = input_flat.shape[0]
+    n_alpha = alpha_sorted.shape[0]
+    n_power = power_sorted.shape[0]
+    n_params = look_up_table.shape[2]
+    max_alpha_idx = n_alpha - 1
+    max_power_idx = n_power - 1
+
+    for idx in nb.prange(n):
+        # Binary search for alpha (left side)
+        a_val = input_flat[idx, 0]
+        lo = np.int64(0)
+        hi = np.int64(n_alpha)
+        while lo < hi:
+            mid = (lo + hi) >> 1
+            if alpha_sorted[mid] < a_val:
+                lo = mid + 1
+            else:
+                hi = mid
+        ai = lo
+        ai = min(ai, max_alpha_idx)
+
+        # Binary search for power (left side)
+        p_val = input_flat[idx, 1]
+        lo = np.int64(0)
+        hi = np.int64(n_power)
+        while lo < hi:
+            mid = (lo + hi) >> 1
+            if power_sorted[mid] < p_val:
+                lo = mid + 1
+            else:
+                hi = mid
+        pi = lo
+        pi = min(pi, max_power_idx)
+
+        # Check invalid (race on has_invalid[0] is fine — only sets True)
+        if invalid_matrix[ai, pi]:
+            has_invalid[0] = True
+
+        # Direct LUT lookup — avoids large intermediate index arrays
+        for k in range(n_params):
+            output_flat[idx, k] = look_up_table[ai, pi, k]
+
+
 def _map_parameters_search(
     input_tensor: NDArray[np.float64],
     look_up_table: NDArray[np.float64],
@@ -117,7 +169,10 @@ def _map_parameters_search(
     power_list: NDArray[np.float64],
     invalid_matrix: NDArray[np.bool_],
 ) -> NDArray[np.float64]:
-    """Map (nx, ny, 2) input tensor to (nx, ny, 11) using LUT.
+    """Map (nx, ny, 2) input tensor to (nx, ny, n_params) using LUT.
+
+    Fuses searchsorted, clip, invalid check, and LUT lookup into a single
+    parallel pass to avoid allocating large intermediate arrays.
 
     Parameters
     ----------
@@ -138,39 +193,45 @@ def _map_parameters_search(
     Output tensor with shape (nx, ny, 4 * n_relaxation + 2)
 
     """
-    # search nearest in alpha_list and power_list.
-    # alpha is in input_tensor[:, :, 0]
-    # power is in input_tensor[:, :, 1]
-    # the index corresponds to lookup table
-    logger.debug("Mapping parameters using searchsorted.")
-    time_start = time.time()
-    alpha_index = searchsorted_parallel(alpha_list[0].round(10), input_tensor[..., 0])
-    power_index = searchsorted_parallel(power_list[0].round(10), input_tensor[..., 1])
-    time_end = time.time()
-    logger.debug("Searchsorted time: %.4f seconds.", time_end - time_start)
-    logger.debug("Parameter mapping indices obtained.")
+    logger.debug("Mapping parameters using fused kernel.")
+    spatial_shape = input_tensor.shape[:-1]
+    n_elements = 1
+    for s in spatial_shape:
+        n_elements *= s
+    n_params = look_up_table.shape[2]
 
-    # Clip indices to valid range
-    time_start = time.time()
-    alpha_index = np.clip(alpha_index, 0, len(alpha_list[0]) - 1)
-    power_index = np.clip(power_index, 0, len(power_list[0]) - 1)
-    time_end = time.time()
-    logger.debug("Clipping indices time: %.4f seconds.", time_end - time_start)
+    alpha_sorted = np.ascontiguousarray(alpha_list[0].round(10))
+    power_sorted = np.ascontiguousarray(power_list[0].round(10))
 
-    # check invalid indices
-    time_start = time.time()
-    invalid_indices = invalid_matrix[alpha_index, power_index]
-    time_end = time.time()
-    logger.debug("Invalid indices checking time: %.4f seconds.", time_end - time_start)
+    # Reshape to (N, 2) for the fused kernel
+    input_flat = np.ascontiguousarray(input_tensor.reshape(n_elements, input_tensor.shape[-1]))
+    output_flat = np.empty((n_elements, n_params), dtype=look_up_table.dtype)
+    has_invalid = np.array([False])
 
-    if np.any(invalid_indices):
-        time_start = time.time()
+    time_start = time.time()
+    _map_parameters_fused_kernel(
+        input_flat,
+        alpha_sorted,
+        power_sorted,
+        look_up_table,
+        invalid_matrix,
+        output_flat,
+        has_invalid,
+    )
+    time_end = time.time()
+    logger.debug("Fused kernel time: %.4f seconds.", time_end - time_start)
+
+    if has_invalid[0]:
+        # Recompute indices only for the warning path (rarely taken)
+        alpha_index = searchsorted_parallel(alpha_sorted, input_flat[:, 0])
+        power_index = searchsorted_parallel(power_sorted, input_flat[:, 1])
+        alpha_index = np.clip(alpha_index, 0, len(alpha_sorted) - 1)
+        power_index = np.clip(power_index, 0, len(power_sorted) - 1)
+        invalid_indices = invalid_matrix[alpha_index, power_index].reshape(spatial_shape)
         invalid_alpha_power = np.unique(
-            input_tensor[:, :, [0, 1]][np.where(invalid_indices)],
+            input_tensor[..., :2][np.where(invalid_indices)],
             axis=0,
         )
-        time_end = time.time()
-        logger.debug("Invalid alpha-power extraction time: %.4f seconds.", time_end - time_start)
         invalid_attenuation = ", ".join(
             [f"({a:.4f}, {p:.4f})" for a, p in invalid_alpha_power],
         )
@@ -183,8 +244,7 @@ def _map_parameters_search(
         )
         logger.warning(message)
 
-    # Advanced indexing for 2D parameter space
-    return look_up_table[alpha_index, power_index, :]
+    return output_flat.reshape(*spatial_shape, n_params)
 
 
 def generate_relaxation_params(
