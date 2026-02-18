@@ -78,7 +78,7 @@ def patched_solver(tmp_path, monkeypatch):
         / "gpu"
         / "2d"
         / "num_relax=2"
-        / "fullwave2_2d_2_relax_multi_gpu_sm_89_cuda126"
+        / "fullwave2_2d_2_relax_multi_gpu_cuda129"
     )
 
     monkeypatch.setattr(
