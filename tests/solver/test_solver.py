@@ -62,17 +62,17 @@ def test_make_cuda_version_option_fallback_to_compatible():
         ) as mock_logger,
     ):
         result = _make_cuda_version_option(use_gpu=True)
-        assert result == ("cuda126", 12.6)  # Should fall back to 12.6
+        assert result == ("cuda124", 12.4)  # Should fall back to 12.6
         mock_logger.warning.assert_called()
         warning_call = str(mock_logger.warning.call_args)
-        assert "Using the closest compatible version 12.6 instead" in warning_call
+        assert "Using the closest compatible version 12.4 instead" in warning_call
 
 
 def test_make_cuda_version_option_out_of_range():
     """Test _make_cuda_version_option with CUDA version outside compatible ranges."""
     with (
-        patch("fullwave.solver.solver.retrieve_cuda_version", return_value=13.0),
-        pytest.raises(ValueError, match=r"CUDA version 13.0 is not in the compatible ranges"),
+        patch("fullwave.solver.solver.retrieve_cuda_version", return_value=14.0),
+        pytest.raises(ValueError, match=r"CUDA version 14.0 is not in the compatible ranges"),
     ):
         _make_cuda_version_option(use_gpu=True)
 
@@ -102,9 +102,9 @@ def test_make_cuda_arch_option_incompatible_architecture():
     with (
         patch(
             "fullwave.solver.solver.get_cuda_architecture",
-            return_value=[{"compute_capability": (5, 0)}],
+            return_value=[{"compute_capability": (4, 0)}],
         ),
-        pytest.raises(ValueError, match=r"CUDA architecture sm_50 is not compatible"),
+        pytest.raises(ValueError, match=r"CUDA architecture sm_40 is not compatible"),
     ):
         _make_cuda_arch_option(use_gpu=True)
 
@@ -153,7 +153,7 @@ def test_check_compatible_set_valid_combinations():
     """Test _check_compatible_set with valid CUDA version and architecture combinations."""
     # Test some known valid combinations
     assert _check_compatible_set(11.8, "sm_89") is True
-    assert _check_compatible_set(12.6, "sm_80") is True
+    assert _check_compatible_set(12.4, "sm_80") is True
     assert _check_compatible_set(12.9, "sm_100") is True
     assert _check_compatible_set(12.4, "sm_75") is True
 
@@ -163,8 +163,8 @@ def test_check_compatible_set_invalid_combinations():
     # Test combinations that are not in the set
     assert _check_compatible_set(10.0, "sm_89") is False
     assert _check_compatible_set(11.8, "sm_100") is False  # sm_100 not available in 11.8
-    assert _check_compatible_set(13.0, "sm_89") is False
-    assert _check_compatible_set(12.6, "sm_999") is False
+    assert _check_compatible_set(13.0, "sm_123") is False
+    assert _check_compatible_set(12.4, "sm_999") is False
 
 
 def test_check_compatible_set_edge_cases():
@@ -182,13 +182,13 @@ def test_retrieve_fullwave_simulation_path_2d_gpu():
     """Test _retrieve_fullwave_simulation_path for 2D GPU mode."""
     with (
         patch("fullwave.solver.solver._make_cuda_arch_option", return_value="sm_89"),
-        patch("fullwave.solver.solver._make_cuda_version_option", return_value=("cuda126", 12.6)),
+        patch("fullwave.solver.solver._make_cuda_version_option", return_value=("cuda124", 12.4)),
         patch("fullwave.solver.solver._check_compatible_set", return_value=True),
     ):
         result = _retrieve_fullwave_simulation_path(
             use_gpu=True,
             is_3d=False,
-            use_isotropic_relaxation=False,
+            use_isotropic_relaxation=True,
         )
         expected_path = (
             Path(__file__).parent.parent.parent
@@ -198,7 +198,7 @@ def test_retrieve_fullwave_simulation_path_2d_gpu():
             / "gpu"
             / "2d"
             / "num_relax=2"
-            / "fullwave2_2d_2_relax_multi_gpu_sm_89_cuda126"
+            / "fullwave2_2d_2_relax_multi_gpu_cuda124"
         )
         assert result == expected_path
 
@@ -213,7 +213,7 @@ def test_retrieve_fullwave_simulation_path_3d_gpu():
         result = _retrieve_fullwave_simulation_path(
             use_gpu=True,
             is_3d=True,
-            use_isotropic_relaxation=False,
+            use_isotropic_relaxation=True,
         )
         expected_path = (
             Path(__file__).parent.parent.parent
@@ -223,7 +223,7 @@ def test_retrieve_fullwave_simulation_path_3d_gpu():
             / "gpu"
             / "3d"
             / "num_relax=2"
-            / "fullwave2_3d_2_relax_multi_gpu_sm_80_cuda118"
+            / "fullwave2_3d_2_relax_multi_gpu_cuda118"
         )
         assert result == expected_path
 
@@ -264,18 +264,18 @@ def test_retrieve_fullwave_simulation_path_calls_helper_functions():
         patch("fullwave.solver.solver._check_compatible_set") as mock_check,
     ):
         mock_arch.return_value = "sm_89"
-        mock_version.return_value = ("cuda126", 12.6)
+        mock_version.return_value = ("cuda124", 12.4)
         mock_check.return_value = True
 
         _retrieve_fullwave_simulation_path(
             use_gpu=True,
             is_3d=False,
-            use_isotropic_relaxation=False,
+            use_isotropic_relaxation=True,
         )
 
         mock_arch.assert_called_once_with(use_gpu=True)
         mock_version.assert_called_once_with(use_gpu=True)
-        mock_check.assert_called_once_with(cuda_version=12.6, cuda_arch="sm_89")
+        mock_check.assert_called_once_with(cuda_version=12.4, cuda_arch="sm_89")
 
 
 def test_retrieve_fullwave_simulation_path_different_arch_versions():
@@ -301,7 +301,7 @@ def test_retrieve_fullwave_simulation_path_different_arch_versions():
             result = _retrieve_fullwave_simulation_path(
                 use_gpu=True,
                 is_3d=True,
-                use_isotropic_relaxation=False,
+                use_isotropic_relaxation=True,
             )
             expected_path = (
                 Path(__file__).parent.parent.parent
@@ -311,7 +311,7 @@ def test_retrieve_fullwave_simulation_path_different_arch_versions():
                 / "gpu"
                 / "3d"
                 / "num_relax=2"
-                / f"fullwave2_3d_2_relax_multi_gpu_{arch}_{version_str}"
+                / f"fullwave2_3d_2_relax_multi_gpu_{version_str}"
             )
             assert result == expected_path
 
@@ -401,7 +401,7 @@ def test_use_isotropic_relaxation(
         / "gpu"
         / "2d"
         / "num_relax=2"
-        / "fullwave2_2d_2_relax_multi_gpu_sm_89_cuda126"
+        / "fullwave2_2d_2_relax_multi_gpu_cuda124"
     )
     monkeypatch.setattr(
         sovler_module,
