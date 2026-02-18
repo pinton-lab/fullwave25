@@ -13,7 +13,6 @@ dependencies = [
     "tomli>=2.3.0",
     "numba>=0.63.1",
     "joblib>=1.5.3",
-    "cupy-cuda12x>=13.6.0",
     "numexpr>=2.14.1",
 ]
 authors = [{ name = "Masashi Sode" }, { name = "Gianmarco Pinton" }]
