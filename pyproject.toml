@@ -57,4 +57,4 @@ build-backend = "hatchling.build"
 packages = ["fullwave", "fullwave.utils"]
 
 [tool.hatch.build]
-exclude = ["tests", "figs", "examples", ".vscode", ".github"]
+exclude = ["tests", "figs", "examples", ".vscode", ".github", "fullwave/solver/bins/gpu", "fullwave/solver/bins/exponential_attenuation", "fullwave/solver/bins/_exponential_attenuation"]
