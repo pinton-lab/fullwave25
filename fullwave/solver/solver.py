@@ -16,6 +16,7 @@ from fullwave.utils import (
     check_functions,
 )
 
+from .binary_manager import ensure_binary
 from .cuda_utils import get_cuda_architecture, retrieve_cuda_version
 
 logger = logging.getLogger("__main__." + __name__)
@@ -461,13 +462,14 @@ class Solver:
         self.n_relax_mechanisms = medium.n_relaxation_mechanisms
 
         if path_fullwave_simulation_bin is None:
-            path_fullwave_simulation_bin = _retrieve_fullwave_simulation_path(
+            local_path = _retrieve_fullwave_simulation_path(
                 use_gpu=use_gpu,
                 is_3d=self.is_3d,
                 use_exponential_attenuation=self.use_exponential_attenuation,
                 use_isotropic_relaxation=use_isotropic_relaxation,
                 n_relax_mechanisms=self.n_relax_mechanisms,
             )
+            path_fullwave_simulation_bin = ensure_binary(local_path)
         else:
             check_functions.check_path_exists(path_fullwave_simulation_bin)
 
