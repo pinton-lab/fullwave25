@@ -5,10 +5,13 @@ Handles locating, caching, and downloading solver binaries from GitHub releases.
 Priority order when resolving a binary:
 1. Bundled binary (shipped with the package or dev install).
 2. Local cache at ``~/.cache/fullwave25/bins/``.
-3. Download from the GitHub release matching the current package version.
+3. Download from the GitHub release pinned by ``BINARY_RELEASE_TAG``.
 
-The release tag can be overridden with the environment variable
-``FULLWAVE25_BINARY_TAG`` (e.g. ``export FULLWAVE25_BINARY_TAG=v1.2.3``).
+Binaries are versioned independently from the Python package — update
+``BINARY_RELEASE_TAG`` only when new binaries are published.
+
+The release tag can be overridden at runtime with the environment variable
+``FULLWAVE25_BINARY_TAG`` (e.g. ``export FULLWAVE25_BINARY_TAG=v1.2.2``).
 """
 
 import logging
@@ -23,19 +26,9 @@ logger = logging.getLogger("__main__." + __name__)
 GITHUB_REPO = "pinton-lab/fullwave25"
 CACHE_DIR = Path.home() / ".cache" / "fullwave25" / "bins"
 
-
-def _release_tag() -> str:
-    """Derive the GitHub release tag from the installed package version.
-
-    Strips pre-release / dev suffixes so that ``1.2.2-dev0`` → ``v1.2.2``.
-    """
-    import fullwave  # local import to avoid circular at module load
-
-    raw = fullwave.__version__
-    # Strip common pre-release markers: -devN, aN, bN, rcN
-    for sep in ("-", "a", "b", "rc"):
-        raw = raw.split(sep)[0]
-    return f"v{raw}"
+# Pinned release tag for the solver binaries.
+# Update this only when new binaries are uploaded to a GitHub release.
+BINARY_RELEASE_TAG = "v1.2.2"
 
 
 def _download_url(filename: str, tag: str) -> str:
@@ -119,7 +112,7 @@ def ensure_binary(local_path: Path) -> Path:
         return cached
 
     # 3. Download from GitHub releases.
-    tag = os.environ.get("FULLWAVE25_BINARY_TAG", _release_tag())
+    tag = os.environ.get("FULLWAVE25_BINARY_TAG", BINARY_RELEASE_TAG)
     url = _download_url(filename, tag)
 
     logger.info(
