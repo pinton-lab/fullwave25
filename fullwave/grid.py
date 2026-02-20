@@ -183,9 +183,9 @@ class Grid:
             else "  Grid spacing (grid.dx, grid.dy): "
         )
         grid_spacing_str = (
-            f"({self.dx * 1e3:.2e} m, {self.dy * 1e3:.2e} m, {self.dz * 1e3:.2e} m)"
+            f"({self.dx * 1e3:.2e} mm, {self.dy * 1e3:.2e} mm, {self.dz * 1e3:.2e} mm)"
             if self.is_3d
-            else f"({self.dx * 1e3:.2e} m, {self.dy * 1e3:.2e} m)"
+            else f"({self.dx * 1e3:.2e} mm, {self.dy * 1e3:.2e} mm)"
         )
 
         num_grid_points_str_desc = (
@@ -203,7 +203,7 @@ class Grid:
             f"  Speed of sound (grid.c0): {self.c0} m/s\n"
             f"  Points per wavelength (PPW) (grid.ppw): {self.ppw}\n"
             f"  Courant-Friedrichs-Lewy (CFL) number (grid.cfl): {self.cfl}\n"
-            f"  Wavelength (grid.wavelength): {self.wavelength * 1e3:.2e} m\n"
+            f"  Wavelength (grid.wavelength): {self.wavelength * 1e3:.2e} mm\n"
             + grid_spacing_str_desc
             + grid_spacing_str
             + "\n"
