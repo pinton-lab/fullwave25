@@ -160,6 +160,15 @@ class InputFileWriter:
             simulation_dir / "icmat.dat",
             np.transpose(self.source.icmat),
         )
+        p0_additive = getattr(self.source, "p0_additive", None)
+        incoords_add = getattr(self.source, "incoords_add", None)
+        if p0_additive is not None:
+            self._queue_ic_write(
+                simulation_dir / "icmat_add.dat",
+                np.transpose(p0_additive),
+            )
+        if incoords_add is not None:
+            self._queue_coords_write(simulation_dir / "icc_add.dat", incoords_add)
         self._queue_coords_write(simulation_dir / "icc.dat", self.source.incoords)
         self._copy_simulation_bin_file(simulation_dir)
 
@@ -1035,6 +1044,9 @@ class InputFileWriter:
             ("nTic", nt_ic),
             ("modT", self.sensor.sampling_modulus_time),
         ]
+        n_sources_add = getattr(self.source, "n_sources_add", 0)
+        if n_sources_add > 0:
+            var_list.append(("ncoords_add", n_sources_add))
         if self.is_3d:
             var_list.extend(
                 [

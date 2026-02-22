@@ -317,10 +317,17 @@ class PMLBuilder:
         extended_grid_shape = tuple(
             s + 2 * self.num_boundary_points for s in self.source_org.grid_shape
         )
+        incoords_add_ext = (
+            self.source_org.incoords_add + self.num_boundary_points
+            if getattr(self.source_org, "incoords_add", None) is not None
+            else None
+        )
         self.extended_source = fullwave.Source(
             p0=self.source_org.p0,
             coords=self.source_org.incoords + self.num_boundary_points,
             grid_shape=extended_grid_shape,
+            p0_additive=self.source_org.p0_additive,
+            coords_additive=incoords_add_ext,
         )
         logger.debug("building extended source for pml...done")
 
@@ -1582,10 +1589,17 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
         extended_grid_shape = tuple(
             s + 2 * self.num_boundary_points for s in self.source_org.grid_shape
         )
+        incoords_add_ext = (
+            self.source_org.incoords_add + self.num_boundary_points
+            if getattr(self.source_org, "incoords_add", None) is not None
+            else None
+        )
         self.extended_source = fullwave.Source(
             p0=self.source_org.p0,
             coords=self.source_org.incoords + self.num_boundary_points,
             grid_shape=extended_grid_shape,
+            p0_additive=self.source_org.p0_additive,
+            coords_additive=incoords_add_ext,
         )
         extended_sensor_grid_shape = tuple(
             s + 2 * self.num_boundary_points for s in self.sensor_org.grid_shape
