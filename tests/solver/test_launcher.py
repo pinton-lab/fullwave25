@@ -9,7 +9,7 @@ import pytest
 from fullwave.solver.launcher import Launcher, SimulationError
 
 
-def dummy_run_success(command, stdout, check, shell, stderr, text):
+def dummy_run_success(command, stdout, check, shell, stderr, text, env):
     # Create the expected output file "genout.dat" in the current directory.
     with Path("genout.dat").open("w", encoding="utf-8") as f:
         f.write("dummy")

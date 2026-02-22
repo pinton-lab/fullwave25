@@ -327,6 +327,7 @@ class Solver:
         use_exponential_attenuation: bool = False,
         use_isotropic_relaxation: bool = True,
         cuda_device_id: str | int | list | None = None,
+        save_gpu_memory: bool = False,
     ) -> None:
         """Initialize a Solver instance for the fullwave simulation.
 
@@ -402,6 +403,17 @@ class Solver:
             for multiple GPUs, provide a list of device IDs.
             example 1: [0, 1] for using GPU 0 and GPU 1. or "0,1" as a string.
             example 2: 2 for using GPU 2 or "2" as a string.
+        save_gpu_memory : bool, optional
+            Whether to save GPU memory by using ICMAT_MEMORY_SAVING flag in the simulation.
+            The simulation does not load initial conditions into GPU memory and
+            it loads the slice of the wavefield needed for the current time step
+            from CPU memory at each time step.
+            Defaults to False. If True, it may significantly reduce GPU memory usage,
+            but it may also increase the simulation time
+            due to the overhead of data transfer between CPU and GPU
+            depending on the hardware and the simulation settings.
+            useful in 3D simulations with large grid sizes
+            where GPU memory is a limiting factor.
 
         Raises
         ------
@@ -418,6 +430,7 @@ class Solver:
         self.medium: fullwave.Medium
         self.grid: fullwave.Grid
         self.input_file_writer: InputFileWriter
+        self.save_gpu_memory = save_gpu_memory
 
         self.run_on_memory = run_on_memory
         if run_on_memory:
@@ -540,6 +553,7 @@ class Solver:
             is_3d=self.is_3d,
             use_gpu=self.use_gpu,
             cuda_device_id=self.cuda_device_id,
+            save_gpu_memory=self.save_gpu_memory,
         )
 
         if use_exponential_attenuation:
