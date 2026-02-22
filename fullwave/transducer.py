@@ -186,28 +186,20 @@ class TransducerGeometry:
             )
             logger.error(error_msg)
             raise ValueError(error_msg)
-        # if (self.position_px[2] + self.element_length_px) > self.stored_grid_size[2]:
-        #     logger.debug(self.position_px[2])
-        #     logger.debug(self.element_length_px)
-        #     logger.debug(self.stored_grid_size[2])
-        #     error_msg = (
-        #         "The defined transducer is too large or"
-        #         " positioned outside the grid in the z-direction"
-        #     )
-        #     raise ValueError(
-        #         error_msg,
-        #     )
         if self.position_px[0] > self.stored_grid_size[0]:
             error_msg = "The defined transducer is positioned outside the grid in the x-direction"
             logger.error(error_msg)
             raise ValueError(error_msg)
 
-        # create the transducer mask
-        self.indexed_element_mask_input, self.indexed_element_mask_output = (
-            self._create_element_mask()
-        )
-        self.element_mask_input = self.indexed_element_mask_input > 0
-        self.element_mask_output = self.indexed_element_mask_output > 0
+        # Build coordinate arrays for source and sensor pixels.
+        # _source_coords: shape [N_src, ndim], _source_ids: shape [N_src]  (1-based element id)
+        # _sensor_coords: shape [N_snsr, ndim], _sensor_ids: shape [N_snsr]
+        (
+            self._source_coords,
+            self._source_ids,
+            self._sensor_coords,
+            self._sensor_ids,
+        ) = self._create_element_coords()
         logger.debug("TransducerGeometry instance created.")
 
     def _init_dimensions(  # noqa: C901, PLR0912
@@ -321,9 +313,28 @@ class TransducerGeometry:
             assert len(position_m) == 3, "position_m must have 3 elements for 3D transducer"
         return position_px, position_m
 
-    def _create_element_mask(self) -> tuple[NDArray[np.int64], ...]:  # noqa: PLR0912
-        indexed_element_mask_input = np.zeros(self.stored_grid_size, dtype=int)
-        indexed_element_mask_output = np.zeros(self.stored_grid_size, dtype=int)
+    def _create_element_coords(  # noqa: PLR0912, PLR0915
+        self,
+    ) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.int64], NDArray[np.int64]]:
+        """Build flat coordinate arrays for source and sensor pixels.
+
+        Returns
+        -------
+        source_coords : NDArray[np.int64], shape [N_src, ndim]
+            Grid coordinates of every source pixel.
+        source_ids : NDArray[np.int64], shape [N_src]
+            1-based element ID for each source pixel.
+        sensor_coords : NDArray[np.int64], shape [N_snsr, ndim]
+            Grid coordinates of every sensor pixel.
+        sensor_ids : NDArray[np.int64], shape [N_snsr]
+            1-based element ID for each sensor pixel.
+
+        """
+        source_coords_parts: list[NDArray] = []
+        source_ids_parts: list[NDArray] = []
+        sensor_coords_parts: list[NDArray] = []
+        sensor_ids_parts: list[NDArray] = []
+
         if self.radius == float("inf"):
             if self.is_3d:
                 for element_index in range(self.number_elements):
@@ -341,16 +352,21 @@ class TransducerGeometry:
                             self.position_px[1]
                             + (self.element_width_px + self.element_spacing_px) * element_index
                         )
-                    indexed_element_mask_input[
-                        element_pos_x : element_pos_x + self.element_layer_px,
-                        element_pos_y : element_pos_y + self.element_width_px,
-                        element_pos_z : element_pos_z + self.element_height_px,
-                    ] = element_index + 1
-                    indexed_element_mask_output[
-                        element_pos_x + self.element_layer_px - 1,
-                        element_pos_y + self.element_width_px - 1,
-                        element_pos_z + self.element_height_px // 2 - 1,
-                    ] = element_index + 1
+
+                    xs = np.arange(element_pos_x, element_pos_x + self.element_layer_px)
+                    ys = np.arange(element_pos_y, element_pos_y + self.element_width_px)
+                    zs = np.arange(element_pos_z, element_pos_z + self.element_height_px)
+                    xx, yy, zz = np.meshgrid(xs, ys, zs, indexing="ij")
+                    src = np.stack([xx.ravel(), yy.ravel(), zz.ravel()], axis=1)
+                    source_coords_parts.append(src)
+                    source_ids_parts.append(np.full(len(src), element_index + 1))
+
+                    # Single center pixel for sensor output
+                    sx = element_pos_x + self.element_layer_px - 1
+                    sy = element_pos_y + self.element_width_px - 1
+                    sz = element_pos_z + self.element_height_px // 2 - 1
+                    sensor_coords_parts.append(np.array([[sx, sy, sz]]))
+                    sensor_ids_parts.append(np.array([element_index + 1]))
             else:
                 for element_index in range(self.number_elements):
                     element_pos_x = self.position_px[0]
@@ -366,20 +382,25 @@ class TransducerGeometry:
                             self.position_px[1]
                             + (self.element_width_px + self.element_spacing_px) * element_index
                         )
-                    indexed_element_mask_input[
-                        element_pos_x : element_pos_x + self.element_layer_px,
-                        element_pos_y : element_pos_y + self.element_width_px,
-                    ] = element_index + 1
+
+                    xs = np.arange(element_pos_x, element_pos_x + self.element_layer_px)
+                    ys = np.arange(element_pos_y, element_pos_y + self.element_width_px)
+                    xx, yy = np.meshgrid(xs, ys, indexing="ij")
+                    src = np.stack([xx.ravel(), yy.ravel()], axis=1)
+                    source_coords_parts.append(src)
+                    source_ids_parts.append(np.full(len(src), element_index + 1))
+
+                    sx = element_pos_x + self.element_layer_px - 1
                     if self.average_surface_signals:
-                        indexed_element_mask_output[
-                            element_pos_x + self.element_layer_px - 1,
-                            element_pos_y : element_pos_y + self.element_width_px,
-                        ] = element_index + 1
+                        out_ys = np.arange(element_pos_y, element_pos_y + self.element_width_px)
+                        out_xs = np.full(len(out_ys), sx)
                     else:
-                        indexed_element_mask_output[
-                            element_pos_x + self.element_layer_px - 1,
-                            element_pos_y + self.element_width_px // 2 - 1,
-                        ] = element_index + 1
+                        out_ys = np.array([element_pos_y + self.element_width_px // 2 - 1])
+                        out_xs = np.array([sx])
+                    snsr = np.stack([out_xs, out_ys], axis=1)
+                    sensor_coords_parts.append(snsr)
+                    sensor_ids_parts.append(np.full(len(snsr), element_index + 1))
+
         else:  # noqa: PLR5501 -- keep the if structure for future extension
             if self.is_3d:
                 error_msg = "3D convex transducers are not implemented yet."
@@ -404,48 +425,66 @@ class TransducerGeometry:
                         "but it is ignored for convex transducers.",
                     )
 
-                in_map = self._calculate_inmap(
-                    center=center,
-                    radius=radius_px,
-                )
-                out_map = self._calculate_outmap(
-                    center=center,
-                    radius=radius_px,
-                )
+                in_map = self._calculate_inmap(center=center, radius=radius_px)
+                out_map = self._calculate_outmap(center=center, radius=radius_px)
 
-                in_coords = map_to_coords_with_sort(in_map)
-                out_coords = map_to_coords_with_sort(out_map)
-                in_coords, out_coords = self._assign_transducer_num_to_input(
-                    in_coords=in_coords,
-                    out_coords=out_coords,
+                in_raw = map_to_coords_with_sort(in_map)
+                out_raw = map_to_coords_with_sort(out_map)
+                in_raw, out_raw = self._assign_transducer_num_to_input(
+                    in_coords=in_raw,
+                    out_coords=out_raw,
                     center=center,
                     number_elements=self.number_elements,
                     d_theta=d_theta,
                     theta_list=theta_list,
                 )
-                indexed_element_mask_input = self._coords_to_index_map(
-                    in_coords,
-                    grid_shape=self.stored_grid_size,
-                )
-                indexed_element_mask_output = self._coords_to_index_map(
-                    out_coords,
-                    grid_shape=self.stored_grid_size,
+                # in_raw / out_raw: shape [N, 4], columns [x, y, 0, element_id]
+                valid_in = in_raw[:, 3] > 0
+                valid_out = out_raw[:, 3] > 0
+                return (
+                    in_raw[valid_in, :2].astype(np.int64),
+                    in_raw[valid_in, 3].astype(np.int64),
+                    out_raw[valid_out, :2].astype(np.int64),
+                    out_raw[valid_out, 3].astype(np.int64),
                 )
 
-        return indexed_element_mask_input, indexed_element_mask_output
+        source_coords = np.concatenate(source_coords_parts, axis=0).astype(np.int64)
+        source_ids = np.concatenate(source_ids_parts, axis=0).astype(np.int64)
+        sensor_coords = np.concatenate(sensor_coords_parts, axis=0).astype(np.int64)
+        sensor_ids = np.concatenate(sensor_ids_parts, axis=0).astype(np.int64)
+        return source_coords, source_ids, sensor_coords, sensor_ids
 
-    @staticmethod
-    def _coords_to_index_map(
-        coords: NDArray[np.float64],
-        grid_shape: NDArray[np.float64],
-    ) -> NDArray[np.int64]:
-        indexed_element_mask = np.zeros(grid_shape, dtype=int)
-        for coord in coords:
-            x = coord[0]
-            y = coord[1]
-            index = coord[3]
-            indexed_element_mask[x.astype(int), y.astype(int)] = index
-        return indexed_element_mask
+    @cached_property
+    def indexed_element_mask_input(self) -> NDArray[np.int64]:
+        """Indexed element mask for source pixels.
+
+        (element id at each grid point, 0 = background)
+        """
+        mask = np.zeros(self.stored_grid_size, dtype=int)
+        idx = tuple(self._source_coords[:, i] for i in range(self._source_coords.shape[1]))
+        mask[idx] = self._source_ids
+        return mask
+
+    @cached_property
+    def indexed_element_mask_output(self) -> NDArray[np.int64]:
+        """Indexed element mask for sensor pixels.
+
+        (element id at each grid point, 0 = background)
+        """
+        mask = np.zeros(self.stored_grid_size, dtype=int)
+        idx = tuple(self._sensor_coords[:, i] for i in range(self._sensor_coords.shape[1]))
+        mask[idx] = self._sensor_ids
+        return mask
+
+    @property
+    def element_mask_input(self) -> NDArray[np.bool_]:
+        """Boolean mask of all source pixels across all elements."""
+        return self.indexed_element_mask_input > 0
+
+    @property
+    def element_mask_output(self) -> NDArray[np.bool_]:
+        """Boolean mask of all sensor pixels across all elements."""
+        return self.indexed_element_mask_output > 0
 
     def _assign_transducer_num_to_input(
         self,
@@ -459,9 +498,6 @@ class TransducerGeometry:
         # Assign which transducer number is assigned to each input.
         thetas_in = np.arctan2(in_coords[:, 1] - center[1], in_coords[:, 0] - center[0])
         thetas_out = np.arctan2(out_coords[:, 1] - center[1], out_coords[:, 0] - center[0])
-
-        # out_coords2 = np.zeros((number_elements, 2))
-        # in_coords2 = np.zeros((number_elements, 2))
 
         in_coords = np.append(in_coords, np.zeros((in_coords.shape[0], 2)), axis=1)
         in_coords[:, 2] = 0
@@ -477,16 +513,12 @@ class TransducerGeometry:
             greater_than_min = thetas_in > (theta_list[tt] - d_theta / 2)
             id_theta = np.where(np.logical_and(less_than_max, greater_than_min))[0]
             in_coords[id_theta, 3] = tt + 1
-            # in_coords2[tt, 0] = np.mean(in_coords[id_theta, 0])
-            # in_coords2[tt, 1] = np.mean(in_coords[id_theta, 1])
 
             # find which outcoords are assigned to tt
             less_than_max = thetas_out < (theta_list[tt] + d_theta / 2)
             greater_than_min = thetas_out > (theta_list[tt] - d_theta / 2)
             id_theta = np.where(np.logical_and(less_than_max, greater_than_min))[0]
             out_coords[id_theta, 3] = tt + 1
-            # out_coords2[tt, 0] = np.mean(out_coords[id_theta, 0])
-            # out_coords2[tt, 1] = np.mean(out_coords[id_theta, 1])
         return in_coords, out_coords
 
     @staticmethod
@@ -628,14 +660,14 @@ class TransducerGeometry:
         return self.element_mask_output
 
     @property
-    def n_sources(self) -> NDArray[np.int64]:
-        """Return the number of source elements."""
-        return self.element_mask_input.sum()
+    def n_sources(self) -> int:
+        """Return the total number of source pixels across all elements."""
+        return len(self._source_coords)
 
     @property
-    def n_sources_per_element(self) -> NDArray[np.int64]:
-        """Return the number of source elements."""
-        return self.element_mask_input.sum() // self.number_elements
+    def n_sources_per_element(self) -> int:
+        """Return the number of source pixels per element."""
+        return len(self._source_coords) // self.number_elements
 
     def __str__(self) -> str:
         """Return string representation of the TransducerGeometry.
@@ -738,7 +770,7 @@ class Transducer:
             error_msg = "Input signal is all zeros"
             logger.error(error_msg)
             raise ValueError(error_msg)
-        if signal.shape[0] != self.source_mask.sum():
+        if signal.shape[0] != len(self.source_coords):
             error_msg = "Input signal has the wrong number of elements"
             logger.error(error_msg)
             raise ValueError(error_msg)
@@ -776,6 +808,20 @@ class Transducer:
 
         """
         self.signal = value
+
+    @property
+    def source_coords(self) -> NDArray[np.int64]:
+        """Coordinates of active source pixels; shape [N_src, ndim]."""
+        active_ids = np.where(self.active_source_elements)[0] + 1
+        mask = np.isin(self.transducer_geometry._source_ids, active_ids)  # noqa: SLF001
+        return self.transducer_geometry._source_coords[mask]  # noqa: SLF001
+
+    @property
+    def sensor_coords(self) -> NDArray[np.int64]:
+        """Coordinates of active sensor pixels; shape [N_snsr, ndim]."""
+        active_ids = np.where(self.active_sensor_elements)[0] + 1
+        mask = np.isin(self.transducer_geometry._sensor_ids, active_ids)  # noqa: SLF001
+        return self.transducer_geometry._sensor_coords[mask]  # noqa: SLF001
 
     @property
     def element_id_to_element_surface(self) -> dict[int, NDArray[np.int64]]:
@@ -912,99 +958,62 @@ class Transducer:
         return air_map
 
     @property
-    def sensor_mask(self) -> NDArray[np.bool]:
-        """Return the sensor mask indicating active sensor elements from the transducer geometry."""
-        active_ids = np.where(self.active_sensor_elements)[0] + 1
-        return np.isin(self.transducer_geometry.indexed_element_mask_output, active_ids)
+    def sensor_mask(self) -> NDArray[np.bool_]:
+        """Boolean mask of active sensor pixels."""
+        mask = np.zeros(self.transducer_geometry.stored_grid_size, dtype=bool)
+        coords = self.sensor_coords
+        if len(coords):
+            idx = tuple(coords[:, i] for i in range(coords.shape[1]))
+            mask[idx] = True
+        return mask
 
     @property
-    def source_mask(self) -> NDArray[np.bool]:
-        """Return the source mask indicating active source elements from the transducer geometry."""
-        active_ids = np.where(self.active_source_elements)[0] + 1
-        return np.isin(self.transducer_geometry.indexed_element_mask_input, active_ids)
+    def source_mask(self) -> NDArray[np.bool_]:
+        """Boolean mask of active source pixels."""
+        mask = np.zeros(self.transducer_geometry.stored_grid_size, dtype=bool)
+        coords = self.source_coords
+        if len(coords):
+            idx = tuple(coords[:, i] for i in range(coords.shape[1]))
+            mask[idx] = True
+        return mask
 
     @property
     def dict_source_index_to_location(self) -> dict[int, NDArray[np.int64]]:
-        """Return the dictionary mapping source elements to their locations."""
-        # get the coordinates of the active source elements
-        coords = map_to_coordinates(self.source_mask, is_3d=self.is_3d, sort=True).T
-        # create a dictionary mapping source elements to their coordinates
-        return {i: coords[i - 1] for i in range(1, self.transducer_geometry.n_sources + 1)}
+        """Return mapping from 1-based source pixel index to grid coordinates."""
+        coords = self.source_coords
+        return {i: coords[i - 1] for i in range(1, len(coords) + 1)}
 
     @property
     def element_id_to_element_center(self) -> dict[int, NDArray[np.int64]]:
-        """Return the dictionary mapping source elements to their center coordinates."""
-        labels = self.transducer_geometry.indexed_element_mask_input  # shape (H, W), int labels
+        """Return the dictionary mapping element IDs to their center coordinates."""
+        coords = self.transducer_geometry._source_coords  # noqa: SLF001
+        ids = self.transducer_geometry._source_ids  # noqa: SLF001
         n = self.transducer_geometry.number_elements
-
-        # Coordinates of every pixel
-        if self.is_3d:
-            rr, cc, dd = np.indices(labels.shape)  # rr=row, cc=col, dd=depth
-
-            lab = labels.ravel()
-            rr = rr.ravel()
-            cc = cc.ravel()
-            dd = dd.ravel()
-
-            # Count pixels per label, and sum coordinates per label
-            counts = np.bincount(lab, minlength=n + 1)
-            sum_r = np.bincount(lab, weights=rr, minlength=n + 1)
-            sum_c = np.bincount(lab, weights=cc, minlength=n + 1)
-            sum_d = np.bincount(lab, weights=dd, minlength=n + 1)
-
-            # Avoid division by zero if some labels are missing
-            valid = counts[1:] > 0
-            centers = np.empty((n, 3), dtype=np.int64)
-            centers[:] = -1  # or whatever sentinel you prefer
-
-            centers[valid, 0] = np.rint(sum_r[1:][valid] / counts[1:][valid]).astype(
-                np.int64,
-            )
-            centers[valid, 1] = np.rint(sum_c[1:][valid] / counts[1:][valid]).astype(
-                np.int64,
-            )
-            centers[valid, 2] = np.rint(sum_d[1:][valid] / counts[1:][valid]).astype(
-                np.int64,
-            )
-
-            # Build dict {element_id: center([r,c,d])}
-            return {i: centers[i - 1] for i in range(1, n + 1)}
-        rr, cc = np.indices(labels.shape)  # rr=row, cc=col
-
-        lab = labels.ravel()
-        rr = rr.ravel()
-        cc = cc.ravel()
-
-        # Count pixels per label, and sum coordinates per label
-        counts = np.bincount(lab, minlength=n + 1)
-        sum_r = np.bincount(lab, weights=rr, minlength=n + 1)
-        sum_c = np.bincount(lab, weights=cc, minlength=n + 1)
-
-        # Avoid division by zero if some labels are missing
-        valid = counts[1:] > 0
-        centers = np.empty((n, 2), dtype=np.int64)
-        centers[:] = -1  # or whatever sentinel you prefer
-
-        centers[valid, 0] = np.rint(sum_r[1:][valid] / counts[1:][valid]).astype(np.int64)
-        centers[valid, 1] = np.rint(sum_c[1:][valid] / counts[1:][valid]).astype(np.int64)
-
-        # Build dict {element_id: center([r,c])}
-        return {i: centers[i - 1] for i in range(1, n + 1)}
+        ndim = coords.shape[1] if len(coords) else (3 if self.is_3d else 2)
+        out: dict[int, NDArray[np.int64]] = {}
+        for eid in range(1, n + 1):
+            sel = ids == eid
+            if not sel.any():
+                out[eid] = np.full(ndim, -1, dtype=np.int64)
+            else:
+                out[eid] = np.rint(coords[sel].mean(axis=0)).astype(np.int64)
+        return out
 
     @property
     def sensor(self) -> fullwave.sensor.Sensor:
-        """Return the Sensor object with the sensor mask.
+        """Return the Sensor object with active sensor coordinates.
 
         this property is used in the fullwave simulation run.
         """
         return fullwave.sensor.Sensor(
-            self.sensor_mask,
+            coords=self.sensor_coords,
+            grid_shape=tuple(self.transducer_geometry.stored_grid_size),
             sampling_modulus_time=self.sampling_modulus_time,
         )
 
     @property
     def source(self) -> fullwave.source.Source:
-        """Return the Source object with the sensor mask and signal.
+        """Return the Source object with active source coordinates and signal.
 
         this property is used in the fullwave simulation run.
 
@@ -1014,16 +1023,19 @@ class Transducer:
             If the signal is not set.
 
         """
-        # check if the signal is set
         if self._signal is None:
             error_msg = "Input signal is not set. use set_signal() to set the signal."
             logger.error(error_msg)
             raise ValueError(error_msg)
-        return fullwave.source.Source(self.signal, self.source_mask)
+        return fullwave.source.Source(
+            p0=self.signal,
+            coords=self.source_coords,
+            grid_shape=tuple(self.transducer_geometry.stored_grid_size),
+        )
 
     @property
-    def n_sources(self) -> NDArray[np.int64]:
-        """Return the number of source elements."""
+    def n_sources(self) -> int:
+        """Return the total number of source pixels across all elements."""
         return self.transducer_geometry.n_sources
 
     def plot_source_mask(
@@ -1042,10 +1054,7 @@ class Transducer:
         fig, ax = plt.subplots(1, 1, figsize=(10, 10))
         plot_mask = np.zeros(self.transducer_geometry.stored_grid_size)
         plot_mask[self.transducer_geometry.element_mask_input] = 1
-        # plot_mask[np.roll(self.source_mask, 10, axis=0)] = 2
-        # plot_mask[np.roll(self.sensor_mask, 5, axis=0)] = 3
         plot_mask[self.source_mask] = 2
-        # plot_mask[self.sensor_mask + 1] = 3
         pcm = ax.imshow(plot_mask, cmap="turbo")
         ax.set_title("Source Mask layout")
         ax.set_xlabel("y")
@@ -1058,7 +1067,6 @@ class Transducer:
             pcm,
             ax=ax,
             label="Element Type",
-            # orientation="horizontal",
         )
         cbar.set_ticks(
             ticks=[0, 1, 2],
@@ -1086,10 +1094,7 @@ class Transducer:
         fig, ax = plt.subplots(1, 1, figsize=(10, 10))
         plot_mask = np.zeros(self.transducer_geometry.stored_grid_size)
         plot_mask[self.transducer_geometry.element_mask_input] = 1
-        # plot_mask[np.roll(self.source_mask, 10, axis=0)] = 2
-        # plot_mask[np.roll(self.sensor_mask, 5, axis=0)] = 3
         plot_mask[self.sensor_mask] = 2
-        # plot_mask[self.sensor_mask + 1] = 3
         pcm = ax.imshow(plot_mask, cmap="turbo")
         ax.set_title("Sensor Mask layout")
         ax.set_xlabel("y")
@@ -1102,7 +1107,6 @@ class Transducer:
             pcm,
             ax=ax,
             label="Element Type",
-            # orientation="horizontal",
         )
         cbar.set_ticks(
             ticks=[0, 1, 2],
