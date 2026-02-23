@@ -104,15 +104,20 @@ def ensure_binary(local_path: Path) -> Path:
         return local_path
 
     filename = local_path.name
-    cached = CACHE_DIR / filename
 
-    # 2. Previously downloaded and cached.
+    # Resolve the required tag first so cache lookup is always tag-specific.
+    # This ensures that when BINARY_RELEASE_TAG is bumped (e.g. after a package
+    # update) the old cached binary is not silently reused — each tag gets its
+    # own subdirectory under CACHE_DIR.
+    tag = os.environ.get("FULLWAVE25_BINARY_TAG", BINARY_RELEASE_TAG)
+    cached = CACHE_DIR / tag / filename
+
+    # 2. Previously downloaded and cached for this exact tag.
     if cached.exists():
         logger.debug("Using cached binary: %s", cached)
         return cached
 
     # 3. Download from GitHub releases.
-    tag = os.environ.get("FULLWAVE25_BINARY_TAG", BINARY_RELEASE_TAG)
     url = _download_url(filename, tag)
 
     logger.info(
