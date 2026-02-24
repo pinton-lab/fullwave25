@@ -169,6 +169,19 @@ class InputFileWriter:
             )
         if incoords_add is not None:
             self._queue_coords_write(simulation_dir / "icc_add.dat", incoords_add)
+        for _vel_suffix, _vel_attr in (("u", "u0"), ("v", "v0"), ("w", "w0")):
+            _signal_vel = getattr(self.source, _vel_attr, None)
+            _incoords_vel = getattr(self.source, f"incoords_{_vel_suffix}", None)
+            if _signal_vel is not None:
+                self._queue_ic_write(
+                    simulation_dir / f"icmat_{_vel_suffix}.dat",
+                    np.transpose(_signal_vel),
+                )
+            if _incoords_vel is not None:
+                self._queue_coords_write(
+                    simulation_dir / f"icc_{_vel_suffix}.dat",
+                    _incoords_vel,
+                )
         self._queue_coords_write(simulation_dir / "icc.dat", self.source.incoords)
         self._copy_simulation_bin_file(simulation_dir)
 
@@ -1047,6 +1060,10 @@ class InputFileWriter:
         n_sources_add = getattr(self.source, "n_sources_add", 0)
         if n_sources_add > 0:
             var_list.append(("ncoords_add", n_sources_add))
+        for _vel_suffix in ("u", "v", "w"):
+            _n_vel = getattr(self.source, f"n_sources_{_vel_suffix}", 0)
+            if _n_vel > 0:
+                var_list.append((f"ncoords_{_vel_suffix}", _n_vel))
         if self.is_3d:
             var_list.extend(
                 [

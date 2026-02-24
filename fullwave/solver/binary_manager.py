@@ -28,7 +28,7 @@ CACHE_DIR = Path.home() / ".cache" / "fullwave25" / "bins"
 
 # Pinned release tag for the solver binaries.
 # Update this only when new binaries are uploaded to a GitHub release.
-BINARY_RELEASE_TAG = "fullwave_bin_v1.1"
+BINARY_RELEASE_TAG = "fullwave_bin_v1.2"
 
 
 def _download_url(filename: str, tag: str) -> str:
