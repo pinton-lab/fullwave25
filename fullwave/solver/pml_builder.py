@@ -322,12 +322,33 @@ class PMLBuilder:
             if getattr(self.source_org, "incoords_add", None) is not None
             else None
         )
+        incoords_u_ext = (
+            self.source_org.incoords_u + self.num_boundary_points
+            if getattr(self.source_org, "incoords_u", None) is not None
+            else None
+        )
+        incoords_v_ext = (
+            self.source_org.incoords_v + self.num_boundary_points
+            if getattr(self.source_org, "incoords_v", None) is not None
+            else None
+        )
+        incoords_w_ext = (
+            self.source_org.incoords_w + self.num_boundary_points
+            if getattr(self.source_org, "incoords_w", None) is not None
+            else None
+        )
         self.extended_source = fullwave.Source(
             p0=self.source_org.p0,
             coords=self.source_org.incoords + self.num_boundary_points,
             grid_shape=extended_grid_shape,
             p0_additive=self.source_org.p0_additive,
             coords_additive=incoords_add_ext,
+            u0=getattr(self.source_org, "u0", None),
+            coords_u=incoords_u_ext,
+            v0=getattr(self.source_org, "v0", None),
+            coords_v=incoords_v_ext,
+            w0=getattr(self.source_org, "w0", None),
+            coords_w=incoords_w_ext,
         )
         logger.debug("building extended source for pml...done")
 
@@ -1434,7 +1455,7 @@ class PMLBuilder:
 class PMLBuilderExponentialAttenuation(PMLBuilder):
     """A class to set up PML for exponential attenuation media."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0915
         self,
         grid: fullwave.Grid,
         medium: fullwave.Medium,
@@ -1594,12 +1615,33 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             if getattr(self.source_org, "incoords_add", None) is not None
             else None
         )
+        incoords_u_ext = (
+            self.source_org.incoords_u + self.num_boundary_points
+            if getattr(self.source_org, "incoords_u", None) is not None
+            else None
+        )
+        incoords_v_ext = (
+            self.source_org.incoords_v + self.num_boundary_points
+            if getattr(self.source_org, "incoords_v", None) is not None
+            else None
+        )
+        incoords_w_ext = (
+            self.source_org.incoords_w + self.num_boundary_points
+            if getattr(self.source_org, "incoords_w", None) is not None
+            else None
+        )
         self.extended_source = fullwave.Source(
             p0=self.source_org.p0,
             coords=self.source_org.incoords + self.num_boundary_points,
             grid_shape=extended_grid_shape,
             p0_additive=self.source_org.p0_additive,
             coords_additive=incoords_add_ext,
+            u0=getattr(self.source_org, "u0", None),
+            coords_u=incoords_u_ext,
+            v0=getattr(self.source_org, "v0", None),
+            coords_v=incoords_v_ext,
+            w0=getattr(self.source_org, "w0", None),
+            coords_w=incoords_w_ext,
         )
         extended_sensor_grid_shape = tuple(
             s + 2 * self.num_boundary_points for s in self.sensor_org.grid_shape
