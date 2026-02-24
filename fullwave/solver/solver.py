@@ -16,11 +16,15 @@ from fullwave.utils import (
     check_functions,
 )
 
+from .binary_manager import ensure_binary
 from .cuda_utils import get_cuda_architecture, retrieve_cuda_version
 
 logger = logging.getLogger("__main__." + __name__)
 
 COMPATIBLE_CUDA_ARCHITECTURES = [
+    "sm_50",  # Maxwell: GTX 750, GTX 750 Ti
+    "sm_52",  # Maxwell: GTX 980, GTX 970
+    "sm_60",  # Pascal: Tesla P100
     "sm_61",  # Pascal: GTX 10*0
     "sm_70",  # Volta: V100, GTX 1180
     "sm_75",  # Turing: RTX 20*0
@@ -31,6 +35,7 @@ COMPATIBLE_CUDA_ARCHITECTURES = [
     "sm_100",  # Blackwell: RTX 50 series
     "sm_101",  # Blackwell: RTX 50 series
     "sm_120",  # Blackwell: RTX 50 series
+    "sm_121",  # Blackwell: RTX 50 series
 ]
 
 VERIFIED_CUDA_ARCHITECTURES = [
@@ -39,26 +44,29 @@ VERIFIED_CUDA_ARCHITECTURES = [
     "sm_89",  # Ada: RTX 4090, L40, RTX6000
     "sm_120",  # Blackwell: RTX 50 series
     "sm_75",  # Turing: RTX 20*0, T4
+    "sm_90",  # Hopper: H100, H200
 ]
 
 COMPATIBLE_CUDA_VERSIONS = [
     11.8,
     12.4,
-    12.6,
     12.9,
+    13.0,
 ]
 
 COMPATIBLE_CUDA_RANGES = [
-    (11.8, 12.9),
+    (11.8, 13.0),
 ]
 
 VERIFIED_CUDA_VERSIONS = [
     12.4,
-    12.6,
     12.9,
 ]
 
 COMPATIBLE_CUDA_VERSIONS_ARCHITECTURES_set = {
+    (11.8, "sm_50"),
+    (11.8, "sm_52"),
+    (11.8, "sm_60"),
     (11.8, "sm_61"),
     (11.8, "sm_70"),
     (11.8, "sm_75"),
@@ -67,6 +75,9 @@ COMPATIBLE_CUDA_VERSIONS_ARCHITECTURES_set = {
     (11.8, "sm_89"),
     (11.8, "sm_90"),
     # ---
+    (12.4, "sm_50"),
+    (12.4, "sm_52"),
+    (12.4, "sm_60"),
     (12.4, "sm_61"),
     (12.4, "sm_70"),
     (12.4, "sm_75"),
@@ -75,14 +86,9 @@ COMPATIBLE_CUDA_VERSIONS_ARCHITECTURES_set = {
     (12.4, "sm_89"),
     (12.4, "sm_90"),
     # ---
-    (12.6, "sm_61"),
-    (12.6, "sm_70"),
-    (12.6, "sm_75"),
-    (12.6, "sm_80"),
-    (12.6, "sm_86"),
-    (12.6, "sm_89"),
-    (12.6, "sm_90"),
-    # ---
+    (12.9, "sm_50"),
+    (12.9, "sm_52"),
+    (12.9, "sm_60"),
     (12.9, "sm_61"),
     (12.9, "sm_70"),
     (12.9, "sm_75"),
@@ -93,6 +99,17 @@ COMPATIBLE_CUDA_VERSIONS_ARCHITECTURES_set = {
     (12.9, "sm_100"),
     (12.9, "sm_101"),
     (12.9, "sm_120"),
+    (12.9, "sm_121"),
+    # ---
+    (13.0, "sm_75"),
+    (13.0, "sm_80"),
+    (13.0, "sm_86"),
+    (13.0, "sm_89"),
+    (13.0, "sm_90"),
+    (13.0, "sm_100"),
+    (13.0, "sm_103"),
+    (13.0, "sm_120"),
+    (13.0, "sm_121"),
 }
 
 
@@ -185,7 +202,15 @@ def _retrieve_fullwave_simulation_path(
 ) -> Path:
     arch_option = _make_cuda_arch_option(use_gpu=use_gpu)
     cuda_version_option, cuda_version = _make_cuda_version_option(use_gpu=use_gpu)
-    isotropic_str = "_isotropic" if use_isotropic_relaxation else ""
+    if use_isotropic_relaxation is False:
+        error_msg = (
+            "Currently, only isotropic relaxation is supported. "
+            "Please set use_isotropic_relaxation to True for the simulation."
+        )
+        raise NotImplementedError(error_msg)
+
+    # isotropic_str = "_isotropic" if use_isotropic_relaxation else ""
+    isotropic_str = ""
 
     _check_compatible_set(
         cuda_version=cuda_version,
@@ -199,7 +224,7 @@ def _retrieve_fullwave_simulation_path(
                 / "exponential_attenuation"
                 / "gpu"
                 / "3d"
-                / f"fullwave2_3d_exponential_attenuation_gpu_{arch_option}_{cuda_version_option}"
+                / f"fullwave2_3d_exponential_attenuation_multi_gpu_{cuda_version_option}"
             )
         elif not is_3d and use_gpu:
             path_fullwave_simulation_bin = (
@@ -208,7 +233,7 @@ def _retrieve_fullwave_simulation_path(
                 / "exponential_attenuation"
                 / "gpu"
                 / "2d"
-                / f"fullwave2_2d_exponential_attenuation_gpu_{arch_option}_{cuda_version_option}"
+                / f"fullwave2_2d_exponential_attenuation_multi_gpu_{cuda_version_option}"
             )
         else:
             error_msg = (
@@ -235,7 +260,7 @@ def _retrieve_fullwave_simulation_path(
                 / f"num_relax={n_relax_mechanisms}"
                 / (
                     f"fullwave2_3d_{n_relax_mechanisms}_relax{isotropic_str}"
-                    f"_multi_gpu_{arch_option}_{cuda_version_option}"
+                    f"_multi_gpu_{cuda_version_option}"
                 )
             )
         else:
@@ -258,7 +283,7 @@ def _retrieve_fullwave_simulation_path(
                 / f"num_relax={n_relax_mechanisms}"
                 / (
                     f"fullwave2_2d_{n_relax_mechanisms}_relax{isotropic_str}"
-                    f"_multi_gpu_{arch_option}_{cuda_version_option}"
+                    f"_multi_gpu_{cuda_version_option}"
                 )
             )
         else:
@@ -302,6 +327,7 @@ class Solver:
         use_exponential_attenuation: bool = False,
         use_isotropic_relaxation: bool = True,
         cuda_device_id: str | int | list | None = None,
+        save_gpu_memory: bool = False,
     ) -> None:
         """Initialize a Solver instance for the fullwave simulation.
 
@@ -377,6 +403,17 @@ class Solver:
             for multiple GPUs, provide a list of device IDs.
             example 1: [0, 1] for using GPU 0 and GPU 1. or "0,1" as a string.
             example 2: 2 for using GPU 2 or "2" as a string.
+        save_gpu_memory : bool, optional
+            Whether to save GPU memory by using ICMAT_MEMORY_SAVING flag in the simulation.
+            The simulation does not load initial conditions into GPU memory and
+            it loads the slice of the wavefield needed for the current time step
+            from CPU memory at each time step.
+            Defaults to False. If True, it may significantly reduce GPU memory usage,
+            but it may also increase the simulation time
+            due to the overhead of data transfer between CPU and GPU
+            depending on the hardware and the simulation settings.
+            useful in 3D simulations with large grid sizes
+            where GPU memory is a limiting factor.
 
         Raises
         ------
@@ -393,6 +430,7 @@ class Solver:
         self.medium: fullwave.Medium
         self.grid: fullwave.Grid
         self.input_file_writer: InputFileWriter
+        self.save_gpu_memory = save_gpu_memory
 
         self.run_on_memory = run_on_memory
         if run_on_memory:
@@ -437,13 +475,14 @@ class Solver:
         self.n_relax_mechanisms = medium.n_relaxation_mechanisms
 
         if path_fullwave_simulation_bin is None:
-            path_fullwave_simulation_bin = _retrieve_fullwave_simulation_path(
+            local_path = _retrieve_fullwave_simulation_path(
                 use_gpu=use_gpu,
                 is_3d=self.is_3d,
                 use_exponential_attenuation=self.use_exponential_attenuation,
                 use_isotropic_relaxation=use_isotropic_relaxation,
                 n_relax_mechanisms=self.n_relax_mechanisms,
             )
+            path_fullwave_simulation_bin = ensure_binary(local_path)
         else:
             check_functions.check_path_exists(path_fullwave_simulation_bin)
 
@@ -514,6 +553,7 @@ class Solver:
             is_3d=self.is_3d,
             use_gpu=self.use_gpu,
             cuda_device_id=self.cuda_device_id,
+            save_gpu_memory=self.save_gpu_memory,
         )
 
         if use_exponential_attenuation:

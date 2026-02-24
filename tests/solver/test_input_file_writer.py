@@ -36,6 +36,9 @@ def create_dummy_objects():
         icmat=np.array([[1, 2], [3, 4]], dtype=np.float64),
         incoords=np.array([[1, 2], [3, 4]], dtype=np.int64),
         n_sources=2,
+        p0_additive=None,
+        incoords_add=None,
+        n_sources_add=0,
     )
     sensor = SimpleNamespace(
         outcoords=np.array([[1, 2], [3, 4]], dtype=np.int64),
@@ -130,6 +133,113 @@ def test_run_static_creates_symbolic_links(tmp_path, work_and_bin, monkeypatch):
     assert dst_file.is_symlink(), "c.dat is not a symbolic link."
     # Verify that the symlink points to the correct source.
     assert dst_file.samefile(src_file)
+
+
+def test_run_with_p0_additive_writes_icmat_add(tmp_path, work_and_bin, monkeypatch):
+    """When source has p0_additive, icmat_add.dat is written with same layout as icmat.dat."""
+    work_dir, bin_file = work_and_bin
+    grid, medium, source, sensor = create_dummy_objects()
+    # Add additive source term (same shape as icmat: n_sources x nt)
+    source.p0_additive = np.array([[0.1, 0.2], [0.3, 0.4]], dtype=np.float64)
+
+    monkeypatch.setattr(check_functions, "check_path_exists", lambda x: None)  # noqa: ARG005
+    monkeypatch.setattr(check_functions, "check_instance", lambda inst, cls: None)  # noqa: ARG005
+
+    writer = InputFileWriter(
+        work_dir,
+        grid,
+        medium,
+        source,
+        sensor,
+        path_fullwave_simulation_bin=bin_file,
+        validate_input=False,
+    )
+    sim_dir_name = "sim_additive"
+    sim_dir = writer.run(sim_dir_name, is_static_map=False, recalculate_pml=True)
+    sim_path = Path(sim_dir)
+
+    assert (sim_path / "icmat.dat").exists()
+    additive_path = sim_path / "icmat_add.dat"
+    assert additive_path.exists(), "icmat_add.dat should be written when p0_additive is set."
+
+    # _write_ic stores (icmat.T).T = icmat in row-major, so (n_sources, nt)
+    additive_data = np.fromfile(additive_path, dtype=np.float32)
+    expected = source.p0_additive.astype(np.float32).ravel()
+    np.testing.assert_array_almost_equal(additive_data, expected)
+
+
+def test_run_additive_only_writes_icmat_zeros_and_icmat_add(tmp_path, work_and_bin, monkeypatch):
+    """When source has only p0_additive (p0=None), icmat.dat is zeros, icmat_add.dat has data."""
+    work_dir, bin_file = work_and_bin
+    grid, medium, source, sensor = create_dummy_objects()
+    source.icmat = np.zeros((2, 2), dtype=np.float64)
+    source.p0_additive = np.array([[0.1, 0.2], [0.3, 0.4]], dtype=np.float64)
+
+    monkeypatch.setattr(check_functions, "check_path_exists", lambda x: None)  # noqa: ARG005
+    monkeypatch.setattr(check_functions, "check_instance", lambda inst, cls: None)  # noqa: ARG005
+
+    writer = InputFileWriter(
+        work_dir,
+        grid,
+        medium,
+        source,
+        sensor,
+        path_fullwave_simulation_bin=bin_file,
+        validate_input=False,
+    )
+    sim_dir_name = "sim_additive_only"
+    sim_dir = writer.run(sim_dir_name, is_static_map=False, recalculate_pml=True)
+    sim_path = Path(sim_dir)
+
+    icmat_path = sim_path / "icmat.dat"
+    assert icmat_path.exists()
+    icmat_data = np.fromfile(icmat_path, dtype=np.float32)
+    np.testing.assert_array_almost_equal(icmat_data, np.zeros(4))
+
+    additive_path = sim_path / "icmat_add.dat"
+    assert additive_path.exists()
+    additive_data = np.fromfile(additive_path, dtype=np.float32)
+    expected = source.p0_additive.astype(np.float32).ravel()
+    np.testing.assert_array_almost_equal(additive_data, expected)
+
+
+def test_run_with_incoords_add_writes_icc_add_and_ncoords_add(
+    tmp_path,
+    work_and_bin,
+    monkeypatch,
+):
+    """When source has p0_additive and incoords_add, icc_add.dat and ncoords_add.dat are written."""
+    work_dir, bin_file = work_and_bin
+    grid, medium, source, sensor = create_dummy_objects()
+    source.p0_additive = np.array([[0.1, 0.2], [0.3, 0.4]], dtype=np.float64)
+    source.incoords_add = np.array([[2, 3], [4, 5]], dtype=np.int64)
+    source.n_sources_add = 2
+
+    monkeypatch.setattr(check_functions, "check_path_exists", lambda x: None)  # noqa: ARG005
+    monkeypatch.setattr(check_functions, "check_instance", lambda inst, cls: None)  # noqa: ARG005
+
+    writer = InputFileWriter(
+        work_dir,
+        grid,
+        medium,
+        source,
+        sensor,
+        path_fullwave_simulation_bin=bin_file,
+        validate_input=False,
+    )
+    sim_dir_name = "sim_icc_add"
+    sim_dir = writer.run(sim_dir_name, is_static_map=False, recalculate_pml=True)
+    sim_path = Path(sim_dir)
+
+    icc_add_path = sim_path / "icc_add.dat"
+    assert icc_add_path.exists()
+    icc_add_data = np.fromfile(icc_add_path, dtype=np.int32)
+    np.testing.assert_array_equal(icc_add_data, source.incoords_add.ravel())
+
+    ncoords_add_path = sim_path / "ncoords_add.dat"
+    assert ncoords_add_path.exists()
+    ncoords_add_val = np.fromfile(ncoords_add_path, dtype=np.int32)
+    assert ncoords_add_val == 2
 
 
 def _dc_map_original(c_map: np.ndarray) -> np.ndarray:

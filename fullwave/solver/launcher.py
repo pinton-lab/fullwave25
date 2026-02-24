@@ -30,6 +30,7 @@ class Launcher:
         is_3d: bool = False,
         use_gpu: bool = True,
         cuda_device_id: str | int | list | None = None,
+        save_gpu_memory: bool = False,
     ) -> None:
         """Initialize a FullwaveLauncher instance.
 
@@ -50,6 +51,17 @@ class Launcher:
             for multiple GPUs, provide a list of device IDs.
             example 1: [0, 1] for using GPU 0 and GPU 1. or "0,1" as a string.
             example 2: 2 for using GPU 2 or "2" as a string.
+        save_gpu_memory : bool, optional
+            Whether to save GPU memory by using ICMAT_MEMORY_SAVING flag in the simulation.
+            The simulation does not load initial conditions into GPU memory and
+            it loads the slice of the wavefield needed for the current time step
+            from CPU memory at each time step.
+            Defaults to False. If True, it may significantly reduce GPU memory usage,
+            but it may also increase the simulation time
+            due to the overhead of data transfer between CPU and GPU
+            depending on the hardware and the simulation settings.
+            useful in 3D simulations with large grid sizes
+            where GPU memory is a limiting factor.
 
         """
         self._path_fullwave_simulation_bin = path_fullwave_simulation_bin
@@ -58,6 +70,7 @@ class Launcher:
         self.is_3d = is_3d
         self.use_gpu = use_gpu
         self.cuda_device_id = self._configure_cuda_device_id(cuda_device_id)
+        self.save_gpu_memory = save_gpu_memory
         logger.debug("Launcher instance created.")
 
     @staticmethod
@@ -203,7 +216,12 @@ class Launcher:
             logger.info("Running simulation...")
             with (simulation_dir / "fw2_execution.log").open("w", encoding="utf-8") as file:
                 time_start = time()
-                os.environ["CUDA_VISIBLE_DEVICES"] = self.cuda_device_id
+                env = os.environ.copy()
+                env["CUDA_VISIBLE_DEVICES"] = self.cuda_device_id
+                if self.save_gpu_memory:
+                    env["ICMAT_MEMORY_SAVING"] = "1"
+                else:
+                    env["ICMAT_MEMORY_SAVING"] = "0"
                 subprocess.run(  # noqa: S603
                     command,
                     check=True,
@@ -211,6 +229,7 @@ class Launcher:
                     stdout=file,
                     stderr=file,
                     text=True,
+                    env=env,
                     # check=False,
                 )
                 time_passed = time() - time_start
