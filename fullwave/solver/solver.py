@@ -642,6 +642,8 @@ class Solver:
     def _reshape_sensor_data(
         raw_sensor_output: NDArray[np.float64],
         sensor: fullwave.Sensor,
+        *,
+        n_t: int | None = None,
     ) -> NDArray[np.float64]:
         """Reshape the raw sensor output data.
 
@@ -651,12 +653,21 @@ class Solver:
             The raw sensor output data from the simulation. [nt*ncoordsout, 1]
         sensor: fullwave.Sensor
             The sensor object used in the simulation.
+        n_t: int | None
+            Number of time steps in the extended grid.  Required for sparse-grid
+            sensors because n_sensors is not known at Python time.
 
         Returns
         -------
         NDArray[np.float64]: The reshaped sensor output data. [ncoordsout, nt]
 
         """
+        if sensor.is_sparse_grid:
+            if n_t is None:
+                msg = "n_t is required to reshape sparse-grid sensor output"
+                raise ValueError(msg)
+            n_t_recorded = -(-n_t // sensor.sampling_modulus_time)  # ceiling division
+            return raw_sensor_output.reshape(n_t_recorded, -1).T
         return raw_sensor_output.reshape(-1, sensor.n_sensors).T
 
     def run(
@@ -783,29 +794,26 @@ class Solver:
             )
             logger.warning(warning_msg)
 
-        sensor_mask: NDArray[np.bool_]
         if record_whole_domain:
-            if self.is_3d:
-                sensor_mask = np.zeros(
-                    (
-                        self.pml_builder.extended_grid.nx,
-                        self.pml_builder.extended_grid.ny,
-                        self.pml_builder.extended_grid.nz,
-                    ),
-                    dtype=bool,
-                )
-            else:
-                sensor_mask = np.zeros(
-                    (self.pml_builder.extended_grid.nx, self.pml_builder.extended_grid.ny),
-                    dtype=bool,
-                )
-            sensor_mask[:, :] = True
+            mod_x = 1
+            mod_y = 1
+            mod_z = 1 if self.is_3d else None
+
             sensor = fullwave.Sensor(
-                mask=sensor_mask,
+                mod_x=mod_x,
+                mod_y=mod_y,
+                mod_z=mod_z,
                 sampling_modulus_time=sampling_modulus_time_whole_domain,
             )
         else:
             sensor = self.pml_builder.extended_sensor
+
+        # pml_thickness = PML + transition layers on each side, excluding ghost cells.
+        # Used by the binary to locate the interior domain when building a sparse sensor grid.
+        if record_whole_domain:
+            pml_thickness = 0
+        else:
+            pml_thickness = self.pml_builder.num_boundary_points - self.pml_builder.m_spatial_order
 
         start_input_file_writer_time = time.time()
         input_file_writer = InputFileWriter(
@@ -818,6 +826,7 @@ class Solver:
             use_exponential_attenuation=self.use_exponential_attenuation,
             use_isotropic_relaxation=self.use_isotropic_relaxation,
             release_after_write=release_after_write,
+            pml_thickness=pml_thickness,
         )
         simulation_dir = input_file_writer.run(
             simulation_dir_name,
@@ -850,6 +859,7 @@ class Solver:
             result = self._reshape_sensor_data(
                 sim_result,
                 sensor=sensor,
+                n_t=self.pml_builder.extended_grid.nt,
             )
             end_loading_time = time.time()
             message = (

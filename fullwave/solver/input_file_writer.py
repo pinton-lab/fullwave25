@@ -36,6 +36,7 @@ class InputFileWriter:
         use_exponential_attenuation: bool = False,
         use_isotropic_relaxation: bool = False,
         release_after_write: bool = False,
+        pml_thickness: int = 0,
     ) -> None:
         """Initialize the InputGeneratorBase instance.
 
@@ -74,6 +75,10 @@ class InputFileWriter:
             Whether to release the variable from memory after writing to file.
             This can help reduce memory usage when generating input files for large simulations.
             default is False.
+        pml_thickness : int, optional
+            PML boundary thickness in grid points (n_pml_layer + n_transition_layer).
+            Required by the solver binary when using sparse grid (mod_x/mod_y != 0) to determine
+            the interior domain boundaries. Also written when mod_x == 0 for future use.
 
         """
         logger.debug("Initializing InputFileWriter instance.")
@@ -99,6 +104,7 @@ class InputFileWriter:
         self.is_3d = self.grid.is_3d
         self.use_exponential_attenuation = use_exponential_attenuation
         self.release_after_write = release_after_write
+        self.pml_thickness = pml_thickness
 
         self._dim = int(
             np.rint(self.medium.sound_speed.max()) - np.rint(self.medium.sound_speed.min()),
@@ -828,6 +834,7 @@ class InputFileWriter:
         self._save_step_params(simulation_dir)
         self._save_coords_params(simulation_dir)
         self._save_d_params(simulation_dir, dim)
+        self._save_sparse_grid_params(simulation_dir)
 
         if self.use_isotropic_relaxation:
             rename_dict = {
@@ -894,6 +901,7 @@ class InputFileWriter:
         self._save_step_params(simulation_dir)
         self._save_coords_params(simulation_dir)
         self._save_d_params(simulation_dir, dim)
+        self._save_sparse_grid_params(simulation_dir)
 
     def _build_symbolic_links_for_dat_files(self, src_dir: Path, dst_dir: Path) -> None:
         var_name_list = [
@@ -916,6 +924,9 @@ class InputFileWriter:
             "ncoordszero",
             "nTic",
             "modT",
+            "modX",
+            "modY",
+            "pml_thickness",
             "d",
             "dmap",
             "ndmap",
@@ -948,6 +959,8 @@ class InputFileWriter:
                     "bpmly2",
                 ],
             )
+        if self.is_3d:
+            var_name_list.append("modZ")
         if self.is_3d and not self.use_isotropic_relaxation:
             var_name_list.extend(
                 [
@@ -1073,6 +1086,22 @@ class InputFileWriter:
         for var_name, var in var_list:
             save_path = simulation_dir / f"{var_name}.dat"
             self._queue_v_abs_write(np.int32, save_path, var)
+
+    def _save_sparse_grid_params(self, simulation_dir: Path) -> None:
+        """Write sparse-grid parameters when the sensor is in sparse-grid mode.
+
+        modX / modY / modZ and pml_thickness are only written when the sensor
+        was constructed with mod_x/mod_y (i.e. sensor.is_sparse_grid is True).
+        In standard coordinate/mask mode these files are not produced, preserving
+        backward compatibility with older binaries that do not expect them.
+        """
+        if not self.sensor.is_sparse_grid:
+            return
+        self._queue_v_abs_write(np.int32, simulation_dir / "modX.dat", self.sensor.mod_x)
+        self._queue_v_abs_write(np.int32, simulation_dir / "modY.dat", self.sensor.mod_y)
+        if self.is_3d:
+            self._queue_v_abs_write(np.int32, simulation_dir / "modZ.dat", self.sensor.mod_z)
+        self._queue_v_abs_write(np.int32, simulation_dir / "pml_thickness.dat", self.pml_thickness)
 
     def _save_d_params(
         self,

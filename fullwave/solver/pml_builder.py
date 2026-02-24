@@ -353,14 +353,24 @@ class PMLBuilder:
         logger.debug("building extended source for pml...done")
 
         logger.debug("building extended sensor for pml...")
-        extended_sensor_grid_shape = tuple(
-            s + 2 * self.num_boundary_points for s in self.sensor_org.grid_shape
-        )
-        self.extended_sensor = fullwave.Sensor(
-            coords=self.sensor_org.outcoords + self.num_boundary_points,
-            grid_shape=extended_sensor_grid_shape,
-            sampling_modulus_time=self.sensor_org.sampling_modulus_time,
-        )
+        if self.sensor_org.is_sparse_grid:
+            # Sparse-grid sensor: no explicit coordinates to shift.
+            # Pass mod values through; the binary generates positions at run time.
+            self.extended_sensor = fullwave.Sensor(
+                mod_x=self.sensor_org.mod_x,
+                mod_y=self.sensor_org.mod_y,
+                mod_z=self.sensor_org.mod_z,
+                sampling_modulus_time=self.sensor_org.sampling_modulus_time,
+            )
+        else:
+            extended_sensor_grid_shape = tuple(
+                s + 2 * self.num_boundary_points for s in self.sensor_org.grid_shape
+            )
+            self.extended_sensor = fullwave.Sensor(
+                coords=self.sensor_org.outcoords + self.num_boundary_points,
+                grid_shape=extended_sensor_grid_shape,
+                sampling_modulus_time=self.sensor_org.sampling_modulus_time,
+            )
         logger.debug("building extended sensor for pml...done")
         if self.is_3d:
             self.pml_mask_x, self.pml_mask_y, self.pml_mask_z = self._localize_pml_region()
@@ -1643,14 +1653,22 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             w0=getattr(self.source_org, "w0", None),
             coords_w=incoords_w_ext,
         )
-        extended_sensor_grid_shape = tuple(
-            s + 2 * self.num_boundary_points for s in self.sensor_org.grid_shape
-        )
-        self.extended_sensor = fullwave.Sensor(
-            coords=self.sensor_org.outcoords + self.num_boundary_points,
-            grid_shape=extended_sensor_grid_shape,
-            sampling_modulus_time=self.sensor_org.sampling_modulus_time,
-        )
+        if self.sensor_org.is_sparse_grid:
+            self.extended_sensor = fullwave.Sensor(
+                mod_x=self.sensor_org.mod_x,
+                mod_y=self.sensor_org.mod_y,
+                mod_z=self.sensor_org.mod_z,
+                sampling_modulus_time=self.sensor_org.sampling_modulus_time,
+            )
+        else:
+            extended_sensor_grid_shape = tuple(
+                s + 2 * self.num_boundary_points for s in self.sensor_org.grid_shape
+            )
+            self.extended_sensor = fullwave.Sensor(
+                coords=self.sensor_org.outcoords + self.num_boundary_points,
+                grid_shape=extended_sensor_grid_shape,
+                sampling_modulus_time=self.sensor_org.sampling_modulus_time,
+            )
         logger.debug("Extended source and sensor for PML built successfully.")
 
         logger.debug("Localizing PML region...")
