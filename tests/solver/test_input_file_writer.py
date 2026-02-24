@@ -44,6 +44,10 @@ def create_dummy_objects():
         outcoords=np.array([[1, 2], [3, 4]], dtype=np.int64),
         sampling_modulus_time=0.5,
         n_sensors=2,
+        mod_x=0,
+        mod_y=0,
+        mod_z=0,
+        is_sparse_grid=False,
     )
     return grid, medium, source, sensor
 
