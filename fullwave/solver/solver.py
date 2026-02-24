@@ -15,6 +15,7 @@ from fullwave.utils import (
     MemoryTempfile,
     check_functions,
 )
+from fullwave.utils.signal_filter import apply_filter
 
 from .binary_manager import ensure_binary
 from .cuda_utils import get_cuda_architecture, retrieve_cuda_version
@@ -639,6 +640,80 @@ class Solver:
         assert path_fullwave_simulation_bin.exists(), error_msg
 
     @staticmethod
+    def _validate_filter_params(
+        highpass_cutoff_mhz: float | None,
+        bandpass_cutoff_mhz: tuple[float, float] | None,
+        *,
+        load_results: bool,
+    ) -> None:
+        """Validate high-pass / band-pass filter arguments passed to run().
+
+        Raises
+        ------
+        ValueError
+            If both filter options are set simultaneously, or if a filter is
+            requested without ``load_results=True``.
+
+        """
+        if highpass_cutoff_mhz is not None and bandpass_cutoff_mhz is not None:
+            error_msg = (
+                "highpass_cutoff_mhz and bandpass_cutoff_mhz cannot both be specified. "
+                "Use highpass_cutoff_mhz for a simple high-pass filter or "
+                "bandpass_cutoff_mhz for a band-pass filter."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        if (highpass_cutoff_mhz is not None or bandpass_cutoff_mhz is not None) and (
+            not load_results
+        ):
+            error_msg = (
+                "Filtering requires load_results=True. "
+                "Set load_results=True or disable the filter options."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+    @staticmethod
+    def _apply_output_filter(
+        result: NDArray[np.float64],
+        dt: float,
+        highpass_cutoff_mhz: float | None,
+        bandpass_cutoff_mhz: tuple[float, float] | None,
+    ) -> NDArray[np.float64]:
+        """Apply the optional frequency filter to the reshaped sensor output.
+
+        Parameters
+        ----------
+        result : NDArray[np.float64]
+            Sensor data shaped ``[n_sensors, n_t]``.
+        dt : float
+            Grid time step in seconds.
+        highpass_cutoff_mhz : float | None
+            High-pass edge in MHz, or ``None``.
+        bandpass_cutoff_mhz : tuple[float, float] | None
+            ``(f_low_mhz, f_high_mhz)`` band-pass edges, or ``None``.
+
+        Returns
+        -------
+        NDArray[np.float64]
+            Filtered (or unchanged) sensor data.
+
+        """
+        if highpass_cutoff_mhz is not None:
+            logger.info("Applying high-pass filter at %.4g MHz...", highpass_cutoff_mhz)
+            return apply_filter(result, dt, f_low_hz=highpass_cutoff_mhz * 1e6)
+        if bandpass_cutoff_mhz is not None:
+            f_low_hz = bandpass_cutoff_mhz[0] * 1e6
+            f_high_hz = bandpass_cutoff_mhz[1] * 1e6
+            logger.info(
+                "Applying band-pass filter %.4g-%.4g MHz...",
+                bandpass_cutoff_mhz[0],
+                bandpass_cutoff_mhz[1],
+            )
+            return apply_filter(result, dt, f_low_hz=f_low_hz, f_high_hz=f_high_hz)
+        return result
+
+    @staticmethod
     def _reshape_sensor_data(
         raw_sensor_output: NDArray[np.float64],
         sensor: fullwave.Sensor,
@@ -681,6 +756,8 @@ class Solver:
         load_results: bool = True,
         generate_input_only: bool = False,
         release_after_write: bool = False,
+        highpass_cutoff_mhz: float | None = None,
+        bandpass_cutoff_mhz: tuple[float, float] | None = None,
     ) -> NDArray[np.float64] | Path:
         r"""Run the fullwave simulation and return the result as a NumPy array.
 
@@ -740,6 +817,18 @@ class Solver:
             If True, the memory used by the input files will be released after writing them to disk.
             This is useful when run_on_memory is True to free up memory space for the simulation
             or when the input files are large. Default is False.
+        highpass_cutoff_mhz : float | None
+            Apply a high-pass filter to the sensor recordings after the simulation.
+            Removes low-frequency PML drift by attenuating frequencies below this value (in MHz).
+            Uses a cosine (Hann) taper to avoid Gibbs ringing.
+            Cannot be combined with ``bandpass_cutoff_mhz``.
+            Requires ``load_results=True``.  Default is ``None`` (no filtering).
+        bandpass_cutoff_mhz : tuple[float, float] | None
+            Apply a band-pass filter ``(f_low_mhz, f_high_mhz)`` to the sensor recordings
+            after the simulation.  Retains only frequencies inside the specified band.
+            Uses cosine (Hann) tapers on both edges.
+            Cannot be combined with ``highpass_cutoff_mhz``.
+            Requires ``load_results=True``.  Default is ``None`` (no filtering).
 
         Returns
         -------
@@ -757,6 +846,8 @@ class Solver:
             Static map simulations require input files to be stored on a disk.
             run_on_memory, on the other hand, removes the input files
             after the simulation is complete.
+            Also raised if both ``highpass_cutoff_mhz`` and ``bandpass_cutoff_mhz`` are given,
+            or if either filter option is set but ``load_results=False``.
 
         """
         # self._save_data_for_beamforming()
@@ -777,6 +868,12 @@ class Solver:
             )
             logger.error(error_msg)
             raise ValueError(error_msg)
+
+        self._validate_filter_params(
+            highpass_cutoff_mhz,
+            bandpass_cutoff_mhz,
+            load_results=load_results,
+        )
 
         start_time = time.time()
         extended_medium = self.pml_builder.run(use_pml=self.use_pml)
@@ -867,7 +964,13 @@ class Solver:
                 f"{end_loading_time - start_loading_time:.2e} seconds."
             )
             logger.info(message)
-            return result
+
+            return self._apply_output_filter(
+                result,
+                self.grid.dt,
+                highpass_cutoff_mhz,
+                bandpass_cutoff_mhz,
+            )
         # if load_results is False, return the raw result
         # which is a list of file names
         return sim_result
