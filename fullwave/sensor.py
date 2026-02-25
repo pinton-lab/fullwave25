@@ -21,7 +21,7 @@ class Sensor:
     outcoords: NDArray[np.int64]
     sampling_modulus_time: int = 1
 
-    def __init__(  # noqa: PLR0915
+    def __init__(
         self,
         mask: NDArray[np.bool] | None = None,
         sampling_modulus_time: int = 1,
@@ -189,7 +189,8 @@ class Sensor:
     ) -> None:
         """Plot the transducer mask, optionally exporting and displaying the figure.
 
-        Raises:
+        Raises
+        ------
             ValueError: If the sensor is 3D because plotting is not supported.
 
         """

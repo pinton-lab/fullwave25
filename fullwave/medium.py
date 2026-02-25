@@ -231,7 +231,8 @@ class MediumRelaxationMaps:
     ) -> None:
         """Check if the relaxation parameter updates have valid keys and matching shapes.
 
-        Raises:
+        Raises
+        ------
             ValueError: If the keys do not match the desired keys or
             if the shapes of the values do not match the domain shape.
 
@@ -1147,11 +1148,13 @@ class Medium:
         it uses the relaxation parameters look up table
         to generate the relaxation parameters.
 
-        Returns:
+        Returns
+        -------
             MediumRelaxationMaps: An instance of MediumRelaxationMaps
             built from the retrieved relaxation parameters.
 
-        Raises:
+        Raises
+        ------
             ValueError: If an unknown attenuation_builder is specified.
 
         """
@@ -1216,7 +1219,8 @@ class Medium:
     def build_exponential(self) -> MediumExponentialAttenuation:
         """Build MediumExponentialAttenuation from alpha and power maps.
 
-        Returns:
+        Returns
+        -------
             MediumExponentialAttenuation: An instance of MediumExponentialAttenuation
             built from the alpha and power maps.
 

@@ -127,7 +127,7 @@ def test_configure_cuda_device_id_none(monkeypatch):
     )
 
     # Test with None input
-    result = Launcher._configure_cuda_device_id(None)  # noqa: SLF001
+    result = Launcher._configure_cuda_device_id(None)
     assert result == "0"
 
 
@@ -141,7 +141,7 @@ def test_configure_cuda_device_id_int(monkeypatch):
         selective_run_wrapper(monkeypatch=monkeypatch, gpu_ids=gpu_ids),
     )
     # Test with integer input
-    result = Launcher._configure_cuda_device_id(0)  # noqa: SLF001
+    result = Launcher._configure_cuda_device_id(0)
     assert result == "0"
 
 
@@ -156,7 +156,7 @@ def test_configure_cuda_device_id_string(monkeypatch):
     )
 
     # Test with string input
-    result = Launcher._configure_cuda_device_id("1")  # noqa: SLF001
+    result = Launcher._configure_cuda_device_id("1")
     assert result == "1"
 
 
@@ -170,7 +170,7 @@ def test_configure_cuda_device_id_list(monkeypatch):
         selective_run_wrapper(monkeypatch=monkeypatch, gpu_ids=gpu_ids),
     )
     # Test with list input
-    result = Launcher._configure_cuda_device_id([0, 1, 2])  # noqa: SLF001
+    result = Launcher._configure_cuda_device_id([0, 1, 2])
     assert result == "0,1,2"
 
 
@@ -185,7 +185,7 @@ def test_configure_cuda_device_id_negative_int(monkeypatch):
     )
     # Test with negative integer
     with pytest.raises(ValueError, match="CUDA device ID must be a non-negative integer"):
-        Launcher._configure_cuda_device_id(-1)  # noqa: SLF001
+        Launcher._configure_cuda_device_id(-1)
 
 
 def test_configure_cuda_device_id_invalid_string(monkeypatch):
@@ -202,7 +202,7 @@ def test_configure_cuda_device_id_invalid_string(monkeypatch):
         ValueError,
         match="CUDA device ID string must represent a non-negative integer",
     ):
-        Launcher._configure_cuda_device_id("invalid")  # noqa: SLF001
+        Launcher._configure_cuda_device_id("invalid")
 
 
 def test_configure_cuda_device_id_list_with_negative(monkeypatch):
@@ -220,7 +220,7 @@ def test_configure_cuda_device_id_list_with_negative(monkeypatch):
         ValueError,
         match="All CUDA device IDs in the list must be non-negative integers",
     ):
-        Launcher._configure_cuda_device_id([0, -1, 2])  # noqa: SLF001
+        Launcher._configure_cuda_device_id([0, -1, 2])
 
 
 def test_configure_cuda_device_id_invalid_type(monkeypatch):
@@ -238,7 +238,7 @@ def test_configure_cuda_device_id_invalid_type(monkeypatch):
         ValueError,
         match="CUDA device ID must be an integer, string, list, or None",
     ):
-        Launcher._configure_cuda_device_id(math.pi)  # noqa: SLF001
+        Launcher._configure_cuda_device_id(math.pi)
 
 
 def test_launcher_init_invalid_bin_path(monkeypatch):

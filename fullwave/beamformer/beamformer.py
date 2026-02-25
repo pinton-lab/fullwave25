@@ -14,7 +14,8 @@ class Beamformer:
     For faster implementations, consider using libraries such as
     mach beamformer: https://github.com/Forest-Neurotech/mach
 
-    References:
+    References
+    ----------
     - Fullwave2 BMME890 implementation
     - https://github.com/gfpinton/fullwave_bmme890/blob/master/fullwave2_launcher_imaging_planewave.m
 

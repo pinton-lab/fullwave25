@@ -115,7 +115,7 @@ class PMLBuilder:
     pml_mask_x: NDArray[np.float64] = field(init=False)
     pml_mask_y: NDArray[np.float64] = field(init=False)
 
-    def __init__(  # noqa: PLR0915
+    def __init__(
         self,
         grid: fullwave.Grid,
         medium: fullwave.Medium,
@@ -898,7 +898,7 @@ class PMLBuilder:
 
         return extended_medium
 
-    def _apply_pml_3d(  # noqa: PLR0915
+    def _apply_pml_3d(
         self,
         extended_medium: fullwave.MediumRelaxationMaps,
         theoritical_reflection_coefficient: float,
@@ -1184,7 +1184,7 @@ class PMLBuilder:
 
         return extended_medium
 
-    def _apply_transition_and_pml(  # noqa: C901, PLR0912, PLR0915
+    def _apply_transition_and_pml(  # noqa: PLR0912
         self,
         input_array: NDArray[np.float64],
         value_target: float,
@@ -1465,7 +1465,7 @@ class PMLBuilder:
 class PMLBuilderExponentialAttenuation(PMLBuilder):
     """A class to set up PML for exponential attenuation media."""
 
-    def __init__(  # noqa: PLR0915
+    def __init__(
         self,
         grid: fullwave.Grid,
         medium: fullwave.Medium,
