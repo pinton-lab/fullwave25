@@ -25,7 +25,7 @@ def _check_cupy() -> bool:
     global _CUPY_AVAILABLE  # noqa: PLW0603
     if _CUPY_AVAILABLE is None:
         try:
-            import cupy  # noqa: F401
+            import cupy  # noqa: F401, PLC0415
 
             _CUPY_AVAILABLE = True
         except ImportError:
@@ -145,7 +145,7 @@ def apply_filter(
     )
 
     if use_gpu and _check_cupy():
-        import cupy as cp
+        import cupy as cp  # noqa: PLC0415
 
         logger.debug("apply_filter: using CuPy GPU backend")
         data_gpu = cp.asarray(data, dtype=cp.float64)

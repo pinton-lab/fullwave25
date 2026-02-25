@@ -76,14 +76,14 @@ def named_material():
 
 def test_setup_base_geometry(grid, default_material):
     bd = BackgroundDomain(grid=grid, material_properties=default_material)
-    geo = bd._setup_base_geometry()  # noqa: SLF001
+    geo = bd._setup_base_geometry()
     assert geo.shape == (grid.nx, grid.ny)
     np.testing.assert_array_equal(geo, np.ones((grid.nx, grid.ny)))
 
 
 def test_setup_sound_speed_default(grid, default_material):
     bd = BackgroundDomain(grid=grid, material_properties=default_material)
-    sound_speed = bd._setup_sound_speed()  # noqa: SLF001
+    sound_speed = bd._setup_sound_speed()
     expected = np.ones((grid.nx, grid.ny)) * default_material.sound_speed
     np.testing.assert_array_almost_equal(sound_speed, expected)
 
@@ -94,7 +94,7 @@ def test_setup_sound_speed_named(grid, named_material):
         background_property_name="custom",
         material_properties=named_material,
     )
-    sound_speed = bd._setup_sound_speed()  # noqa: SLF001
+    sound_speed = bd._setup_sound_speed()
     expected_value = named_material.custom["sound_speed"]
     expected = np.ones((grid.nx, grid.ny)) * expected_value
     np.testing.assert_array_almost_equal(sound_speed, expected)
@@ -102,7 +102,7 @@ def test_setup_sound_speed_named(grid, named_material):
 
 def test_setup_density_default(grid, default_material):
     bd = BackgroundDomain(grid=grid, material_properties=default_material)
-    density = bd._setup_density()  # noqa: SLF001
+    density = bd._setup_density()
     expected = np.ones((grid.nx, grid.ny)) * default_material.density
     np.testing.assert_array_almost_equal(density, expected)
 
@@ -113,7 +113,7 @@ def test_setup_density_named(grid, named_material):
         background_property_name="custom",
         material_properties=named_material,
     )
-    density = bd._setup_density()  # noqa: SLF001
+    density = bd._setup_density()
     expected_value = named_material.custom["density"]
     expected = np.ones((grid.nx, grid.ny)) * expected_value
     np.testing.assert_array_almost_equal(density, expected)
@@ -121,7 +121,7 @@ def test_setup_density_named(grid, named_material):
 
 def test_setup_alpha_coeff_default(grid, default_material):
     bd = BackgroundDomain(grid=grid, material_properties=default_material)
-    alpha_coeff = bd._setup_alpha_coeff()  # noqa: SLF001
+    alpha_coeff = bd._setup_alpha_coeff()
     expected = np.ones((grid.nx, grid.ny)) * default_material.alpha_coeff
     np.testing.assert_array_almost_equal(alpha_coeff, expected)
 
@@ -132,7 +132,7 @@ def test_setup_alpha_coeff_named(grid, named_material):
         background_property_name="custom",
         material_properties=named_material,
     )
-    alpha_coeff = bd._setup_alpha_coeff()  # noqa: SLF001
+    alpha_coeff = bd._setup_alpha_coeff()
     expected_value = named_material.custom["alpha_coeff"]
     expected = np.ones((grid.nx, grid.ny)) * expected_value
     np.testing.assert_array_almost_equal(alpha_coeff, expected)
@@ -140,7 +140,7 @@ def test_setup_alpha_coeff_named(grid, named_material):
 
 def test_setup_alpha_power_default(grid, default_material):
     bd = BackgroundDomain(grid=grid, material_properties=default_material)
-    alpha_power = bd._setup_alpha_power()  # noqa: SLF001
+    alpha_power = bd._setup_alpha_power()
     expected = np.ones((grid.nx, grid.ny)) * default_material.alpha_power
     np.testing.assert_array_almost_equal(alpha_power, expected)
 
@@ -151,7 +151,7 @@ def test_setup_alpha_power_named(grid, named_material):
         background_property_name="custom",
         material_properties=named_material,
     )
-    alpha_power = bd._setup_alpha_power()  # noqa: SLF001
+    alpha_power = bd._setup_alpha_power()
     expected_value = named_material.custom["alpha_power"]
     expected = np.ones((grid.nx, grid.ny)) * expected_value
     np.testing.assert_array_almost_equal(alpha_power, expected)
@@ -159,7 +159,7 @@ def test_setup_alpha_power_named(grid, named_material):
 
 def test_setup_beta_default(grid, default_material):
     bd = BackgroundDomain(grid=grid, material_properties=default_material)
-    beta = bd._setup_beta()  # noqa: SLF001
+    beta = bd._setup_beta()
     expected = np.ones((grid.nx, grid.ny)) * default_material.beta
     np.testing.assert_array_almost_equal(beta, expected)
 
@@ -170,7 +170,7 @@ def test_setup_beta_named(grid, named_material):
         background_property_name="custom",
         material_properties=named_material,
     )
-    beta = bd._setup_beta()  # noqa: SLF001
+    beta = bd._setup_beta()
     expected_value = named_material.custom["beta"]
     expected = np.ones((grid.nx, grid.ny)) * expected_value
     np.testing.assert_array_almost_equal(beta, expected)

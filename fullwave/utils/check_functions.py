@@ -7,7 +7,8 @@ from typing import Any
 def check_instance(target_var: Any, instances: list[Any] | Any) -> None:  # noqa: ANN401
     """Check whether target_var is an instance of the specified type.
 
-    Raises:
+    Raises
+    ------
         TypeError: If target_var is not an instance of instance.
 
     """
@@ -21,7 +22,8 @@ def check_instance(target_var: Any, instances: list[Any] | Any) -> None:  # noqa
 def check_path_exists(target_path: Path) -> None:
     """Check whether the provided target_path exists.
 
-    Raises:
+    Raises
+    ------
         ValueError: If target_path does not exist.
 
     """
@@ -37,7 +39,8 @@ def check_compatible_value(
 ) -> None:
     """Check whether the provided value is in the list of compatible values.
 
-    Raises:
+    Raises
+    ------
         ValueError: If value is not in compatible_values.
 
     """

@@ -113,7 +113,8 @@ def cuda_api_call(func: Callable) -> Callable:
     Decorator for CUDA API calls
     Raises RuntimeError if the CUDA call does not return CUDA_SUCCESS.
 
-    Returns:
+    Returns
+    -------
         Callable: The wrapped function that checks CUDA API call results.
 
     """
@@ -138,7 +139,8 @@ def cuda_api_call_warn(func: Callable) -> Callable:
 
     Prints a warning message if the CUDA call does not return CUDA_SUCCESS.
 
-    Returns:
+    Returns
+    -------
         Callable: The wrapped function that checks CUDA API call results.
 
     """
@@ -230,7 +232,8 @@ def get_cuda_device_specs() -> list[dict[str, Any]]:
         'cuda_cores': int
     }
 
-    Returns:
+    Returns
+    -------
         A list of dictionaries containing specifications for each CUDA device.
 
     """
@@ -325,7 +328,8 @@ def get_cuda_architecture() -> list[dict[str, Any]]:
         'architecture': str,
     }
 
-    Returns:
+    Returns
+    -------
         A list of dictionaries containing architecture information for each CUDA device.
 
     """
@@ -363,7 +367,8 @@ def get_cuda_architecture() -> list[dict[str, Any]]:
 def retrieve_cuda_version() -> float:
     """Retrieve the CUDA driver version.
 
-    Returns:
+    Returns
+    -------
         str: CUDA version in the format "major.minor" or "unknown" if retrieval fails.
 
     """

@@ -13,7 +13,7 @@ from numpy.typing import NDArray
 from tqdm import tqdm
 
 
-def plot_array(  # noqa: C901, D417, PLR0912
+def plot_array(  # noqa: PLR0912
     x: NDArray[np.float64 | np.int64 | np.bool],
     aspect: float | None = None,
     vmin: float | None = None,
@@ -553,7 +553,7 @@ def plot_wave_propagation_animation(
     animation_data.save(export_name, writer="ffmpeg", dpi=dpi)
 
 
-def plot_wave_propagation_with_map(  # noqa: PLR0915, C901
+def plot_wave_propagation_with_map(
     propagation_map: NDArray[np.float64],
     c_map: NDArray[np.float64],
     rho_map: NDArray[np.float64],
@@ -868,7 +868,7 @@ def plot_wave_propagation_with_map(  # noqa: PLR0915, C901
     plt.close("all")
 
 
-def plot_wave_propagation_snapshot(  # noqa: PLR0915
+def plot_wave_propagation_snapshot(
     propagation_map: NDArray[np.float64],
     c_map: NDArray[np.float64],
     rho_map: NDArray[np.float64],

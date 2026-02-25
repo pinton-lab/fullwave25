@@ -111,7 +111,7 @@ def test_coords_and_mask_raises():
 def test_no_mask_or_coords_raises():
     p0 = np.array([[1.0]])
     with pytest.raises(
-        ValueError,  # noqa: PT011
+        ValueError,
     ):
         Source(p0)
 
@@ -450,5 +450,5 @@ class TestVelocitySource:
 
     def test_all_none_raises(self):
         """No p0, no p0_additive, no velocity → ValueError."""
-        with pytest.raises(ValueError):  # noqa: PT011
+        with pytest.raises(ValueError):
             Source(grid_shape=self._grid_shape)

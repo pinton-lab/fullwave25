@@ -17,10 +17,12 @@ def load_dat_data(dat_file_path: Path, dtype: DTypeLike = np.float32) -> NDArray
         dat_file_path (Path): Path to the .dat file.
         dtype: Data type to use when reading the file.
 
-    Raises:
+    Raises
+    ------
         ValueError: if dat_file_path does not exist.
 
-    Returns:
+    Returns
+    -------
         NDArray[np.float64]: Array of data read from the file.
 
     """
@@ -58,7 +60,8 @@ def load_dat_and_reshape(
         n_sensors: Number of sensors
         dtype: Data type to use when reading the file.
 
-    Returns:
+    Returns
+    -------
         NDArray[np.float64]: Array of data read from the file.
 
     """
@@ -88,7 +91,8 @@ def initialize_relaxation_param_dict(
 ) -> dict[str, NDArray[np.float64]]:
     """Initialize a dictionary with relaxation parameters.
 
-    Returns:
+    Returns
+    -------
         dict[str, NDArray[np.float64]]: Dictionary of relaxation parameters.
 
     """
@@ -125,10 +129,12 @@ def load_data_with_time_step(
         dtype: Data type to use when reading the file.
         time_step: Time step index to load.
 
-    Returns:
+    Returns
+    -------
         NDArray[np.float64]: Array of data read from the file.
 
-    Raises:
+    Raises
+    ------
         ValueError: if file_path does not exist.
 
     """
@@ -159,10 +165,12 @@ def load_data_with_sensor_index(
         sensor_index: Sensor index to load.
         dtype: Data type to use when reading the file.
 
-    Returns:
+    Returns
+    -------
         NDArray[np.float64]: Array of data read from the file.
 
-    Raises:
+    Raises
+    ------
         ValueError: if file_path does not exist.
 
     """

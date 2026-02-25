@@ -309,7 +309,7 @@ class Solver:
     generates the required input files, and runs the simulation executable.
     """
 
-    def __init__(  # noqa: PLR0912, PLR0915, C901
+    def __init__(  # noqa: PLR0912
         self,
         work_dir: Path,
         grid: fullwave.Grid,

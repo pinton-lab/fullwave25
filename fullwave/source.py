@@ -30,7 +30,7 @@ class Source:
     w0: NDArray[np.float64] | None = None
     incoords_w: NDArray[np.int64] | None = None
 
-    def __init__(  # noqa: C901 PLR0912 PLR0915
+    def __init__(  # noqa: PLR0912
         self,
         p0: NDArray[np.float64] | None = None,
         mask: NDArray[np.bool] | None = None,

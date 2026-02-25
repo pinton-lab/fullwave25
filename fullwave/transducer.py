@@ -22,7 +22,8 @@ logger = logging.getLogger("__main__." + __name__)
 def _make_pos_int(val: float | tuple[float] | tuple[int]) -> NDArray[np.int64]:
     """Force value to be a positive integer.
 
-    Returns:
+    Returns
+    -------
         NDArray[np.int64]: Array with positive integers.
 
     """
@@ -202,7 +203,7 @@ class TransducerGeometry:
         ) = self._create_element_coords()
         logger.debug("TransducerGeometry instance created.")
 
-    def _init_dimensions(  # noqa: C901, PLR0912
+    def _init_dimensions(  # noqa: PLR0912
         self,
         grid: Grid,
         element_width_px: int | None,
@@ -313,7 +314,7 @@ class TransducerGeometry:
             assert len(position_m) == 3, "position_m must have 3 elements for 3D transducer"
         return position_px, position_m
 
-    def _create_element_coords(  # noqa: PLR0912, PLR0915
+    def _create_element_coords(  # noqa: PLR0912
         self,
     ) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.int64], NDArray[np.int64]]:
         """Build flat coordinate arrays for source and sensor pixels.
@@ -813,15 +814,15 @@ class Transducer:
     def source_coords(self) -> NDArray[np.int64]:
         """Coordinates of active source pixels; shape [N_src, ndim]."""
         active_ids = np.where(self.active_source_elements)[0] + 1
-        mask = np.isin(self.transducer_geometry._source_ids, active_ids)  # noqa: SLF001
-        return self.transducer_geometry._source_coords[mask]  # noqa: SLF001
+        mask = np.isin(self.transducer_geometry._source_ids, active_ids)
+        return self.transducer_geometry._source_coords[mask]
 
     @property
     def sensor_coords(self) -> NDArray[np.int64]:
         """Coordinates of active sensor pixels; shape [N_snsr, ndim]."""
         active_ids = np.where(self.active_sensor_elements)[0] + 1
-        mask = np.isin(self.transducer_geometry._sensor_ids, active_ids)  # noqa: SLF001
-        return self.transducer_geometry._sensor_coords[mask]  # noqa: SLF001
+        mask = np.isin(self.transducer_geometry._sensor_ids, active_ids)
+        return self.transducer_geometry._sensor_coords[mask]
 
     @property
     def element_id_to_element_surface(self) -> dict[int, NDArray[np.int64]]:
@@ -986,8 +987,8 @@ class Transducer:
     @property
     def element_id_to_element_center(self) -> dict[int, NDArray[np.int64]]:
         """Return the dictionary mapping element IDs to their center coordinates."""
-        coords = self.transducer_geometry._source_coords  # noqa: SLF001
-        ids = self.transducer_geometry._source_ids  # noqa: SLF001
+        coords = self.transducer_geometry._source_coords
+        ids = self.transducer_geometry._source_ids
         n = self.transducer_geometry.number_elements
         ndim = coords.shape[1] if len(coords) else (3 if self.is_3d else 2)
         out: dict[int, NDArray[np.int64]] = {}
@@ -1049,7 +1050,7 @@ class Transducer:
 
         it plots whole transducer geometry including the inactive/active source and sensor elements.
         """
-        import matplotlib.pyplot as plt
+        import matplotlib.pyplot as plt  # noqa: PLC0415
 
         fig, ax = plt.subplots(1, 1, figsize=(10, 10))
         plot_mask = np.zeros(self.transducer_geometry.stored_grid_size)
@@ -1089,7 +1090,7 @@ class Transducer:
 
         it plots whole transducer geometry including the inactive/active source and sensor elements.
         """
-        import matplotlib.pyplot as plt
+        import matplotlib.pyplot as plt  # noqa: PLC0415
 
         fig, ax = plt.subplots(1, 1, figsize=(10, 10))
         plot_mask = np.zeros(self.transducer_geometry.stored_grid_size)
