@@ -5,13 +5,11 @@ import logging
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from functools import cached_property
-from itertools import starmap
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numexpr as ne
 import numpy as np
-from joblib import Parallel, delayed
 from numpy.typing import NDArray
 
 import fullwave
@@ -834,21 +832,24 @@ class PMLBuilder:
 
         items = list(rename_dict.items())
 
-        results = Parallel(n_jobs=self.medium_org.n_jobs, backend="threading")(
-            delayed(_compute_one)(
-                key_fw2,
-                key_py,
-                relaxation_param_dict,
-                alpha_target_higher_nu,
-                d_target_higher_nu,
-                alpha_target_pml,
-                d_target_pml,
-                n_polynomial,
-                self.is_3d,
-                self._apply_transition_and_pml,
-            )
-            for key_fw2, key_py in items
-        )
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = [
+                executor.submit(
+                    _compute_one,
+                    key_fw2,
+                    key_py,
+                    relaxation_param_dict,
+                    alpha_target_higher_nu,
+                    d_target_higher_nu,
+                    alpha_target_pml,
+                    d_target_pml,
+                    n_polynomial,
+                    self.is_3d,
+                    self._apply_transition_and_pml,
+                )
+                for key_fw2, key_py in items
+            ]
+            results = [f.result() for f in futures]
         out_dict = dict(results)
 
         logger.debug("Calculating PML a and b coefficients...")
@@ -876,13 +877,9 @@ class PMLBuilder:
             # Return keys + values so parent can update dict safely
             return (f"a_pml_{axis}{nu}", a, f"b_pml_{axis}{nu}", b)
 
-        results = Parallel(
-            n_jobs=self.medium_org.n_jobs,  # use all cores
-            backend="loky",  # process-based; safe default for Python code
-            prefer="processes",
-        )(
-            starmap(delayed(_worker), tasks),
-        )
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = [executor.submit(_worker, nu, axis) for nu, axis in tasks]
+            results = [f.result() for f in futures]
 
         for a_key, a_val, b_key, b_val in results:
             out_dict[a_key] = a_val
@@ -1119,21 +1116,24 @@ class PMLBuilder:
             raise ValueError(error_msg)
 
         items = list(rename_dict.items())
-        results = Parallel(n_jobs=self.medium_org.n_jobs, backend="threading")(
-            delayed(_compute_one)(
-                key_fw2,
-                key_py,
-                relaxation_param_dict,
-                alpha_target_higher_nu,
-                d_target_higher_nu,
-                alpha_target_pml,
-                d_target_pml,
-                n_polynomial,
-                self.is_3d,
-                self._apply_transition_and_pml,
-            )
-            for key_fw2, key_py in items
-        )
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = [
+                executor.submit(
+                    _compute_one,
+                    key_fw2,
+                    key_py,
+                    relaxation_param_dict,
+                    alpha_target_higher_nu,
+                    d_target_higher_nu,
+                    alpha_target_pml,
+                    d_target_pml,
+                    n_polynomial,
+                    self.is_3d,
+                    self._apply_transition_and_pml,
+                )
+                for key_fw2, key_py in items
+            ]
+            results = [f.result() for f in futures]
         out_dict = dict(results)
 
         logger.debug("Calculating PML a and b coefficients...")
@@ -1162,13 +1162,9 @@ class PMLBuilder:
             # Return keys + values so parent can update dict safely
             return (f"a_pml_{axis}{nu}", a, f"b_pml_{axis}{nu}", b)
 
-        results = Parallel(
-            n_jobs=self.medium_org.n_jobs,  # use all cores
-            backend="loky",  # process-based; safe default for Python code
-            prefer="processes",
-        )(
-            starmap(delayed(_worker), tasks),
-        )
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = [executor.submit(_worker, nu, axis) for nu, axis in tasks]
+            results = [f.result() for f in futures]
 
         for a_key, a_val, b_key, b_val in results:
             out_dict[a_key] = a_val
