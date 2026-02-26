@@ -329,6 +329,7 @@ class Solver:
         use_isotropic_relaxation: bool = True,
         cuda_device_id: str | int | list | None = None,
         save_gpu_memory: bool = False,
+        verify_gpu: bool = True,
     ) -> None:
         """Initialize a Solver instance for the fullwave simulation.
 
@@ -415,6 +416,11 @@ class Solver:
             depending on the hardware and the simulation settings.
             useful in 3D simulations with large grid sizes
             where GPU memory is a limiting factor.
+        verify_gpu : bool, optional
+            Whether to verify that the specified CUDA devices exist on the system.
+            Defaults to True. Set to False when generating input files only
+            (``generate_input_only=True``) on a machine that may not have
+            the target GPUs available.
 
         Raises
         ------
@@ -555,6 +561,7 @@ class Solver:
             use_gpu=self.use_gpu,
             cuda_device_id=self.cuda_device_id,
             save_gpu_memory=self.save_gpu_memory,
+            verify_gpu=verify_gpu,
         )
 
         if use_exponential_attenuation:
@@ -758,6 +765,7 @@ class Solver:
         release_after_write: bool = False,
         highpass_cutoff_mhz: float | None = None,
         bandpass_cutoff_mhz: tuple[float, float] | None = None,
+        gpu_memory_estimate: bool = True,
     ) -> NDArray[np.float64] | Path:
         r"""Run the fullwave simulation and return the result as a NumPy array.
 
@@ -829,6 +837,9 @@ class Solver:
             Uses cosine (Hann) tapers on both edges.
             Cannot be combined with ``highpass_cutoff_mhz``.
             Requires ``load_results=True``.  Default is ``None`` (no filtering).
+        gpu_memory_estimate : bool
+            Whether to estimate GPU memory usage before running the simulation.
+            Default is True. If True, it estimates the GPU memory usage.
 
         Returns
         -------
@@ -937,6 +948,9 @@ class Solver:
         )
         logger.debug(message)
 
+        if gpu_memory_estimate:
+            self._estimate_gpu_memory(sensor)
+
         if generate_input_only:
             logger.info(
                 "Input data generation completed in %s. Skipping simulation execution.",
@@ -974,6 +988,147 @@ class Solver:
         # if load_results is False, return the raw result
         # which is a list of file names
         return sim_result
+
+    def _estimate_gpu_memory(
+        self,
+        sensor: fullwave.Sensor,
+    ) -> None:
+        """Estimate and log GPU memory usage per device.
+
+        Provides a pre-launch estimate so users can verify that the simulation
+        fits in GPU memory before the binary starts allocating.
+
+        Parameters
+        ----------
+        sensor : fullwave.Sensor
+            The sensor that will actually be written to the input files (may
+            differ from ``self.sensor`` when ``record_whole_domain=True``).
+
+        """
+        device_ids = self.fullwave_launcher.cuda_device_id.split(",")
+        n_gpus = len(device_ids)
+
+        grid = self.pml_builder.extended_grid
+        source = self.pml_builder.extended_source
+        medium = self.pml_builder.extended_medium
+
+        depth = grid.nx
+        lateral = grid.ny * grid.nz if self.is_3d else grid.ny
+        halo_depth = 8  # ghost cells per side for stencil exchange
+
+        float_sz = 4  # bytes per float32
+        int_sz = 4  # bytes per int32
+
+        # Sound-speed range determines the number of derivative-map levels
+        c_map = medium.sound_speed
+        c_range = int(np.rint(c_map.max()) - np.rint(c_map.min()))
+        n_deriv_levels = 1 if c_range == 0 else c_range + 1
+
+        n_time_steps_source = source.icmat.shape[1]
+
+        # --- Per-GPU domain decomposition along depth ---
+        base_depth = depth // n_gpus
+        remainder = depth % n_gpus
+
+        for rank, dev_id in enumerate(device_ids):
+            # First `remainder` ranks get one extra depth slice
+            depth_this_gpu = base_depth + (1 if rank < remainder else 0)
+
+            # Halo regions: first/last GPU has 1 side, middle GPUs have 2
+            if n_gpus == 1:
+                n_halo_sides = 0
+            elif rank == 0 or rank == n_gpus - 1:
+                n_halo_sides = 1
+            else:
+                n_halo_sides = 2
+            depth_with_halo = depth_this_gpu + n_halo_sides * halo_depth
+
+            slab = depth_with_halo * lateral
+
+            # Approximate per-GPU source / sensor counts
+            src_this_gpu = max(source.n_sources // n_gpus, 0)
+            sen_this_gpu = max(sensor.n_sensors // n_gpus, 0)
+
+            # --- Wave-field storage (pressure + 2 velocity, 2 time levels) ---
+            wave_fields = 3 * 2 * slab * float_sz
+
+            # --- Material property maps (3 maps) ---
+            material_maps = 3 * slab * float_sz
+
+            # --- Stencil coefficient storage ---
+            stencil_storage = 9 * 2 * n_deriv_levels * float_sz + slab * int_sz
+
+            # --- Source injection ---
+            if src_this_gpu > 0:
+                if self.save_gpu_memory:
+                    source_storage = src_this_gpu * float_sz
+                else:
+                    source_storage = src_this_gpu * n_time_steps_source * float_sz
+                source_storage += 2 * src_this_gpu * int_sz
+            else:
+                source_storage = 0
+
+            # --- Output / sensor gathering ---
+            if sen_this_gpu > 0:
+                sensor_storage = (
+                    sen_this_gpu * float_sz + 3 * sen_this_gpu * int_sz + sen_this_gpu * int_sz
+                )
+            else:
+                sensor_storage = 0
+
+            if self.use_exponential_attenuation:
+                attenuation_map = slab * float_sz
+                total = (
+                    wave_fields
+                    + material_maps
+                    + attenuation_map
+                    + stencil_storage
+                    + source_storage
+                    + sensor_storage
+                )
+            else:
+                n_relax = self.n_relax_mechanisms
+                # Relaxation memory fields (pressure + velocity directions,
+                # each with N_relax mechanisms and 2 time levels)
+                relaxation_fields = 2 * n_relax * 2 * slab * float_sz * 2
+                # PML absorption / dispersion coefficient maps
+                pml_coefficients = (
+                    2 * slab * float_sz
+                    + 2 * n_relax * slab * float_sz
+                    + 2 * n_relax * slab * float_sz
+                )
+                # Kernel dispatch tables (negligible but included)
+                dispatch_tables = 8 * n_relax * 8
+                # Zero-pressure (air) coordinate storage
+                n_air = medium.n_air
+                air_storage = 2 * n_air * int_sz if n_air > 0 else 0
+
+                total = (
+                    wave_fields
+                    + material_maps
+                    + relaxation_fields
+                    + pml_coefficients
+                    + dispatch_tables
+                    + stencil_storage
+                    + source_storage
+                    + air_storage
+                    + sensor_storage
+                )
+
+            gb = 1024.0**3
+            mode = "exponential" if self.use_exponential_attenuation else "relaxation"
+            saving = ", save_gpu_memory=True" if self.save_gpu_memory else ""
+            logger.info(
+                "GPU memory estimate [GPU %s] (%s mode%s): "
+                "%.2f GB  (depth=%d +%d halo, lateral=%d)",
+                dev_id.strip(),
+                mode,
+                saving,
+                total / gb,
+                depth_this_gpu,
+                n_halo_sides * halo_depth,
+                lateral,
+            )
 
     def print_info(self) -> None:
         """Print the Solver instance information."""
