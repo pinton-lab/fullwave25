@@ -765,7 +765,7 @@ class Solver:
         release_after_write: bool = False,
         highpass_cutoff_mhz: float | None = None,
         bandpass_cutoff_mhz: tuple[float, float] | None = None,
-        gpu_memory_estimate: bool = True,
+        gpu_memory_estimate: bool = False,
     ) -> NDArray[np.float64] | Path:
         r"""Run the fullwave simulation and return the result as a NumPy array.
 
@@ -1005,6 +1005,8 @@ class Solver:
             differ from ``self.sensor`` when ``record_whole_domain=True``).
 
         """
+        # show that this is an experimental feature
+        logger.info("Estimating GPU memory usage... (experimental feature, may be inaccurate)")
         device_ids = self.fullwave_launcher.cuda_device_id.split(",")
         n_gpus = len(device_ids)
 
@@ -1014,108 +1016,64 @@ class Solver:
 
         depth = grid.nx
         lateral = grid.ny * grid.nz if self.is_3d else grid.ny
-        halo_depth = 8  # ghost cells per side for stencil exchange
+        halo_depth = 8
 
-        float_sz = 4  # bytes per float32
-        int_sz = 4  # bytes per int32
+        float_bytes = 4
+        int_bytes = 4
 
-        # Sound-speed range determines the number of derivative-map levels
         c_map = medium.sound_speed
         c_range = int(np.rint(c_map.max()) - np.rint(c_map.min()))
         n_deriv_levels = 1 if c_range == 0 else c_range + 1
 
-        n_time_steps_source = source.icmat.shape[1]
+        n_source_timesteps = source.icmat.shape[1]
 
-        # --- Per-GPU domain decomposition along depth ---
+        gb = 1024.0**3
+
         base_depth = depth // n_gpus
         remainder = depth % n_gpus
 
         for rank, dev_id in enumerate(device_ids):
-            # First `remainder` ranks get one extra depth slice
-            depth_this_gpu = base_depth + (1 if rank < remainder else 0)
+            depth_this = base_depth + (1 if rank < remainder else 0)
 
-            # Halo regions: first/last GPU has 1 side, middle GPUs have 2
             if n_gpus == 1:
                 n_halo_sides = 0
             elif rank == 0 or rank == n_gpus - 1:
                 n_halo_sides = 1
             else:
                 n_halo_sides = 2
-            depth_with_halo = depth_this_gpu + n_halo_sides * halo_depth
+            local_depth = depth_this + n_halo_sides * halo_depth
+            slab = local_depth * lateral
 
-            slab = depth_with_halo * lateral
-
-            # Approximate per-GPU source / sensor counts
-            src_this_gpu = max(source.n_sources // n_gpus, 0)
-            sen_this_gpu = max(sensor.n_sensors // n_gpus, 0)
-
-            # --- Wave-field storage (pressure + 2 velocity, 2 time levels) ---
-            wave_fields = 3 * 2 * slab * float_sz
-
-            # --- Material property maps (3 maps) ---
-            material_maps = 3 * slab * float_sz
-
-            # --- Stencil coefficient storage ---
-            stencil_storage = 9 * 2 * n_deriv_levels * float_sz + slab * int_sz
-
-            # --- Source injection ---
-            if src_this_gpu > 0:
-                if self.save_gpu_memory:
-                    source_storage = src_this_gpu * float_sz
-                else:
-                    source_storage = src_this_gpu * n_time_steps_source * float_sz
-                source_storage += 2 * src_this_gpu * int_sz
-            else:
-                source_storage = 0
-
-            # --- Output / sensor gathering ---
-            if sen_this_gpu > 0:
-                sensor_storage = (
-                    sen_this_gpu * float_sz + 3 * sen_this_gpu * int_sz + sen_this_gpu * int_sz
-                )
-            else:
-                sensor_storage = 0
+            n_sources = max(source.n_sources // n_gpus, 0)
+            n_sensors = max(sensor.n_sensors // n_gpus, 0)
 
             if self.use_exponential_attenuation:
-                attenuation_map = slab * float_sz
-                total = (
-                    wave_fields
-                    + material_maps
-                    + attenuation_map
-                    + stencil_storage
-                    + source_storage
-                    + sensor_storage
+                total = self._mem_exponential(
+                    slab,
+                    n_deriv_levels,
+                    n_sources,
+                    n_source_timesteps,
+                    save_gpu_memory=self.save_gpu_memory,
+                    n_sensors=n_sensors,
+                    float_bytes=float_bytes,
+                    int_bytes=int_bytes,
+                    is_3d=self.is_3d,
                 )
             else:
-                n_relax = self.n_relax_mechanisms
-                # Relaxation memory fields (pressure + velocity directions,
-                # each with N_relax mechanisms and 2 time levels)
-                relaxation_fields = 2 * n_relax * 2 * slab * float_sz * 2
-                # PML absorption / dispersion coefficient maps
-                pml_coefficients = (
-                    2 * slab * float_sz
-                    + 2 * n_relax * slab * float_sz
-                    + 2 * n_relax * slab * float_sz
-                )
-                # Kernel dispatch tables (negligible but included)
-                dispatch_tables = 8 * n_relax * 8
-                # Zero-pressure (air) coordinate storage
-                n_air = medium.n_air
-                air_storage = 2 * n_air * int_sz if n_air > 0 else 0
-
-                total = (
-                    wave_fields
-                    + material_maps
-                    + relaxation_fields
-                    + pml_coefficients
-                    + dispatch_tables
-                    + stencil_storage
-                    + source_storage
-                    + air_storage
-                    + sensor_storage
+                total = self._mem_relaxation(
+                    slab,
+                    n_deriv_levels,
+                    n_sources,
+                    n_source_timesteps,
+                    save_gpu_memory=self.save_gpu_memory,
+                    n_air=medium.n_air,
+                    n_sensors=n_sensors,
+                    n_relax=self.n_relax_mechanisms,
+                    float_bytes=float_bytes,
+                    int_bytes=int_bytes,
+                    is_3d=self.is_3d,
                 )
 
-            gb = 1024.0**3
             mode = "exponential" if self.use_exponential_attenuation else "relaxation"
             saving = ", save_gpu_memory=True" if self.save_gpu_memory else ""
             logger.info(
@@ -1125,10 +1083,143 @@ class Solver:
                 mode,
                 saving,
                 total / gb,
-                depth_this_gpu,
+                depth_this,
                 n_halo_sides * halo_depth,
                 lateral,
             )
+
+    @staticmethod
+    def _mem_exponential(
+        slab: int,
+        n_deriv_levels: int,
+        n_sources: int,
+        n_source_timesteps: int,
+        *,
+        save_gpu_memory: bool,
+        n_sensors: int,
+        float_bytes: int,
+        int_bytes: int,
+        is_3d: bool,
+    ) -> int:
+        """Return estimated GPU bytes for exponential-attenuation solver.
+
+        Parameters
+        ----------
+        slab : int
+            Grid points per GPU slab (local_depth * lateral).
+        n_deriv_levels : int
+            Number of derivative-map levels.
+        n_sources : int
+            Approximate source count on this GPU.
+        n_source_timesteps : int
+            Number of source time steps.
+        save_gpu_memory : bool
+            Whether memory-saving mode is active.
+        n_sensors : int
+            Approximate sensor count on this GPU.
+        float_bytes : int
+            Bytes per float (4).
+        int_bytes : int
+            Bytes per int (4).
+        is_3d: bool,
+            Whether the simulation is 3D (affects sensor memory).
+
+        Returns
+        -------
+        int
+            Total estimated bytes.
+
+        """
+        fb = float_bytes
+        ib = int_bytes
+        # fields: 3 wave-field pairs (2 time levels each)
+        mem = 4 * 2 * slab * fb if is_3d else 3 * 2 * slab * fb
+        # material: 3 property maps + 1 attenuation map
+        mem += 4 * slab * fb
+        # stencil
+        mem += 9 * 2 * n_deriv_levels * fb + slab * ib
+        # source
+        if n_sources > 0:
+            mem += n_sources * fb if save_gpu_memory else n_sources * n_source_timesteps * fb
+            mem += 2 * n_sources * ib
+        # sensor
+        if n_sensors > 0:
+            mem += n_sensors * fb + 3 * n_sensors * ib + n_sensors * ib
+        return mem
+
+    @staticmethod
+    def _mem_relaxation(
+        slab: int,
+        n_deriv_levels: int,
+        n_sources: int,
+        n_source_timesteps: int,
+        *,
+        save_gpu_memory: bool,
+        n_air: int,
+        n_sensors: int,
+        n_relax: int,
+        float_bytes: int,
+        int_bytes: int,
+        is_3d: bool,
+    ) -> int:
+        """Return estimated GPU bytes for relaxation (power-law) solver.
+
+        Parameters
+        ----------
+        slab : int
+            Grid points per GPU slab (local_depth * lateral).
+        n_deriv_levels : int
+            Number of derivative-map levels.
+        n_sources : int
+            Approximate source count on this GPU.
+        n_source_timesteps : int
+            Number of source time steps.
+        save_gpu_memory : bool
+            Whether memory-saving mode is active.
+        n_air : int
+            Number of zero-pressure (air) coordinates.
+        n_sensors : int
+            Approximate sensor count on this GPU.
+        n_relax : int
+            Number of relaxation mechanisms.
+        float_bytes : int
+            Bytes per float (4).
+        int_bytes : int
+            Bytes per int (4).
+        is_3d: bool,
+            Whether the simulation is 3D (affects sensor memory).
+
+        Returns
+        -------
+        int
+            Total estimated bytes.
+
+        """
+        fb = float_bytes
+        ib = int_bytes
+        # fields: 3 wave-field pairs (2 time levels each)
+        mem = 4 * 2 * slab * fb if is_3d else 3 * 2 * slab * fb
+        # relaxation memory: pressure + velocity
+        mem += (2 * n_relax * 2 * slab * fb) * 12 if is_3d else (2 * n_relax * slab * fb) * 8
+        # material: 3 property maps
+        mem += 3 * slab * fb
+        # a/b coefficients
+        mem += (2 + 4 * n_relax) * slab * fb
+        # pointer tables
+        mem += 8 * n_relax * 8
+        # stencil
+        mem += 9 * 2 * n_deriv_levels * fb + slab * ib
+        # source
+        if n_sources > 0:
+            mem += n_sources * fb if save_gpu_memory else n_sources * n_source_timesteps * fb
+            mem += 2 * n_sources * ib
+        # air
+        if n_air > 0:
+            mem += 2 * n_air * ib
+        # sensor
+        if n_sensors > 0:
+            mem += n_sensors * fb + 3 * n_sensors * ib + n_sensors * ib
+        return mem
 
     def print_info(self) -> None:
         """Print the Solver instance information."""
