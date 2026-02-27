@@ -1046,6 +1046,7 @@ class Solver:
 
             n_sources = max(source.n_sources // n_gpus, 0)
             n_sensors = max(sensor.n_sensors // n_gpus, 0)
+            n_air_local = max(medium.n_air // n_gpus, 0)
 
             if self.use_exponential_attenuation:
                 total = self._mem_exponential(
@@ -1066,7 +1067,7 @@ class Solver:
                     n_sources,
                     n_source_timesteps,
                     save_gpu_memory=self.save_gpu_memory,
-                    n_air=medium.n_air,
+                    n_air=n_air_local,
                     n_sensors=n_sensors,
                     n_relax=self.n_relax_mechanisms,
                     float_bytes=float_bytes,
@@ -1132,19 +1133,24 @@ class Solver:
         """
         fb = float_bytes
         ib = int_bytes
-        # fields: 3 wave-field pairs (2 time levels each)
-        mem = 4 * 2 * slab * fb if is_3d else 3 * 2 * slab * fb
-        # material: 3 property maps + 1 attenuation map
+        ndim = 3 if is_3d else 2
+        n_fields = 4 if is_3d else 3  # p, u, [v], w
+
+        # wave fields: n_fields pairs x 2 time levels
+        mem = n_fields * 2 * slab * fb
+        # material: rho + K + beta + a_exp
         mem += 4 * slab * fb
-        # stencil
+        # derivative maps (dmap + dcmap)
         mem += 9 * 2 * n_deriv_levels * fb + slab * ib
-        # source
+        # source (icmat + coords)
         if n_sources > 0:
             mem += n_sources * fb if save_gpu_memory else n_sources * n_source_timesteps * fb
-            mem += 2 * n_sources * ib
-        # sensor
+            mem += ndim * n_sources * ib
+        # sensor (genoutframe + coordsout_local + p_idx_array)
         if n_sensors > 0:
-            mem += n_sensors * fb + 3 * n_sensors * ib + n_sensors * ib
+            mem += n_sensors * fb
+            mem += (ndim + 1) * n_sensors * ib
+            mem += n_sensors * ib
         return mem
 
     @staticmethod
@@ -1177,7 +1183,7 @@ class Solver:
         save_gpu_memory : bool
             Whether memory-saving mode is active.
         n_air : int
-            Number of zero-pressure (air) coordinates.
+            Number of zero-pressure (air) coordinates on this GPU.
         n_sensors : int
             Approximate sensor count on this GPU.
         n_relax : int
@@ -1197,28 +1203,34 @@ class Solver:
         """
         fb = float_bytes
         ib = int_bytes
-        # fields: 3 wave-field pairs (2 time levels each)
-        mem = 4 * 2 * slab * fb if is_3d else 3 * 2 * slab * fb
-        # relaxation memory: pressure + velocity
-        mem += (2 * n_relax * 2 * slab * fb) * 12 if is_3d else (2 * n_relax * slab * fb) * 8
-        # material: 3 property maps
+        ndim = 3 if is_3d else 2
+        n_fields = 4 if is_3d else 3  # p, u, [v], w
+
+        # wave fields: n_fields pairs x 2 time levels
+        mem = n_fields * 2 * slab * fb
+        # relaxation psi:
+        mem += 2 * (ndim * n_relax * 2 * slab * fb)
+        # material: rho + K + beta
         mem += 3 * slab * fb
-        # a/b coefficients
-        mem += (2 + 4 * n_relax) * slab * fb
-        # pointer tables
-        mem += 8 * n_relax * 8
-        # stencil
+        # kappa: 2 arrays (kappa_x1, kappa_x2)
+        mem += 2 * slab * fb
+        # PML: pml_x1 + pml_x2, each has 2 * n_relax arrays
+        mem += 2 * (2 * n_relax) * slab * fb
+        # (dmap + dcmap)
         mem += 9 * 2 * n_deriv_levels * fb + slab * ib
-        # source
+        # source (icmat + coords)
         if n_sources > 0:
             mem += n_sources * fb if save_gpu_memory else n_sources * n_source_timesteps * fb
-            mem += 2 * n_sources * ib
+            mem += ndim * n_sources * ib
+
         # air
         if n_air > 0:
-            mem += 2 * n_air * ib
+            mem += ndim * n_air * ib
         # sensor
         if n_sensors > 0:
-            mem += n_sensors * fb + 3 * n_sensors * ib + n_sensors * ib
+            mem += n_sensors * fb
+            mem += (ndim + 1) * n_sensors * ib
+            mem += n_sensors * ib
         return mem
 
     def print_info(self) -> None:
