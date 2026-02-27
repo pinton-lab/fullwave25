@@ -765,7 +765,7 @@ class Solver:
         release_after_write: bool = False,
         highpass_cutoff_mhz: float | None = None,
         bandpass_cutoff_mhz: tuple[float, float] | None = None,
-        gpu_memory_estimate: bool = False,
+        gpu_memory_estimate: bool = True,
     ) -> NDArray[np.float64] | Path:
         r"""Run the fullwave simulation and return the result as a NumPy array.
 
