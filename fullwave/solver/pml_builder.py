@@ -309,6 +309,8 @@ class PMLBuilder:
                 extended = self._extend_arrays_cpu(named_arrays)
 
             extended_relaxation_param_dict = {key: extended[key] for key in relax_attrs}
+            # Extended arrays are numpy — skip re-upload to GPU to avoid
+            # wasting PCIe bandwidth. CPU numexpr handles subsequent computation.
             self.extended_medium = fullwave.MediumRelaxationMaps(
                 grid=self.extended_grid,
                 sound_speed=extended["sound_speed"],
@@ -319,7 +321,7 @@ class PMLBuilder:
                 n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
                 n_jobs=self.medium_org.n_jobs,
                 dtype=getattr(self.medium_org, "dtype", np.float64),
-                use_gpu=self.use_gpu,
+                use_gpu=False,
             )
         else:
             attr_names = ["sound_speed", "density", "beta", "alpha_coeff", "alpha_power"]
@@ -330,6 +332,8 @@ class PMLBuilder:
                 named_arrays = [(name, getattr(self.medium_org, name)) for name in attr_names]
                 extended = self._extend_arrays_cpu(named_arrays)
 
+            # Extended arrays are numpy — skip re-upload to GPU to avoid
+            # wasting PCIe bandwidth. CPU numexpr handles subsequent computation.
             self.extended_medium = fullwave.Medium(
                 grid=self.extended_grid,
                 sound_speed=extended["sound_speed"],
@@ -343,7 +347,7 @@ class PMLBuilder:
                 attenuation_builder=self.medium_org.attenuation_builder,
                 n_jobs=self.medium_org.n_jobs,
                 dtype=getattr(self.medium_org, "dtype", np.float64),
-                use_gpu=self.use_gpu,
+                use_gpu=False,
             )
         logger.debug("building extended medium for pml...done")
 
@@ -1833,6 +1837,8 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             named_arrays = [(name, getattr(self.medium_org, name)) for name in attr_names]
             extended = self._extend_arrays_cpu(named_arrays)
 
+        # Extended arrays are numpy — skip re-upload to GPU to avoid
+        # wasting PCIe bandwidth. CPU numexpr handles subsequent computation.
         self.extended_medium = fullwave.Medium(
             grid=self.extended_grid,
             sound_speed=extended["sound_speed"],
@@ -1845,7 +1851,7 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             path_relaxation_parameters_database=self.medium_org.path_relaxation_parameters_database,
             attenuation_builder=self.medium_org.attenuation_builder,
             dtype=getattr(self.medium_org, "dtype", np.float64),
-            use_gpu=self.use_gpu,
+            use_gpu=False,
         )
         logger.debug("Extended medium for PML built successfully.")
 
@@ -2101,6 +2107,10 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             nz=extended_medium.alpha_exp.shape[2],
             n_body=self.num_boundary_points,
         )
+        if isinstance(extended_medium.alpha_exp, np.ndarray) and not isinstance(a_mask, np.ndarray):
+            import cupy as cp  # noqa: PLC0415
+
+            a_mask = cp.asnumpy(a_mask)
         extended_medium.alpha_exp *= a_mask
         return extended_medium
 
@@ -2113,5 +2123,9 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             ny=extended_medium.alpha_exp.shape[1],
             n_body=self.num_boundary_points,
         )
+        if isinstance(extended_medium.alpha_exp, np.ndarray) and not isinstance(a_mask, np.ndarray):
+            import cupy as cp  # noqa: PLC0415
+
+            a_mask = cp.asnumpy(a_mask)
         extended_medium.alpha_exp *= a_mask
         return extended_medium

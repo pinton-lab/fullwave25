@@ -108,25 +108,20 @@ class InputFileWriter:
         self.release_after_write = release_after_write
         self.pml_thickness = pml_thickness
 
+        self._precomputed_bulk_modulus: NDArray[np.float32] | None = None
+
         if self.use_gpu:
             try:
                 import cupy as cp  # noqa: PLC0415
 
-                # sound_speed may already be CuPy — asarray is a no-op in that case
-                c_gpu = cp.asarray(self.medium.sound_speed, dtype=cp.float64)
-                c_min_val = float(c_gpu.min())
-                c_max_val = float(c_gpu.max())
-                self._dim = int(cp.rint(cp.float64(c_max_val)) - cp.rint(cp.float64(c_min_val)))
-
-                # Compute dc_map on GPU (use a copy to avoid mutating medium data)
-                c_tmp = c_gpu.copy()
-                c_min_rounded = float(matlab_round(c_min_val))
-                offset = -c_min_rounded + 1
-                c_tmp += 1e-9
-                cp.rint(c_tmp, out=c_tmp)
-                c_tmp += offset
-                self._dc_map = cp.asnumpy(c_tmp.astype(cp.int32))
-                logger.debug("dc map for stencil coefficients set (GPU, fused).")
+                n_gpus = cp.cuda.runtime.getDeviceCount()
+                if n_gpus > 1 and self.medium.sound_speed.ndim == 3:
+                    c_min_val, c_max_val = self._compute_dc_map_and_bulk_modulus_multi_gpu(
+                        n_gpus,
+                    )
+                else:
+                    c_min_val, c_max_val = self._compute_dc_map_and_bulk_modulus_single_gpu()
+                self._dim = int(round(c_max_val) - round(c_min_val))
                 self._dc_map_ready = True
             except ImportError:
                 self._dim = int(
@@ -768,6 +763,127 @@ class InputFileWriter:
 
     # --- batch write utils ---
 
+    def _compute_dc_map_and_bulk_modulus_single_gpu(self) -> tuple[float, float]:
+        """Compute dc_map and bulk_modulus on a single GPU.
+
+        Returns
+        -------
+        tuple[float, float]
+            (c_min_val, c_max_val) of the sound speed.
+
+        """
+        import cupy as cp  # noqa: PLC0415
+
+        c_gpu = cp.asarray(self.medium.sound_speed, dtype=cp.float64)
+        c_min_val = float(c_gpu.min())
+        c_max_val = float(c_gpu.max())
+
+        # dc_map: rint(sound_speed + 1e-9) - rint(c_min) + 1
+        c_tmp = c_gpu.copy()
+        c_min_rounded = float(matlab_round(c_min_val))
+        offset = -c_min_rounded + 1
+        c_tmp += 1e-9
+        cp.rint(c_tmp, out=c_tmp)
+        c_tmp += offset
+        self._dc_map = cp.asnumpy(c_tmp.astype(cp.int32))
+        del c_tmp, c_gpu
+
+        # bulk_modulus: sound_speed^2 * density
+        c_f32 = cp.asarray(self.medium.sound_speed, dtype=cp.float32)
+        rho_f32 = cp.asarray(self.medium.density, dtype=cp.float32)
+        bulk = cp.multiply(c_f32 * c_f32, rho_f32)
+        self._precomputed_bulk_modulus = cp.asnumpy(bulk)
+        del c_f32, rho_f32, bulk
+        cp.get_default_memory_pool().free_all_blocks()
+
+        logger.debug("dc map and bulk modulus set (single GPU).")
+        return c_min_val, c_max_val
+
+    def _compute_dc_map_and_bulk_modulus_multi_gpu(
+        self,
+        n_gpus: int,
+    ) -> tuple[float, float]:
+        """Compute dc_map and bulk_modulus in parallel across multiple GPUs.
+
+        Each GPU processes a slice of the 3D array along axis 0.
+
+        Returns
+        -------
+        tuple[float, float]
+            (c_min_val, c_max_val) of the sound speed.
+
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed  # noqa: PLC0415
+
+        import cupy as cp  # noqa: PLC0415
+
+        sound_speed_np = self.medium.sound_speed
+        density_np = self.medium.density
+
+        # Ensure numpy for slicing
+        if not isinstance(sound_speed_np, np.ndarray):
+            sound_speed_np = cp.asnumpy(sound_speed_np)
+        if not isinstance(density_np, np.ndarray):
+            density_np = cp.asnumpy(density_np)
+
+        n_slabs = sound_speed_np.shape[0]
+        n_workers = min(n_gpus, n_slabs)
+        chunk_size = -(-n_slabs // n_workers)  # ceil division
+
+        logger.info(
+            "Computing dc_map and bulk_modulus using %d GPUs (of %d available).",
+            n_workers,
+            n_gpus,
+        )
+
+        # Phase 1+2: Each GPU computes local min/max, dc_map chunk, bulk_modulus chunk
+        dc_map_result = np.empty(sound_speed_np.shape, dtype=np.int32)
+        bulk_result = np.empty(sound_speed_np.shape, dtype=np.float32)
+        local_mins = np.empty(n_workers, dtype=np.float64)
+        local_maxs = np.empty(n_workers, dtype=np.float64)
+
+        def _process_on_device(worker_id: int, device_id: int) -> None:
+            start = worker_id * chunk_size
+            end = min(start + chunk_size, n_slabs)
+            with cp.cuda.Device(device_id):
+                c_chunk = cp.asarray(sound_speed_np[start:end], dtype=cp.float64)
+                local_mins[worker_id] = float(c_chunk.min())
+                local_maxs[worker_id] = float(c_chunk.max())
+
+                # dc_map for this chunk (offset applied after global min is known)
+                c_chunk += 1e-9
+                cp.rint(c_chunk, out=c_chunk)
+                dc_chunk_f64 = c_chunk  # reuse buffer
+                dc_map_result[start:end] = cp.asnumpy(dc_chunk_f64.astype(cp.int32))
+                del dc_chunk_f64
+
+                # bulk_modulus for this chunk
+                c_f32 = cp.asarray(sound_speed_np[start:end], dtype=cp.float32)
+                rho_f32 = cp.asarray(density_np[start:end], dtype=cp.float32)
+                bulk_chunk = cp.multiply(c_f32 * c_f32, rho_f32)
+                bulk_result[start:end] = cp.asnumpy(bulk_chunk)
+                del c_f32, rho_f32, bulk_chunk
+                cp.get_default_memory_pool().free_all_blocks()
+
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            futures = [executor.submit(_process_on_device, i, i % n_gpus) for i in range(n_workers)]
+            for future in as_completed(futures):
+                future.result()
+
+        c_min_val = float(local_mins.min())
+        c_max_val = float(local_maxs.max())
+
+        # Apply global offset to dc_map
+        c_min_rounded = int(matlab_round(c_min_val))
+        offset = np.int32(-c_min_rounded + 1)
+        dc_map_result += offset
+
+        self._dc_map = dc_map_result
+        self._precomputed_bulk_modulus = bulk_result
+
+        logger.debug("dc map and bulk modulus set (multi-GPU, %d devices).", n_workers)
+        return c_min_val, c_max_val
+
     def _init_pending_writes(self) -> None:
         """Initialize the pending writes list for batch I/O."""
         self._pending_writes: list[tuple] = []
@@ -872,10 +988,15 @@ class InputFileWriter:
         relaxation_param_map_dict_for_fw2: dict[str, NDArray[np.float64]],
         dim: int,
     ) -> None:
+        k_map = (
+            self._precomputed_bulk_modulus
+            if self._precomputed_bulk_modulus is not None
+            else self.medium.bulk_modulus
+        )
         self._save_maps(
             simulation_dir,
             c_map=self.medium.sound_speed,
-            k_map=self.medium.bulk_modulus,
+            k_map=k_map,
             rho_map=self.medium.density,
             beta_map=self.medium.beta,
         )
@@ -938,10 +1059,15 @@ class InputFileWriter:
         simulation_dir: Path,
         dim: int,
     ) -> None:
+        k_map = (
+            self._precomputed_bulk_modulus
+            if self._precomputed_bulk_modulus is not None
+            else self.medium.bulk_modulus
+        )
         self._save_maps(
             simulation_dir,
             c_map=self.medium.sound_speed,
-            k_map=self.medium.bulk_modulus,
+            k_map=k_map,
             rho_map=self.medium.density,
             beta_map=self.medium.beta,
             alpha_exp_map=self.medium.alpha_exp,

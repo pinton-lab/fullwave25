@@ -712,6 +712,46 @@ class TestInputFileWriterCupyEquivalence:
         )
         np.testing.assert_array_equal(_to_np(gpu_writer._dc_map), cpu_writer._dc_map)
 
+    def test_precomputed_bulk_modulus(self, setup_2d, tmp_path):
+        import fullwave
+
+        grid, medium = setup_2d
+
+        src_coords = np.array([[grid.nx // 2, grid.ny // 2]])
+        source = fullwave.Source(
+            p0=np.ones((1, 10)),
+            coords=src_coords,
+            grid_shape=(grid.nx, grid.ny),
+        )
+        sensor = fullwave.Sensor(
+            coords=src_coords,
+            grid_shape=(grid.nx, grid.ny),
+        )
+
+        gpu_writer = InputFileWriter(
+            work_dir=tmp_path / "gpu",
+            grid=grid,
+            medium=medium,
+            source=source,
+            sensor=sensor,
+            validate_input=False,
+            use_exponential_attenuation=True,
+            use_gpu=True,
+        )
+        # GPU path should precompute bulk_modulus
+        assert gpu_writer._precomputed_bulk_modulus is not None
+
+        # Compare with medium.bulk_modulus (CPU reference)
+        expected = np.multiply(
+            medium.sound_speed.astype(np.float32) ** 2,
+            medium.density.astype(np.float32),
+        )
+        np.testing.assert_allclose(
+            gpu_writer._precomputed_bulk_modulus,
+            expected,
+            rtol=1e-5,
+        )
+
 
 class TestPMLBuilderRelaxationCupyEquivalence:
     """Compare CPU vs GPU for PMLBuilder (multiple relaxation path)."""
