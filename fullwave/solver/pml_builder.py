@@ -285,14 +285,24 @@ class PMLBuilder:
         logger.debug("building extended medium for pml...")
         if isinstance(self.medium_org, fullwave.MediumRelaxationMaps):
             if self.xp is not np:
-                # GPU path: run sequentially to avoid CuPy multi-thread issues
+                import cupy as cp  # noqa: PLC0415
+
+                # GPU path: free each original array after extending to avoid OOM.
+                pool = cp.get_default_memory_pool()
                 extended_sound_speed = self._extend_map_for_pml(self.medium_org.sound_speed)
+                self.medium_org.sound_speed = cp.asnumpy(self.medium_org.sound_speed)
+                pool.free_all_blocks()
                 extended_density = self._extend_map_for_pml(self.medium_org.density)
+                self.medium_org.density = cp.asnumpy(self.medium_org.density)
+                pool.free_all_blocks()
                 extended_beta = self._extend_map_for_pml(self.medium_org.beta)
-                extended_relaxation_param_dict = {
-                    key: self._extend_map_for_pml(value)
-                    for key, value in self.medium_org.relaxation_param_dict.items()
-                }
+                self.medium_org.beta = cp.asnumpy(self.medium_org.beta)
+                pool.free_all_blocks()
+                extended_relaxation_param_dict = {}
+                for key, value in self.medium_org.relaxation_param_dict.items():
+                    extended_relaxation_param_dict[key] = self._extend_map_for_pml(value)
+                    self.medium_org.relaxation_param_dict[key] = cp.asnumpy(value)
+                    pool.free_all_blocks()
             else:
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     future_sound_speed = executor.submit(
@@ -333,12 +343,25 @@ class PMLBuilder:
             )
         else:
             if self.xp is not np:
-                # GPU path: run sequentially to avoid CuPy multi-thread issues
+                import cupy as cp  # noqa: PLC0415
+
+                # GPU path: free each original array after extending to avoid OOM.
+                pool = cp.get_default_memory_pool()
                 extended_sound_speed = self._extend_map_for_pml(self.medium_org.sound_speed)
+                self.medium_org.sound_speed = cp.asnumpy(self.medium_org.sound_speed)
+                pool.free_all_blocks()
                 extended_density = self._extend_map_for_pml(self.medium_org.density)
+                self.medium_org.density = cp.asnumpy(self.medium_org.density)
+                pool.free_all_blocks()
                 extended_beta = self._extend_map_for_pml(self.medium_org.beta)
+                self.medium_org.beta = cp.asnumpy(self.medium_org.beta)
+                pool.free_all_blocks()
                 extended_alpha_coeff = self._extend_map_for_pml(self.medium_org.alpha_coeff)
+                self.medium_org.alpha_coeff = cp.asnumpy(self.medium_org.alpha_coeff)
+                pool.free_all_blocks()
                 extended_alpha_power = self._extend_map_for_pml(self.medium_org.alpha_power)
+                self.medium_org.alpha_power = cp.asnumpy(self.medium_org.alpha_power)
+                pool.free_all_blocks()
             else:
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     future_sound_speed = executor.submit(
@@ -1728,12 +1751,28 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
 
         logger.debug("building extended medium for pml...")
         if self.xp is not np:
-            # GPU path: run sequentially to avoid CuPy multi-thread issues
+            import cupy as cp  # noqa: PLC0415
+
+            # GPU path: run sequentially to avoid CuPy multi-thread issues.
+            # Move each original array back to CPU after extending to free GPU
+            # memory and avoid OOM on large 3D grids where both the original
+            # (~N^3) and extended (~(N+2*pml)^3) arrays cannot fit simultaneously.
+            pool = cp.get_default_memory_pool()
             extended_sound_speed = self._extend_map_for_pml(self.medium_org.sound_speed)
+            self.medium_org.sound_speed = cp.asnumpy(self.medium_org.sound_speed)
+            pool.free_all_blocks()
             extended_density = self._extend_map_for_pml(self.medium_org.density)
+            self.medium_org.density = cp.asnumpy(self.medium_org.density)
+            pool.free_all_blocks()
             extended_beta = self._extend_map_for_pml(self.medium_org.beta)
+            self.medium_org.beta = cp.asnumpy(self.medium_org.beta)
+            pool.free_all_blocks()
             extended_alpha_coeff = self._extend_map_for_pml(self.medium_org.alpha_coeff)
+            self.medium_org.alpha_coeff = cp.asnumpy(self.medium_org.alpha_coeff)
+            pool.free_all_blocks()
             extended_alpha_power = self._extend_map_for_pml(self.medium_org.alpha_power)
+            self.medium_org.alpha_power = cp.asnumpy(self.medium_org.alpha_power)
+            pool.free_all_blocks()
         else:
             # CPU path: run in parallel for all medium properties since it is a bottleneck
             with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -1875,6 +1914,8 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             extended_medium: fullwave.MediumExponentialAttenuation = (
                 self.extended_medium.build_exponential()
             )
+            # Free the intermediate Medium's GPU arrays — only alpha_exp is needed
+            self._free_extended_medium_gpu()
             logger.debug("Extended medium for PML built successfully.")
             if self.is_3d:
                 logger.debug("Applying 3D PML to the extended medium...")
@@ -1891,8 +1932,27 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
         extended_medium: fullwave.MediumExponentialAttenuation = (
             self.extended_medium.build_exponential()
         )
+        self._free_extended_medium_gpu()
         logger.debug("Extended medium built successfully without applying PML.")
         return extended_medium
+
+    def _free_extended_medium_gpu(self) -> None:
+        """Free GPU arrays from extended_medium that are no longer needed.
+
+        After build_exponential(), the Medium's alpha_coeff, alpha_power,
+        sound_speed, density, and beta are duplicated in the returned
+        MediumExponentialAttenuation. Free them to reclaim GPU memory.
+        """
+        if self.xp is np:
+            return
+        import cupy as cp  # noqa: PLC0415
+
+        medium = self.extended_medium
+        for attr in ("sound_speed", "density", "beta", "alpha_coeff", "alpha_power"):
+            val = getattr(medium, attr, None)
+            if val is not None and not isinstance(val, np.ndarray):
+                setattr(medium, attr, cp.asnumpy(val))
+        cp.get_default_memory_pool().free_all_blocks()
 
     def _mask_body_2d(self, nx: int, ny: int, n_body: int) -> NDArray[np.float32]:
         """Create a mask for the PML region.
