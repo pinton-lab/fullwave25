@@ -37,6 +37,7 @@ class InputFileWriter:
         use_isotropic_relaxation: bool = False,
         release_after_write: bool = False,
         pml_thickness: int = 0,
+        use_gpu: bool = False,
     ) -> None:
         """Initialize the InputGeneratorBase instance.
 
@@ -86,6 +87,7 @@ class InputFileWriter:
         self._work_dir = Path(work_dir)
         self.path_fullwave_simulation_bin = path_fullwave_simulation_bin
         self.use_isotropic_relaxation = use_isotropic_relaxation
+        self.use_gpu = use_gpu
 
         if validate_input:
             check_functions.check_path_exists(self.path_fullwave_simulation_bin)
@@ -106,13 +108,41 @@ class InputFileWriter:
         self.release_after_write = release_after_write
         self.pml_thickness = pml_thickness
 
-        self._dim = int(
-            np.rint(self.medium.sound_speed.max()) - np.rint(self.medium.sound_speed.min()),
-        )
+        if self.use_gpu:
+            try:
+                import cupy as cp  # noqa: PLC0415
+
+                c_gpu = cp.asarray(self.medium.sound_speed, dtype=cp.float64)
+                c_min_val = float(c_gpu.min())
+                c_max_val = float(c_gpu.max())
+                self._dim = int(cp.rint(cp.float64(c_max_val)) - cp.rint(cp.float64(c_min_val)))
+
+                # Compute dc_map in the same GPU pass (avoids a second H2D transfer)
+                c_min_rounded = float(matlab_round(c_min_val))
+                offset = -c_min_rounded + 1
+                c_gpu += 1e-9
+                cp.rint(c_gpu, out=c_gpu)
+                c_gpu += offset
+                self._dc_map = cp.asnumpy(c_gpu.astype(cp.int32))
+                logger.debug("dc map for stencil coefficients set (GPU, fused).")
+                self._dc_map_ready = True
+            except ImportError:
+                self._dim = int(
+                    np.rint(self.medium.sound_speed.max()) - np.rint(self.medium.sound_speed.min()),
+                )
+                c_min_val = float(self.medium.sound_speed.min())
+                self._dc_map_ready = False
+        else:
+            self._dim = int(
+                np.rint(self.medium.sound_speed.max()) - np.rint(self.medium.sound_speed.min()),
+            )
+            c_min_val = float(self.medium.sound_speed.min())
+            self._dc_map_ready = False
 
         self._set_d_mat()
-        self._set_d_map(self._dim, self.medium.sound_speed)
-        self._set_dc_map(self.medium.sound_speed)
+        self._set_d_map(self._dim, self.medium.sound_speed, c_min=c_min_val)
+        if not self._dc_map_ready:
+            self._set_dc_map(self.medium.sound_speed)
         logger.debug("InputFileWriter instance created.")
 
     def run(
@@ -468,10 +498,10 @@ class InputFileWriter:
         # (((((((a7*x + a6)*x + a5)*x + a4)*x + a3)*x + a2)*x + a1)*x + a0)
         return ((((((a7 * x + a6) * x + a5) * x + a4) * x + a3) * x + a2) * x + a1) * x + a0
 
-    def _set_d_map(self, dim: int, c_map: np.ndarray) -> None:
+    def _set_d_map(self, dim: int, c_map: np.ndarray, *, c_min: float | None = None) -> None:
         self._d_map = np.zeros((9, 2, dim + 1), dtype=np.float64)
 
-        cmin = float(np.min(c_map))  # compute once (was inside loop)
+        cmin = c_min if c_min is not None else float(np.min(c_map))
         scale = self.grid.dt / self.grid.dx  # compute once
         i = np.arange(dim + 1, dtype=np.float64)
         r = (i + cmin) * scale
@@ -682,10 +712,27 @@ class InputFileWriter:
 
         For large 3-D maps the naive approach allocates a full float64 copy
         and makes several sequential passes.
-        This version processes the first axis in chunks using a thread pool so
-        that (a) peak memory stays bounded and (b) multiple cores share the work.
+        GPU path: uses CuPy for the entire computation in one pass.
+        CPU path: processes the first axis in chunks using a thread pool.
         """
         logger.debug("Setting dc map for stencil coefficients.")
+
+        if self.use_gpu:
+            try:
+                import cupy as cp  # noqa: PLC0415
+
+                c_gpu = cp.asarray(c_map, dtype=cp.float64)
+                c_min_rounded = float(matlab_round(float(c_gpu.min())))
+                offset = -c_min_rounded + 1
+                c_gpu += 1e-9
+                cp.rint(c_gpu, out=c_gpu)
+                c_gpu += offset
+                self._dc_map = cp.asnumpy(c_gpu.astype(cp.int32))
+                logger.debug("dc map for stencil coefficients set (GPU).")
+                return
+            except ImportError:
+                pass
+
         c_min_rounded = matlab_round(c_map.min())
         offset = float(-c_min_rounded + 1)
 

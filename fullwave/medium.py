@@ -332,6 +332,12 @@ class MediumRelaxationMaps:
     @property
     def bulk_modulus(self) -> NDArray[np.float64]:
         """Return the bulk_modulus."""
+        xp = self.xp
+        if xp is not np:
+            c_gpu = xp.asarray(self.sound_speed)
+            rho_gpu = xp.asarray(self.density)
+            result = c_gpu * c_gpu * rho_gpu
+            return xp.asnumpy(result)
         return np.multiply(self.sound_speed**2, self.density)
 
     @property
@@ -706,6 +712,7 @@ class MediumExponentialAttenuation:
         air_map: NDArray[np.int64] | None = None,
         air_coords: NDArray[np.int64] | None = None,
         dtype: type = np.float64,
+        use_gpu: bool = False,
     ) -> None:
         """Medium class for Fullwave.
 
@@ -736,9 +743,21 @@ class MediumExponentialAttenuation:
         dtype : type, optional
             Data type for medium arrays. Default is np.float64.
             Use np.float32 to reduce Python-side memory usage by ~50%.
+        use_gpu : bool, optional
+            If True, use CuPy for GPU-accelerated computation (default is False).
+            Requires CuPy to be installed. Falls back to CPU if CuPy is unavailable.
 
         """
         check_functions.check_instance(grid, Grid)
+        self.use_gpu = use_gpu
+        self.xp: ModuleType = _get_array_module(use_gpu=use_gpu)
+        if self.xp is not np:
+            logger.info("MediumExponentialAttenuation: using CuPy GPU backend")
+        elif use_gpu:
+            logger.warning(
+                "MediumExponentialAttenuation: use_gpu=True but CuPy is not available. "
+                "Falling back to CPU (numpy)."
+            )
         self.grid = grid
         self.is_3d = grid.is_3d
         self.dtype = np.dtype(dtype)
@@ -806,6 +825,12 @@ class MediumExponentialAttenuation:
     @property
     def bulk_modulus(self) -> NDArray[np.float64]:
         """Return the bulk_modulus."""
+        xp = getattr(self, "xp", np)
+        if xp is not np:
+            c_gpu = xp.asarray(self.sound_speed)
+            rho_gpu = xp.asarray(self.density)
+            result = c_gpu * c_gpu * rho_gpu
+            return xp.asnumpy(result)
         return np.multiply(self.sound_speed**2, self.density)
 
     @property
@@ -1104,6 +1129,12 @@ class Medium:
     @property
     def bulk_modulus(self) -> NDArray[np.float64]:
         """Return the bulk_modulus."""
+        xp = getattr(self, "xp", np)
+        if xp is not np:
+            c_gpu = xp.asarray(self.sound_speed)
+            rho_gpu = xp.asarray(self.density)
+            result = c_gpu * c_gpu * rho_gpu
+            return xp.asnumpy(result)
         return np.multiply(self.sound_speed**2, self.density)
 
     @property
@@ -1337,6 +1368,7 @@ class Medium:
             beta=self.beta,
             air_coords=self.air_coords,
             dtype=self.dtype,
+            use_gpu=self.use_gpu,
         )
 
     def print_info(self) -> None:

@@ -560,6 +560,7 @@ class Solver:
 
         self.path_fullwave_simulation_bin = path_fullwave_simulation_bin
         self.cuda_device_id = cuda_device_id
+        self.use_gpu_pml = use_gpu_pml
 
         self.fullwave_launcher = Launcher(
             path_fullwave_simulation_bin,
@@ -943,6 +944,7 @@ class Solver:
             use_isotropic_relaxation=self.use_isotropic_relaxation,
             release_after_write=release_after_write,
             pml_thickness=pml_thickness,
+            use_gpu=self.use_gpu_pml,
         )
         simulation_dir = input_file_writer.run(
             simulation_dir_name,

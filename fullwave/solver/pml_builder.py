@@ -289,8 +289,6 @@ class PMLBuilder:
                 extended_sound_speed = self._extend_map_for_pml(self.medium_org.sound_speed)
                 extended_density = self._extend_map_for_pml(self.medium_org.density)
                 extended_beta = self._extend_map_for_pml(self.medium_org.beta)
-                extended_alpha_coeff = self._extend_map_for_pml(self.medium_org.alpha_coeff)
-                extended_alpha_power = self._extend_map_for_pml(self.medium_org.alpha_power)
                 extended_relaxation_param_dict = {
                     key: self._extend_map_for_pml(value)
                     for key, value in self.medium_org.relaxation_param_dict.items()
@@ -309,14 +307,6 @@ class PMLBuilder:
                         self._extend_map_for_pml,
                         self.medium_org.beta,
                     )
-                    future_alpha_coeff = executor.submit(
-                        self._extend_map_for_pml,
-                        self.medium_org.alpha_coeff,
-                    )
-                    future_alpha_power = executor.submit(
-                        self._extend_map_for_pml,
-                        self.medium_org.alpha_power,
-                    )
                     future_relaxation_param_dict = {
                         key: executor.submit(self._extend_map_for_pml, value)
                         for key, value in self.medium_org.relaxation_param_dict.items()
@@ -325,8 +315,6 @@ class PMLBuilder:
                     extended_sound_speed = future_sound_speed.result()
                     extended_density = future_density.result()
                     extended_beta = future_beta.result()
-                    extended_alpha_coeff = future_alpha_coeff.result()
-                    extended_alpha_power = future_alpha_power.result()
                     extended_relaxation_param_dict = {
                         key: future.result() for key, future in future_relaxation_param_dict.items()
                     }
@@ -336,8 +324,6 @@ class PMLBuilder:
                 sound_speed=extended_sound_speed,
                 density=extended_density,
                 beta=extended_beta,
-                alpha_coeff=extended_alpha_coeff,
-                alpha_power=extended_alpha_power,
                 relaxation_param_dict=extended_relaxation_param_dict,
                 air_coords=self.medium_org.air_coords + self.num_boundary_points,
                 n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
@@ -939,10 +925,10 @@ class PMLBuilder:
 
         items = list(rename_dict.items())
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = [
-                executor.submit(
-                    _compute_one,
+        if self.xp is not np:
+            # GPU path: run sequentially to avoid CuPy multi-thread CUDA context issues
+            results = [
+                _compute_one(
                     key_fw2,
                     key_py,
                     relaxation_param_dict,
@@ -956,7 +942,25 @@ class PMLBuilder:
                 )
                 for key_fw2, key_py in items
             ]
-            results = [f.result() for f in futures]
+        else:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                futures = [
+                    executor.submit(
+                        _compute_one,
+                        key_fw2,
+                        key_py,
+                        relaxation_param_dict,
+                        alpha_target_higher_nu,
+                        d_target_higher_nu,
+                        alpha_target_pml,
+                        d_target_pml,
+                        n_polynomial,
+                        self.is_3d,
+                        self._apply_transition_and_pml,
+                    )
+                    for key_fw2, key_py in items
+                ]
+                results = [f.result() for f in futures]
         out_dict = dict(results)
 
         logger.debug("Calculating PML a and b coefficients...")
@@ -984,9 +988,13 @@ class PMLBuilder:
             # Return keys + values so parent can update dict safely
             return (f"a_pml_{axis}{nu}", a, f"b_pml_{axis}{nu}", b)
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = [executor.submit(_worker, nu, axis) for nu, axis in tasks]
-            results = [f.result() for f in futures]
+        if self.xp is not np:
+            # GPU path: run sequentially
+            results = [_worker(nu, axis) for nu, axis in tasks]
+        else:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                futures = [executor.submit(_worker, nu, axis) for nu, axis in tasks]
+                results = [f.result() for f in futures]
 
         for a_key, a_val, b_key, b_val in results:
             out_dict[a_key] = a_val
@@ -1223,10 +1231,11 @@ class PMLBuilder:
             raise ValueError(error_msg)
 
         items = list(rename_dict.items())
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = [
-                executor.submit(
-                    _compute_one,
+
+        if self.xp is not np:
+            # GPU path: run sequentially to avoid CuPy multi-thread CUDA context issues
+            results = [
+                _compute_one(
                     key_fw2,
                     key_py,
                     relaxation_param_dict,
@@ -1240,7 +1249,25 @@ class PMLBuilder:
                 )
                 for key_fw2, key_py in items
             ]
-            results = [f.result() for f in futures]
+        else:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                futures = [
+                    executor.submit(
+                        _compute_one,
+                        key_fw2,
+                        key_py,
+                        relaxation_param_dict,
+                        alpha_target_higher_nu,
+                        d_target_higher_nu,
+                        alpha_target_pml,
+                        d_target_pml,
+                        n_polynomial,
+                        self.is_3d,
+                        self._apply_transition_and_pml,
+                    )
+                    for key_fw2, key_py in items
+                ]
+                results = [f.result() for f in futures]
         out_dict = dict(results)
 
         logger.debug("Calculating PML a and b coefficients...")
@@ -1269,9 +1296,13 @@ class PMLBuilder:
             # Return keys + values so parent can update dict safely
             return (f"a_pml_{axis}{nu}", a, f"b_pml_{axis}{nu}", b)
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = [executor.submit(_worker, nu, axis) for nu, axis in tasks]
-            results = [f.result() for f in futures]
+        if self.xp is not np:
+            # GPU path: run sequentially
+            results = [_worker(nu, axis) for nu, axis in tasks]
+        else:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                futures = [executor.submit(_worker, nu, axis) for nu, axis in tasks]
+                results = [f.result() for f in futures]
 
         for a_key, a_val, b_key, b_val in results:
             out_dict[a_key] = a_val

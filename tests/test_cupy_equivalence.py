@@ -8,7 +8,8 @@ import numpy as np
 import pytest
 
 import fullwave.medium as medium_module
-from fullwave.medium import Medium, MediumRelaxationMaps
+from fullwave.medium import Medium, MediumExponentialAttenuation, MediumRelaxationMaps
+from fullwave.solver.input_file_writer import InputFileWriter
 from fullwave.solver.pml_builder import PMLBuilder, PMLBuilderExponentialAttenuation
 from fullwave.solver.utils import initialize_relaxation_param_dict
 
@@ -530,3 +531,273 @@ class TestPMLBuilderExponentialAttenuationCupyEquivalence:
             cpu_result.beta,
             rtol=1e-12,
         )
+
+
+class TestMediumExponentialAttenuationCupyEquivalence:
+    """Compare CPU vs GPU for MediumExponentialAttenuation."""
+
+    @pytest.fixture(autouse=True)
+    def _patch(self, monkeypatch):
+        monkeypatch.setattr(medium_module, "check_functions", _dummy_check_functions())
+
+    def _make_pair(self, grid_shape, grid):
+        rng = np.random.default_rng(999)
+        sound_speed = rng.uniform(1400, 1600, grid_shape)
+        density = rng.uniform(900, 1100, grid_shape)
+        alpha_exp = rng.uniform(0.9, 1.0, grid_shape)
+        beta = rng.uniform(0.5, 1.5, grid_shape)
+
+        cpu = MediumExponentialAttenuation(
+            grid,
+            sound_speed.copy(),
+            density.copy(),
+            alpha_exp.copy(),
+            beta.copy(),
+            use_gpu=False,
+        )
+        gpu = MediumExponentialAttenuation(
+            grid,
+            sound_speed.copy(),
+            density.copy(),
+            alpha_exp.copy(),
+            beta.copy(),
+            use_gpu=True,
+        )
+        return cpu, gpu
+
+    def test_bulk_modulus_2d(self):
+        shape = (32, 32)
+        grid = DummyGrid2D(nx=shape[0], ny=shape[1])
+        cpu, gpu = self._make_pair(shape, grid)
+
+        np.testing.assert_allclose(gpu.bulk_modulus, cpu.bulk_modulus, rtol=1e-12)
+
+    def test_bulk_modulus_3d(self):
+        shape = (16, 16, 16)
+        grid = DummyGrid3D(nx=shape[0], ny=shape[1], nz=shape[2])
+        cpu, gpu = self._make_pair(shape, grid)
+
+        np.testing.assert_allclose(gpu.bulk_modulus, cpu.bulk_modulus, rtol=1e-12)
+
+
+class TestMediumRelaxationMapsBulkModulusCupyEquivalence:
+    """Compare CPU vs GPU for MediumRelaxationMaps.bulk_modulus."""
+
+    @pytest.fixture(autouse=True)
+    def _patch(self, monkeypatch):
+        monkeypatch.setattr(medium_module, "check_functions", _dummy_check_functions())
+
+    def test_bulk_modulus_2d(self):
+        shape = (20, 20)
+        grid = DummyGrid2D(nx=shape[0], ny=shape[1])
+        rng = np.random.default_rng(456)
+        sound_speed = rng.uniform(1400, 1600, shape)
+        density = rng.uniform(900, 1100, shape)
+        beta = rng.uniform(0.5, 1.5, shape)
+        relax = _get_relaxation_dict(shape)
+
+        cpu = MediumRelaxationMaps(
+            grid,
+            sound_speed.copy(),
+            density.copy(),
+            beta.copy(),
+            {k: v.copy() for k, v in relax.items()},
+            use_gpu=False,
+        )
+        gpu = MediumRelaxationMaps(
+            grid,
+            sound_speed.copy(),
+            density.copy(),
+            beta.copy(),
+            {k: v.copy() for k, v in relax.items()},
+            use_gpu=True,
+        )
+        np.testing.assert_allclose(gpu.bulk_modulus, cpu.bulk_modulus, rtol=1e-12)
+
+
+class TestInputFileWriterCupyEquivalence:
+    """Compare CPU vs GPU for InputFileWriter._set_dc_map and dim calc."""
+
+    @pytest.fixture(autouse=True)
+    def _patch(self, monkeypatch):
+        monkeypatch.setattr(medium_module, "check_functions", _dummy_check_functions())
+
+    @pytest.fixture()
+    def setup_2d(self):
+        import fullwave
+
+        grid = fullwave.Grid(
+            domain_size=(1e-2, 1e-2),
+            f0=1e6,
+            duration=1e-5,
+            c0=1540.0,
+            ppw=6,
+            cfl=0.4,
+        )
+        shape = (grid.nx, grid.ny)
+
+        rng = np.random.default_rng(777)
+        sound_speed = rng.uniform(1400, 1600, shape)
+        density = rng.uniform(900, 1100, shape)
+        alpha_exp = rng.uniform(0.9, 1.0, shape)
+        beta = np.zeros(shape)
+
+        medium = fullwave.MediumExponentialAttenuation(
+            grid,
+            sound_speed,
+            density,
+            alpha_exp,
+            beta,
+            use_gpu=False,
+        )
+        return grid, medium
+
+    def test_dim_calc(self, setup_2d):
+        grid, medium = setup_2d
+        # CPU dim
+        cpu_dim = int(
+            np.rint(medium.sound_speed.max()) - np.rint(medium.sound_speed.min()),
+        )
+        # GPU dim
+        import cupy as cp
+
+        c_gpu = cp.asarray(medium.sound_speed)
+        gpu_dim = int(cp.rint(c_gpu.max()) - cp.rint(c_gpu.min()))
+
+        assert cpu_dim == gpu_dim
+
+    def test_dc_map(self, setup_2d, tmp_path):
+        import fullwave
+
+        grid, medium = setup_2d
+
+        src_coords = np.array([[grid.nx // 2, grid.ny // 2]])
+        source = fullwave.Source(
+            p0=np.ones((1, 10)),
+            coords=src_coords,
+            grid_shape=(grid.nx, grid.ny),
+        )
+        sensor = fullwave.Sensor(
+            coords=src_coords,
+            grid_shape=(grid.nx, grid.ny),
+        )
+
+        cpu_writer = InputFileWriter(
+            work_dir=tmp_path / "cpu",
+            grid=grid,
+            medium=medium,
+            source=source,
+            sensor=sensor,
+            validate_input=False,
+            use_exponential_attenuation=True,
+            use_gpu=False,
+        )
+        gpu_writer = InputFileWriter(
+            work_dir=tmp_path / "gpu",
+            grid=grid,
+            medium=medium,
+            source=source,
+            sensor=sensor,
+            validate_input=False,
+            use_exponential_attenuation=True,
+            use_gpu=True,
+        )
+        np.testing.assert_array_equal(gpu_writer._dc_map, cpu_writer._dc_map)
+
+
+class TestPMLBuilderRelaxationCupyEquivalence:
+    """Compare CPU vs GPU for PMLBuilder (multiple relaxation path)."""
+
+    @pytest.fixture(autouse=True)
+    def _patch(self, monkeypatch):
+        monkeypatch.setattr(medium_module, "check_functions", _dummy_check_functions())
+
+    @pytest.fixture()
+    def setup_2d(self):
+        import fullwave
+
+        grid = fullwave.Grid(
+            domain_size=(1e-2, 1e-2),
+            f0=1e6,
+            duration=1e-5,
+            c0=1540.0,
+            ppw=6,
+            cfl=0.4,
+        )
+        shape = (grid.nx, grid.ny)
+
+        rng = np.random.default_rng(321)
+        sound_speed = rng.uniform(1400, 1600, shape)
+        density = rng.uniform(900, 1100, shape)
+        beta = rng.uniform(0.5, 1.5, shape)
+        relax = _get_relaxation_dict(shape)
+
+        medium = fullwave.MediumRelaxationMaps(
+            grid,
+            sound_speed,
+            density,
+            beta,
+            relax,
+            use_gpu=False,
+        )
+        src_coords = np.array([[grid.nx // 2, i] for i in range(grid.ny)])
+        sen_coords = np.array([[0, i] for i in range(grid.ny)])
+        source = fullwave.Source(
+            p0=np.ones((src_coords.shape[0], 10)),
+            coords=src_coords,
+            grid_shape=shape,
+        )
+        sensor = fullwave.Sensor(
+            coords=sen_coords,
+            grid_shape=shape,
+        )
+        return grid, medium, source, sensor
+
+    def test_extended_medium_identical(self, setup_2d):
+        grid, medium, source, sensor = setup_2d
+        cpu = PMLBuilder(grid, medium, source, sensor, use_gpu=False)
+        gpu = PMLBuilder(grid, medium, source, sensor, use_gpu=True)
+
+        np.testing.assert_allclose(
+            gpu.extended_medium.sound_speed,
+            cpu.extended_medium.sound_speed,
+            rtol=1e-14,
+        )
+        np.testing.assert_allclose(
+            gpu.extended_medium.density,
+            cpu.extended_medium.density,
+            rtol=1e-14,
+        )
+        for key in cpu.extended_medium.relaxation_param_dict:
+            np.testing.assert_allclose(
+                gpu.extended_medium.relaxation_param_dict[key],
+                cpu.extended_medium.relaxation_param_dict[key],
+                rtol=1e-10,
+                err_msg=f"extended relaxation_param_dict[{key}] mismatch",
+            )
+
+    def test_run_identical(self, setup_2d):
+        grid, medium, source, sensor = setup_2d
+        cpu_builder = PMLBuilder(grid, medium, source, sensor, use_gpu=False)
+        gpu_builder = PMLBuilder(grid, medium, source, sensor, use_gpu=True)
+
+        cpu_result = cpu_builder.run(use_pml=True)
+        gpu_result = gpu_builder.run(use_pml=True)
+
+        np.testing.assert_allclose(
+            gpu_result.sound_speed,
+            cpu_result.sound_speed,
+            rtol=1e-12,
+        )
+        np.testing.assert_allclose(
+            gpu_result.density,
+            cpu_result.density,
+            rtol=1e-12,
+        )
+        for key in cpu_result.relaxation_param_dict_for_fw2:
+            np.testing.assert_allclose(
+                gpu_result.relaxation_param_dict_for_fw2[key],
+                cpu_result.relaxation_param_dict_for_fw2[key],
+                rtol=1e-10,
+                err_msg=f"run() relaxation_param_dict_for_fw2[{key}] mismatch",
+            )
