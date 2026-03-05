@@ -12,6 +12,7 @@ from fullwave.medium import Medium, MediumExponentialAttenuation, MediumRelaxati
 from fullwave.solver.input_file_writer import InputFileWriter
 from fullwave.solver.pml_builder import PMLBuilder, PMLBuilderExponentialAttenuation
 from fullwave.solver.utils import initialize_relaxation_param_dict
+from fullwave.utils.relaxation_parameters import RelaxationParametersGenerator
 
 # ---------------------------------------------------------------------------
 # Skip the entire module when CuPy / CUDA is unavailable
@@ -807,4 +808,79 @@ class TestPMLBuilderRelaxationCupyEquivalence:
                 cpu_result.relaxation_param_dict_for_fw2[key],
                 rtol=1e-10,
                 err_msg=f"run() relaxation_param_dict_for_fw2[{key}] mismatch",
+            )
+
+
+class TestRelaxationParametersGeneratorCupyEquivalence:
+    """Compare CPU (Numba) vs GPU (CuPy) for RelaxationParametersGenerator."""
+
+    @pytest.fixture()
+    def generator(self):
+        from pathlib import Path
+
+        db_path = (
+            Path(__file__).parent.parent
+            / "fullwave"
+            / "solver"
+            / "bins"
+            / "database"
+            / "relaxation_params_database_num_relax=2_20260113_0957.mat"
+        )
+        if not db_path.exists():
+            pytest.skip(f"LUT database not found at {db_path}")
+        return RelaxationParametersGenerator(n_relaxation_mechanisms=2, path_database=db_path)
+
+    def test_generate_identical_2d(self, generator):
+        """GPU generate must produce identical results to CPU generate for 2D arrays."""
+        rng = np.random.default_rng(123)
+        shape = (50, 60)
+        alpha_coeff = rng.uniform(generator.alpha_min, generator.alpha_max, size=shape)
+        alpha_power = rng.uniform(generator.power_min, generator.power_max, size=shape)
+
+        cpu_result = generator._generate_cpu(alpha_coeff, alpha_power)
+        gpu_result = generator._generate_gpu(cp.asarray(alpha_coeff), cp.asarray(alpha_power))
+
+        for key in cpu_result:
+            np.testing.assert_allclose(
+                _to_np(gpu_result[key]),
+                cpu_result[key],
+                rtol=1e-12,
+                err_msg=f"key={key} mismatch (2D)",
+            )
+
+    def test_generate_identical_3d(self, generator):
+        """GPU generate must produce identical results to CPU generate for 3D arrays."""
+        rng = np.random.default_rng(456)
+        shape = (20, 25, 15)
+        alpha_coeff = rng.uniform(generator.alpha_min, generator.alpha_max, size=shape)
+        alpha_power = rng.uniform(generator.power_min, generator.power_max, size=shape)
+
+        cpu_result = generator._generate_cpu(alpha_coeff, alpha_power)
+        gpu_result = generator._generate_gpu(cp.asarray(alpha_coeff), cp.asarray(alpha_power))
+
+        for key in cpu_result:
+            np.testing.assert_allclose(
+                _to_np(gpu_result[key]),
+                cpu_result[key],
+                rtol=1e-12,
+                err_msg=f"key={key} mismatch (3D)",
+            )
+
+    def test_generate_dispatches_correctly(self, generator):
+        """generate() dispatches to CPU for numpy, GPU for CuPy."""
+        rng = np.random.default_rng(789)
+        shape = (10, 10)
+        alpha_coeff = rng.uniform(generator.alpha_min, generator.alpha_max, size=shape)
+        alpha_power = rng.uniform(generator.power_min, generator.power_max, size=shape)
+
+        cpu_result = generator.generate(alpha_coeff, alpha_power)
+        gpu_result = generator.generate(cp.asarray(alpha_coeff), cp.asarray(alpha_power))
+
+        for key in cpu_result:
+            assert isinstance(cpu_result[key], np.ndarray), f"CPU result {key} should be numpy"
+            np.testing.assert_allclose(
+                _to_np(gpu_result[key]),
+                cpu_result[key],
+                rtol=1e-12,
+                err_msg=f"key={key} dispatch mismatch",
             )

@@ -1268,15 +1268,11 @@ class Medium:
 
         """
         logger.debug("Building MediumRelaxationMaps from alpha and power maps.")
-        xp = self.xp
-        # generate_relaxation_params uses Numba and requires numpy arrays
-        alpha_coeff_np = xp.asnumpy(self.alpha_coeff) if xp is not np else self.alpha_coeff
-        alpha_power_np = xp.asnumpy(self.alpha_power) if xp is not np else self.alpha_power
         if self.attenuation_builder == "lookup":
             relaxation_param_dict = generate_relaxation_params(
                 n_relaxation_mechanisms=self.n_relaxation_mechanisms,
-                alpha_coeff=alpha_coeff_np,
-                alpha_power=alpha_power_np,
+                alpha_coeff=self.alpha_coeff,
+                alpha_power=self.alpha_power,
                 path_database=self.path_relaxation_parameters_database,
             )
         else:
