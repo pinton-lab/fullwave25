@@ -284,56 +284,36 @@ class PMLBuilder:
 
         logger.debug("building extended medium for pml...")
         if isinstance(self.medium_org, fullwave.MediumRelaxationMaps):
+            base_attrs = ["sound_speed", "density", "beta"]
+            relax_attrs = list(self.medium_org.relaxation_param_dict.keys())
+
             if self.xp is not np:
-                import cupy as cp  # noqa: PLC0415
+                # Move medium + relaxation arrays to CPU, then extend via multi-GPU
+                named_arrays = self._ensure_numpy_medium_arrays(base_attrs)
+                for key in relax_attrs:
+                    import cupy as cp  # noqa: PLC0415
 
-                # GPU path: free each original array after extending to avoid OOM.
-                pool = cp.get_default_memory_pool()
-                extended_sound_speed = self._extend_map_for_pml(self.medium_org.sound_speed)
-                self.medium_org.sound_speed = cp.asnumpy(self.medium_org.sound_speed)
-                pool.free_all_blocks()
-                extended_density = self._extend_map_for_pml(self.medium_org.density)
-                self.medium_org.density = cp.asnumpy(self.medium_org.density)
-                pool.free_all_blocks()
-                extended_beta = self._extend_map_for_pml(self.medium_org.beta)
-                self.medium_org.beta = cp.asnumpy(self.medium_org.beta)
-                pool.free_all_blocks()
-                extended_relaxation_param_dict = {}
-                for key, value in self.medium_org.relaxation_param_dict.items():
-                    extended_relaxation_param_dict[key] = self._extend_map_for_pml(value)
-                    self.medium_org.relaxation_param_dict[key] = cp.asnumpy(value)
-                    pool.free_all_blocks()
+                    val = self.medium_org.relaxation_param_dict[key]
+                    if not isinstance(val, np.ndarray):
+                        val_np = cp.asnumpy(val)
+                        self.medium_org.relaxation_param_dict[key] = val_np
+                    else:
+                        val_np = val
+                    named_arrays.append((key, val_np))
+                cp.get_default_memory_pool().free_all_blocks()
+                extended = self._extend_arrays_gpu(named_arrays)
             else:
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future_sound_speed = executor.submit(
-                        self._extend_map_for_pml,
-                        self.medium_org.sound_speed,
-                    )
-                    future_density = executor.submit(
-                        self._extend_map_for_pml,
-                        self.medium_org.density,
-                    )
-                    future_beta = executor.submit(
-                        self._extend_map_for_pml,
-                        self.medium_org.beta,
-                    )
-                    future_relaxation_param_dict = {
-                        key: executor.submit(self._extend_map_for_pml, value)
-                        for key, value in self.medium_org.relaxation_param_dict.items()
-                    }
+                named_arrays = [(name, getattr(self.medium_org, name)) for name in base_attrs] + [
+                    (key, self.medium_org.relaxation_param_dict[key]) for key in relax_attrs
+                ]
+                extended = self._extend_arrays_cpu(named_arrays)
 
-                    extended_sound_speed = future_sound_speed.result()
-                    extended_density = future_density.result()
-                    extended_beta = future_beta.result()
-                    extended_relaxation_param_dict = {
-                        key: future.result() for key, future in future_relaxation_param_dict.items()
-                    }
-
+            extended_relaxation_param_dict = {key: extended[key] for key in relax_attrs}
             self.extended_medium = fullwave.MediumRelaxationMaps(
                 grid=self.extended_grid,
-                sound_speed=extended_sound_speed,
-                density=extended_density,
-                beta=extended_beta,
+                sound_speed=extended["sound_speed"],
+                density=extended["density"],
+                beta=extended["beta"],
                 relaxation_param_dict=extended_relaxation_param_dict,
                 air_coords=self.medium_org.air_coords + self.num_boundary_points,
                 n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
@@ -342,61 +322,21 @@ class PMLBuilder:
                 use_gpu=self.use_gpu,
             )
         else:
+            attr_names = ["sound_speed", "density", "beta", "alpha_coeff", "alpha_power"]
             if self.xp is not np:
-                import cupy as cp  # noqa: PLC0415
-
-                # GPU path: free each original array after extending to avoid OOM.
-                pool = cp.get_default_memory_pool()
-                extended_sound_speed = self._extend_map_for_pml(self.medium_org.sound_speed)
-                self.medium_org.sound_speed = cp.asnumpy(self.medium_org.sound_speed)
-                pool.free_all_blocks()
-                extended_density = self._extend_map_for_pml(self.medium_org.density)
-                self.medium_org.density = cp.asnumpy(self.medium_org.density)
-                pool.free_all_blocks()
-                extended_beta = self._extend_map_for_pml(self.medium_org.beta)
-                self.medium_org.beta = cp.asnumpy(self.medium_org.beta)
-                pool.free_all_blocks()
-                extended_alpha_coeff = self._extend_map_for_pml(self.medium_org.alpha_coeff)
-                self.medium_org.alpha_coeff = cp.asnumpy(self.medium_org.alpha_coeff)
-                pool.free_all_blocks()
-                extended_alpha_power = self._extend_map_for_pml(self.medium_org.alpha_power)
-                self.medium_org.alpha_power = cp.asnumpy(self.medium_org.alpha_power)
-                pool.free_all_blocks()
+                named_arrays = self._ensure_numpy_medium_arrays(attr_names)
+                extended = self._extend_arrays_gpu(named_arrays)
             else:
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future_sound_speed = executor.submit(
-                        self._extend_map_for_pml,
-                        self.medium_org.sound_speed,
-                    )
-                    future_density = executor.submit(
-                        self._extend_map_for_pml,
-                        self.medium_org.density,
-                    )
-                    future_beta = executor.submit(
-                        self._extend_map_for_pml,
-                        self.medium_org.beta,
-                    )
-                    future_alpha_coeff = executor.submit(
-                        self._extend_map_for_pml,
-                        self.medium_org.alpha_coeff,
-                    )
-                    future_alpha_power = executor.submit(
-                        self._extend_map_for_pml,
-                        self.medium_org.alpha_power,
-                    )
+                named_arrays = [(name, getattr(self.medium_org, name)) for name in attr_names]
+                extended = self._extend_arrays_cpu(named_arrays)
 
-                    extended_sound_speed = future_sound_speed.result()
-                    extended_density = future_density.result()
-                    extended_beta = future_beta.result()
-                    extended_alpha_coeff = future_alpha_coeff.result()
-                    extended_alpha_power = future_alpha_power.result()
             self.extended_medium = fullwave.Medium(
                 grid=self.extended_grid,
-                sound_speed=extended_sound_speed,
-                density=extended_density,
-                beta=extended_beta,
-                alpha_coeff=extended_alpha_coeff,
-                alpha_power=extended_alpha_power,
+                sound_speed=extended["sound_speed"],
+                density=extended["density"],
+                beta=extended["beta"],
+                alpha_coeff=extended["alpha_coeff"],
+                alpha_power=extended["alpha_power"],
                 air_coords=self.medium_org.air_coords + self.num_boundary_points,
                 n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
                 path_relaxation_parameters_database=self.medium_org.path_relaxation_parameters_database,
@@ -616,6 +556,141 @@ class PMLBuilder:
                 output[:, pad + ny :] = 0
 
         return output
+
+    def _extend_arrays_gpu(
+        self,
+        named_arrays: list[tuple[str, NDArray]],
+    ) -> dict[str, NDArray]:
+        """Extend medium arrays using multi-GPU, single-GPU, or CPU fallback.
+
+        Parameters
+        ----------
+        named_arrays : list of (name, numpy_array) pairs
+            Arrays to extend. Must be numpy arrays (CPU).
+
+        Returns
+        -------
+        dict[str, NDArray]
+            Extended arrays as numpy arrays.
+
+        """
+        import cupy as cp  # noqa: PLC0415
+
+        n_gpus = cp.cuda.runtime.getDeviceCount()
+        logger.info("CUDA devices available: %d", n_gpus)
+
+        # Strategy 1: Multi-GPU parallel
+        if n_gpus > 1:
+            n_workers = min(n_gpus, len(named_arrays))
+            try:
+                logger.info(
+                    "Extending %d medium arrays using %d GPUs (of %d available).",
+                    len(named_arrays),
+                    n_workers,
+                    n_gpus,
+                )
+                return self._extend_arrays_multi_gpu(named_arrays, n_gpus)
+            except Exception:
+                logger.warning("Multi-GPU extension failed. Falling back to sequential single-GPU.")
+
+        # Strategy 2: Sequential single-GPU (extend one, free, repeat)
+        try:
+            logger.info("Extending %d medium arrays sequentially on GPU 0.", len(named_arrays))
+            return self._extend_arrays_sequential_gpu(named_arrays)
+        except Exception:
+            logger.warning("Single-GPU extension failed. Falling back to CPU.")
+
+        # Strategy 3: CPU
+        logger.info("Extending %d medium arrays on CPU.", len(named_arrays))
+        return self._extend_arrays_cpu(named_arrays)
+
+    def _extend_arrays_multi_gpu(
+        self,
+        named_arrays: list[tuple[str, NDArray]],
+        n_gpus: int,
+    ) -> dict[str, NDArray]:
+        """Extend arrays in parallel, each on a different GPU.
+
+        Each thread sets its own CUDA device, transfers data, extends,
+        and returns the result as a numpy array.
+        """
+        import cupy as cp  # noqa: PLC0415
+
+        def extend_on_device(
+            args: tuple[str, NDArray, int],
+        ) -> tuple[str, NDArray]:
+            name, arr_np, device_id = args
+            with cp.cuda.Device(device_id):
+                result_gpu = self._extend_map_for_pml(arr_np)
+                result_np = cp.asnumpy(result_gpu)
+                del result_gpu
+                cp.get_default_memory_pool().free_all_blocks()
+                return name, result_np
+
+        items = [(name, arr, i % n_gpus) for i, (name, arr) in enumerate(named_arrays)]
+
+        results = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(n_gpus, len(items))) as executor:
+            futures = [executor.submit(extend_on_device, item) for item in items]
+            for future in concurrent.futures.as_completed(futures):
+                name, result = future.result()
+                results[name] = result
+        return results
+
+    def _extend_arrays_sequential_gpu(
+        self,
+        named_arrays: list[tuple[str, NDArray]],
+    ) -> dict[str, NDArray]:
+        """Extend arrays one at a time on GPU, freeing after each."""
+        import cupy as cp  # noqa: PLC0415
+
+        results = {}
+        pool = cp.get_default_memory_pool()
+        for name, arr_np in named_arrays:
+            result_gpu = self._extend_map_for_pml(arr_np)
+            results[name] = cp.asnumpy(result_gpu)
+            del result_gpu
+            pool.free_all_blocks()
+        return results
+
+    def _extend_arrays_cpu(
+        self,
+        named_arrays: list[tuple[str, NDArray]],
+    ) -> dict[str, NDArray]:
+        """Extend arrays on CPU using ThreadPoolExecutor."""
+        orig_xp = self.xp
+        self.xp = np
+        try:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                futures = {
+                    name: executor.submit(self._extend_map_for_pml, arr)
+                    for name, arr in named_arrays
+                }
+                return {name: future.result() for name, future in futures.items()}
+        finally:
+            self.xp = orig_xp
+
+    def _ensure_numpy_medium_arrays(
+        self,
+        attr_names: list[str],
+    ) -> list[tuple[str, NDArray]]:
+        """Convert medium arrays to numpy and free GPU memory.
+
+        Returns list of (name, numpy_array) pairs.
+        """
+        import cupy as cp  # noqa: PLC0415
+
+        named_arrays = []
+        for name in attr_names:
+            arr = getattr(self.medium_org, name)
+            if not isinstance(arr, np.ndarray):
+                arr_np = cp.asnumpy(arr)
+                setattr(self.medium_org, name, arr_np)
+            else:
+                arr_np = arr
+            named_arrays.append((name, arr_np))
+        cp.get_default_memory_pool().free_all_blocks()
+        return named_arrays
 
     def _localize_pml_region(self) -> tuple[NDArray[np.float64], ...]:
         if self.is_3d:
@@ -1750,66 +1825,21 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
         )
 
         logger.debug("building extended medium for pml...")
+        attr_names = ["sound_speed", "density", "beta", "alpha_coeff", "alpha_power"]
         if self.xp is not np:
-            import cupy as cp  # noqa: PLC0415
-
-            # GPU path: run sequentially to avoid CuPy multi-thread issues.
-            # Move each original array back to CPU after extending to free GPU
-            # memory and avoid OOM on large 3D grids where both the original
-            # (~N^3) and extended (~(N+2*pml)^3) arrays cannot fit simultaneously.
-            pool = cp.get_default_memory_pool()
-            extended_sound_speed = self._extend_map_for_pml(self.medium_org.sound_speed)
-            self.medium_org.sound_speed = cp.asnumpy(self.medium_org.sound_speed)
-            pool.free_all_blocks()
-            extended_density = self._extend_map_for_pml(self.medium_org.density)
-            self.medium_org.density = cp.asnumpy(self.medium_org.density)
-            pool.free_all_blocks()
-            extended_beta = self._extend_map_for_pml(self.medium_org.beta)
-            self.medium_org.beta = cp.asnumpy(self.medium_org.beta)
-            pool.free_all_blocks()
-            extended_alpha_coeff = self._extend_map_for_pml(self.medium_org.alpha_coeff)
-            self.medium_org.alpha_coeff = cp.asnumpy(self.medium_org.alpha_coeff)
-            pool.free_all_blocks()
-            extended_alpha_power = self._extend_map_for_pml(self.medium_org.alpha_power)
-            self.medium_org.alpha_power = cp.asnumpy(self.medium_org.alpha_power)
-            pool.free_all_blocks()
+            named_arrays = self._ensure_numpy_medium_arrays(attr_names)
+            extended = self._extend_arrays_gpu(named_arrays)
         else:
-            # CPU path: run in parallel for all medium properties since it is a bottleneck
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future_sound_speed = executor.submit(
-                    self._extend_map_for_pml,
-                    self.medium_org.sound_speed,
-                )
-                future_density = executor.submit(
-                    self._extend_map_for_pml,
-                    self.medium_org.density,
-                )
-                future_beta = executor.submit(
-                    self._extend_map_for_pml,
-                    self.medium_org.beta,
-                )
-                future_alpha_coeff = executor.submit(
-                    self._extend_map_for_pml,
-                    self.medium_org.alpha_coeff,
-                )
-                future_alpha_power = executor.submit(
-                    self._extend_map_for_pml,
-                    self.medium_org.alpha_power,
-                )
-
-                extended_sound_speed = future_sound_speed.result()
-                extended_density = future_density.result()
-                extended_beta = future_beta.result()
-                extended_alpha_coeff = future_alpha_coeff.result()
-                extended_alpha_power = future_alpha_power.result()
+            named_arrays = [(name, getattr(self.medium_org, name)) for name in attr_names]
+            extended = self._extend_arrays_cpu(named_arrays)
 
         self.extended_medium = fullwave.Medium(
             grid=self.extended_grid,
-            sound_speed=extended_sound_speed,
-            density=extended_density,
-            beta=extended_beta,
-            alpha_coeff=extended_alpha_coeff,
-            alpha_power=extended_alpha_power,
+            sound_speed=extended["sound_speed"],
+            density=extended["density"],
+            beta=extended["beta"],
+            alpha_coeff=extended["alpha_coeff"],
+            alpha_power=extended["alpha_power"],
             air_coords=self.medium_org.air_coords + self.num_boundary_points,
             n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
             path_relaxation_parameters_database=self.medium_org.path_relaxation_parameters_database,

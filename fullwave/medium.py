@@ -51,6 +51,19 @@ def _get_array_module(*, use_gpu: bool) -> ModuleType:
     return np
 
 
+def _cleanup_gpu_arrays(obj: object, attr_names: list[str]) -> None:
+    """Delete partially allocated GPU arrays and free CuPy memory pool."""
+    for attr in attr_names:
+        if hasattr(obj, attr):
+            delattr(obj, attr)
+    try:
+        import cupy as cp  # noqa: PLC0415
+
+        cp.get_default_memory_pool().free_all_blocks()
+    except ImportError:
+        pass
+
+
 @dataclass
 class MediumRelaxationMaps:
     """Medium class for Fullwave."""
@@ -145,16 +158,38 @@ class MediumRelaxationMaps:
         self.n_relaxation_mechanisms = n_relaxation_mechanisms
         self.dtype = np.dtype(dtype)
         xp = self.xp
-        self.relaxation_param_dict = initialize_relaxation_param_dict(
-            n_relaxation_mechanisms=n_relaxation_mechanisms,
-            value=xp.zeros_like(xp.asarray(sound_speed), dtype=self.dtype),
-        )
-        self.grid = grid
-        self.is_3d = grid.is_3d
+        try:
+            self.relaxation_param_dict = initialize_relaxation_param_dict(
+                n_relaxation_mechanisms=n_relaxation_mechanisms,
+                value=xp.zeros_like(xp.asarray(sound_speed), dtype=self.dtype),
+            )
+            self.grid = grid
+            self.is_3d = grid.is_3d
 
-        self.sound_speed = xp.atleast_2d(xp.asarray(sound_speed)).astype(self.dtype, copy=False)
-        self.density = xp.atleast_2d(xp.asarray(density)).astype(self.dtype, copy=False)
-        self.beta = xp.atleast_2d(xp.asarray(beta)).astype(self.dtype, copy=False)
+            self.sound_speed = xp.atleast_2d(xp.asarray(sound_speed)).astype(self.dtype, copy=False)
+            self.density = xp.atleast_2d(xp.asarray(density)).astype(self.dtype, copy=False)
+            self.beta = xp.atleast_2d(xp.asarray(beta)).astype(self.dtype, copy=False)
+        except Exception:
+            if xp is np:
+                raise
+            logger.warning("GPU OOM in MediumRelaxationMaps.__init__. Falling back to CPU (numpy).")
+            _cleanup_gpu_arrays(self, ["sound_speed", "density", "beta"])
+            if hasattr(self, "relaxation_param_dict"):
+                del self.relaxation_param_dict
+            import cupy as cp  # noqa: PLC0415
+
+            cp.get_default_memory_pool().free_all_blocks()
+            self.xp = np
+            xp = np
+            self.relaxation_param_dict = initialize_relaxation_param_dict(
+                n_relaxation_mechanisms=n_relaxation_mechanisms,
+                value=np.zeros_like(np.asarray(sound_speed), dtype=self.dtype),
+            )
+            self.grid = grid
+            self.is_3d = grid.is_3d
+            self.sound_speed = np.atleast_2d(np.asarray(sound_speed)).astype(self.dtype, copy=False)
+            self.density = np.atleast_2d(np.asarray(density)).astype(self.dtype, copy=False)
+            self.beta = np.atleast_2d(np.asarray(beta)).astype(self.dtype, copy=False)
 
         if air_coords is not None:
             if air_map is not None:
@@ -758,10 +793,24 @@ class MediumExponentialAttenuation:
         self.dtype = np.dtype(dtype)
 
         xp = self.xp
-        self.sound_speed = xp.atleast_2d(xp.asarray(sound_speed)).astype(self.dtype, copy=False)
-        self.density = xp.atleast_2d(xp.asarray(density)).astype(self.dtype, copy=False)
-        self.alpha_exp = xp.atleast_2d(xp.asarray(alpha_exp)).astype(self.dtype, copy=False)
-        self.beta = xp.atleast_2d(xp.asarray(beta)).astype(self.dtype, copy=False)
+        try:
+            self.sound_speed = xp.atleast_2d(xp.asarray(sound_speed)).astype(self.dtype, copy=False)
+            self.density = xp.atleast_2d(xp.asarray(density)).astype(self.dtype, copy=False)
+            self.alpha_exp = xp.atleast_2d(xp.asarray(alpha_exp)).astype(self.dtype, copy=False)
+            self.beta = xp.atleast_2d(xp.asarray(beta)).astype(self.dtype, copy=False)
+        except Exception:
+            if xp is np:
+                raise
+            logger.warning(
+                "GPU OOM in MediumExponentialAttenuation.__init__. Falling back to CPU (numpy)."
+            )
+            _cleanup_gpu_arrays(self, ["sound_speed", "density", "alpha_exp", "beta"])
+            self.xp = np
+            xp = np
+            self.sound_speed = np.atleast_2d(np.asarray(sound_speed)).astype(self.dtype, copy=False)
+            self.density = np.atleast_2d(np.asarray(density)).astype(self.dtype, copy=False)
+            self.alpha_exp = np.atleast_2d(np.asarray(alpha_exp)).astype(self.dtype, copy=False)
+            self.beta = np.atleast_2d(np.asarray(beta)).astype(self.dtype, copy=False)
 
         if air_coords is not None:
             if air_map is not None:
@@ -1036,11 +1085,26 @@ class Medium:
         self.dtype = np.dtype(dtype)
 
         xp = self.xp
-        self.sound_speed = xp.atleast_2d(xp.asarray(sound_speed)).astype(self.dtype, copy=False)
-        self.density = xp.atleast_2d(xp.asarray(density)).astype(self.dtype, copy=False)
-        self.alpha_coeff = xp.atleast_2d(xp.asarray(alpha_coeff)).astype(self.dtype, copy=False)
-        self.alpha_power = xp.atleast_2d(xp.asarray(alpha_power)).astype(self.dtype, copy=False)
-        self.beta = xp.atleast_2d(xp.asarray(beta)).astype(self.dtype, copy=False)
+        try:
+            self.sound_speed = xp.atleast_2d(xp.asarray(sound_speed)).astype(self.dtype, copy=False)
+            self.density = xp.atleast_2d(xp.asarray(density)).astype(self.dtype, copy=False)
+            self.alpha_coeff = xp.atleast_2d(xp.asarray(alpha_coeff)).astype(self.dtype, copy=False)
+            self.alpha_power = xp.atleast_2d(xp.asarray(alpha_power)).astype(self.dtype, copy=False)
+            self.beta = xp.atleast_2d(xp.asarray(beta)).astype(self.dtype, copy=False)
+        except Exception:
+            if xp is np:
+                raise
+            logger.warning("GPU OOM in Medium.__init__. Falling back to CPU (numpy).")
+            _cleanup_gpu_arrays(
+                self, ["sound_speed", "density", "alpha_coeff", "alpha_power", "beta"]
+            )
+            self.xp = np
+            xp = np
+            self.sound_speed = np.atleast_2d(np.asarray(sound_speed)).astype(self.dtype, copy=False)
+            self.density = np.atleast_2d(np.asarray(density)).astype(self.dtype, copy=False)
+            self.alpha_coeff = np.atleast_2d(np.asarray(alpha_coeff)).astype(self.dtype, copy=False)
+            self.alpha_power = np.atleast_2d(np.asarray(alpha_power)).astype(self.dtype, copy=False)
+            self.beta = np.atleast_2d(np.asarray(beta)).astype(self.dtype, copy=False)
 
         if air_coords is not None:
             if air_map is not None:
