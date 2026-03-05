@@ -537,8 +537,8 @@ class PMLBuilder:
         xp = self.xp
         pad = self.num_boundary_points
 
-        # Transfer to GPU if needed
-        input_gpu = xp.asarray(input_map) if xp is not np else input_map
+        # Ensure array is on the correct device (no-op if already there)
+        input_gpu = xp.asarray(input_map)
 
         # Pre-allocate output array with correct dtype
         if self.is_3d:
@@ -592,9 +592,6 @@ class PMLBuilder:
                 output[:, :pad] = 0
                 output[:, pad + ny :] = 0
 
-        # Transfer back to CPU if needed
-        if xp is not np:
-            return xp.asnumpy(output)
         return output
 
     def _localize_pml_region(self) -> tuple[NDArray[np.float64], ...]:
@@ -706,8 +703,6 @@ class PMLBuilder:
             a = a.astype(output_dtype, copy=False)
             b = b.astype(output_dtype, copy=False)
 
-        if use_gpu:
-            return xp.asnumpy(a), xp.asnumpy(b)
         return a, b
 
     def run(self, *, use_pml: bool = True) -> fullwave.MediumRelaxationMaps:
@@ -1452,10 +1447,7 @@ class PMLBuilder:
         working_array[down_start:down_end] = down_vals - trans_down * (down_vals - value_target)
 
         # Move axis back
-        result = xp.moveaxis(working_array, 0, axis)
-        if use_gpu:
-            return xp.asnumpy(result)
-        return result
+        return xp.moveaxis(working_array, 0, axis)
 
     @staticmethod
     def _calc_time_constants(
@@ -1940,8 +1932,7 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             mmax = float(xp.sqrt(mask_sq.max()))
             if mmax > 0.0:
                 mask_sq = mask_sq / (mmax * mmax)
-            result = xp.maximum(1 - xp.sqrt(mask_sq), 0)
-            return xp.asnumpy(result)
+            return xp.maximum(1 - xp.sqrt(mask_sq), 0)
 
         rx_np = rx  # noqa: F841
         ry_np = ry  # noqa: F841
@@ -1992,8 +1983,7 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             mmax = float(xp.sqrt(mask_sq.max()))
             if mmax > 0.0:
                 mask_sq = mask_sq / (mmax * mmax)
-            result = xp.maximum(1 - xp.sqrt(mask_sq), 0)
-            return xp.asnumpy(result)
+            return xp.maximum(1 - xp.sqrt(mask_sq), 0)
 
         rx_np = rx  # noqa: F841
         ry_np = ry  # noqa: F841

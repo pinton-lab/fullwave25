@@ -112,18 +112,20 @@ class InputFileWriter:
             try:
                 import cupy as cp  # noqa: PLC0415
 
+                # sound_speed may already be CuPy — asarray is a no-op in that case
                 c_gpu = cp.asarray(self.medium.sound_speed, dtype=cp.float64)
                 c_min_val = float(c_gpu.min())
                 c_max_val = float(c_gpu.max())
                 self._dim = int(cp.rint(cp.float64(c_max_val)) - cp.rint(cp.float64(c_min_val)))
 
-                # Compute dc_map in the same GPU pass (avoids a second H2D transfer)
+                # Compute dc_map on GPU (use a copy to avoid mutating medium data)
+                c_tmp = c_gpu.copy()
                 c_min_rounded = float(matlab_round(c_min_val))
                 offset = -c_min_rounded + 1
-                c_gpu += 1e-9
-                cp.rint(c_gpu, out=c_gpu)
-                c_gpu += offset
-                self._dc_map = cp.asnumpy(c_gpu.astype(cp.int32))
+                c_tmp += 1e-9
+                cp.rint(c_tmp, out=c_tmp)
+                c_tmp += offset
+                self._dc_map = cp.asnumpy(c_tmp.astype(cp.int32))
                 logger.debug("dc map for stencil coefficients set (GPU, fused).")
                 self._dc_map_ready = True
             except ImportError:
@@ -1243,6 +1245,13 @@ class InputFileWriter:
         t0 = time.perf_counter()
 
         dtype = np.dtype(var_type)
+
+        # Transfer CuPy arrays to CPU for file writing
+        if not isinstance(variable_mat, np.ndarray):
+            try:
+                variable_mat = variable_mat.get()  # CuPy → numpy
+            except AttributeError:
+                variable_mat = np.asarray(variable_mat)
 
         # Fast path: no conversion, no reorder.
         if variable_mat.dtype == dtype and variable_mat.flags.c_contiguous:

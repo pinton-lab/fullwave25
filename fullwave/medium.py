@@ -144,16 +144,17 @@ class MediumRelaxationMaps:
             )
         self.n_relaxation_mechanisms = n_relaxation_mechanisms
         self.dtype = np.dtype(dtype)
+        xp = self.xp
         self.relaxation_param_dict = initialize_relaxation_param_dict(
             n_relaxation_mechanisms=n_relaxation_mechanisms,
-            value=np.zeros_like(sound_speed, dtype=self.dtype),
+            value=xp.zeros_like(xp.asarray(sound_speed), dtype=self.dtype),
         )
         self.grid = grid
         self.is_3d = grid.is_3d
 
-        self.sound_speed = sound_speed
-        self.density = density
-        self.beta = beta
+        self.sound_speed = xp.atleast_2d(xp.asarray(sound_speed)).astype(self.dtype, copy=False)
+        self.density = xp.atleast_2d(xp.asarray(density)).astype(self.dtype, copy=False)
+        self.beta = xp.atleast_2d(xp.asarray(beta)).astype(self.dtype, copy=False)
 
         if air_coords is not None:
             if air_map is not None:
@@ -167,7 +168,6 @@ class MediumRelaxationMaps:
             self.air_coords = np.empty((0, ndim), dtype=np.int64)
 
         self.n_jobs = n_jobs
-        self.__post_init__()
 
         self._update_relaxation_param_dict(
             relaxation_param_updates=relaxation_param_dict,
@@ -178,12 +178,6 @@ class MediumRelaxationMaps:
         )
         self.check_fields()
         logger.debug("MediumRelaxationMaps instance created.")
-
-    def __post_init__(self) -> None:
-        """Post-initialization processing for Medium."""
-        self.sound_speed = np.atleast_2d(self.sound_speed).astype(self.dtype, copy=False)
-        self.density = np.atleast_2d(self.density).astype(self.dtype, copy=False)
-        self.beta = np.atleast_2d(self.beta).astype(self.dtype, copy=False)
 
     def _update_relaxation_param_dict(
         self,
@@ -251,8 +245,8 @@ class MediumRelaxationMaps:
                         xp.where(swap, a_gpu[i], a_gpu[j]),
                     )
             for i in range(n_nu):
-                d_arrays[i] = xp.asnumpy(d_gpu[i])
-                a_arrays[i] = xp.asnumpy(a_gpu[i])
+                d_arrays[i] = d_gpu[i]
+                a_arrays[i] = a_gpu[i]
 
         if use_gpu:
             _sort_by_time_const_gpu(d_x1, a_x1, kappa_x1)
@@ -266,15 +260,15 @@ class MediumRelaxationMaps:
 
         # Write results into relaxation_param_dict
         param_dict = self.relaxation_param_dict
-        param_dict["kappa_x1"] = np.atleast_2d(kappa_x1)
-        param_dict["kappa_x2"] = np.atleast_2d(kappa_x2)
+        param_dict["kappa_x1"] = xp.atleast_2d(xp.asarray(kappa_x1))
+        param_dict["kappa_x2"] = xp.atleast_2d(xp.asarray(kappa_x2))
 
         for i in range(n_nu):
             nu = i + 1
-            param_dict[f"d_x1_nu{nu}"] = np.atleast_2d(d_x1[i])
-            param_dict[f"alpha_x1_nu{nu}"] = np.atleast_2d(a_x1[i])
-            param_dict[f"d_x2_nu{nu}"] = np.atleast_2d(d_x2[i])
-            param_dict[f"alpha_x2_nu{nu}"] = np.atleast_2d(a_x2[i])
+            param_dict[f"d_x1_nu{nu}"] = xp.atleast_2d(xp.asarray(d_x1[i]))
+            param_dict[f"alpha_x1_nu{nu}"] = xp.atleast_2d(xp.asarray(a_x1[i]))
+            param_dict[f"d_x2_nu{nu}"] = xp.atleast_2d(xp.asarray(d_x2[i]))
+            param_dict[f"alpha_x2_nu{nu}"] = xp.atleast_2d(xp.asarray(a_x2[i]))
 
         # Cache and check keys
         desired_key_set = getattr(
@@ -329,16 +323,17 @@ class MediumRelaxationMaps:
                 )
                 raise ValueError(error_msg)
 
+    def _to_numpy(self, arr: NDArray) -> NDArray:
+        """Transfer array to CPU numpy. No-op if already numpy."""
+        if self.xp is not np:
+            return self.xp.asnumpy(arr)
+        return arr
+
     @property
-    def bulk_modulus(self) -> NDArray[np.float64]:
-        """Return the bulk_modulus."""
+    def bulk_modulus(self) -> NDArray:
+        """Return the bulk_modulus (stays on same device as source arrays)."""
         xp = self.xp
-        if xp is not np:
-            c_gpu = xp.asarray(self.sound_speed)
-            rho_gpu = xp.asarray(self.density)
-            result = c_gpu * c_gpu * rho_gpu
-            return xp.asnumpy(result)
-        return np.multiply(self.sound_speed**2, self.density)
+        return xp.multiply(self.sound_speed**2, self.density)
 
     @property
     def air_map(self) -> NDArray[np.int64]:
@@ -403,8 +398,6 @@ class MediumRelaxationMaps:
             a = a.astype(output_dtype, copy=False)
             b = b.astype(output_dtype, copy=False)
 
-        if use_gpu:
-            return xp.asnumpy(a), xp.asnumpy(b)
         return a, b
 
     @staticmethod
@@ -571,17 +564,18 @@ class MediumRelaxationMaps:
             error_msg = "3D plotting is not implemented yet."
             raise NotImplementedError(error_msg)
 
+        _np = self._to_numpy
         if plot_fw2_params:
             target_map_dict: OrderedDict = OrderedDict(
                 [
-                    ("Sound speed", self.sound_speed),
-                    ("Density", self.density),
-                    ("Beta", self.beta),
+                    ("Sound speed", _np(self.sound_speed)),
+                    ("Density", _np(self.density)),
+                    ("Beta", _np(self.beta)),
                     ("Air map", self.air_map),
                 ],
             )
             for key in self.relaxation_param_dict_for_fw2:
-                target_map_dict[key] = self.relaxation_param_dict_for_fw2[key]
+                target_map_dict[key] = _np(self.relaxation_param_dict_for_fw2[key])
         else:
             relaxation_param_dict_keys = initialize_relaxation_param_dict(
                 n_relaxation_mechanisms=self.n_relaxation_mechanisms,
@@ -589,14 +583,14 @@ class MediumRelaxationMaps:
 
             target_map_dict: OrderedDict = OrderedDict(
                 [
-                    ("Sound speed", self.sound_speed),
-                    ("Density", self.density),
-                    ("Beta", self.beta),
+                    ("Sound speed", _np(self.sound_speed)),
+                    ("Density", _np(self.density)),
+                    ("Beta", _np(self.beta)),
                     ("Air map", self.air_map),
                 ],
             )
             for key in relaxation_param_dict_keys:
-                target_map_dict[key] = self.relaxation_param_dict[key]
+                target_map_dict[key] = _np(self.relaxation_param_dict[key])
 
         num_plots = len(target_map_dict)
         # calculate subplot shape to make a square
@@ -641,21 +635,22 @@ class MediumRelaxationMaps:
             A string summarizing the Medium properties.
 
         """
+        xp = self.xp
         return (
             f"Relaxation Medium:\n"
             f"  Grid: {self.grid}\n"
             "\n"
-            f"  Sound speed: min {np.min(self.sound_speed):.2f} m/s, "
-            f"max {np.max(self.sound_speed):.2f} m/s\n"
-            f"  Density: min {np.min(self.density):.2f} kg/m^3, "
-            f"max {np.max(self.density):.2f} kg/m^3\n"
-            f"  Beta: min {np.min(self.beta):.2f}, max {np.max(self.beta):.2f}\n"
+            f"  Sound speed: min {float(xp.min(self.sound_speed)):.2f} m/s, "
+            f"max {float(xp.max(self.sound_speed)):.2f} m/s\n"
+            f"  Density: min {float(xp.min(self.density)):.2f} kg/m^3, "
+            f"max {float(xp.max(self.density)):.2f} kg/m^3\n"
+            f"  Beta: min {float(xp.min(self.beta)):.2f}, max {float(xp.max(self.beta)):.2f}\n"
             f"  Number of air coordinates: {self.n_air}\n"
             f"  Number of relaxation mechanisms: {self.n_relaxation_mechanisms}\n"
             f"  Relaxation parameters:\n"
         ) + "".join(
             [
-                f"    {key}: min {np.min(value):.4e}, max {np.max(value):.4e}\n"
+                f"    {key}: min {float(xp.min(value)):.4e}, max {float(xp.max(value)):.4e}\n"
                 for key, value in self.relaxation_param_dict.items()
             ],
         )
@@ -762,10 +757,11 @@ class MediumExponentialAttenuation:
         self.is_3d = grid.is_3d
         self.dtype = np.dtype(dtype)
 
-        self.sound_speed = sound_speed
-        self.density = density
-        self.alpha_exp = alpha_exp
-        self.beta = beta
+        xp = self.xp
+        self.sound_speed = xp.atleast_2d(xp.asarray(sound_speed)).astype(self.dtype, copy=False)
+        self.density = xp.atleast_2d(xp.asarray(density)).astype(self.dtype, copy=False)
+        self.alpha_exp = xp.atleast_2d(xp.asarray(alpha_exp)).astype(self.dtype, copy=False)
+        self.beta = xp.atleast_2d(xp.asarray(beta)).astype(self.dtype, copy=False)
 
         if air_coords is not None:
             if air_map is not None:
@@ -778,15 +774,7 @@ class MediumExponentialAttenuation:
             ndim = 3 if self.is_3d else 2
             self.air_coords = np.empty((0, ndim), dtype=np.int64)
 
-        self.__post_init__()
         self.check_fields()
-
-    def __post_init__(self) -> None:
-        """Post-initialization processing for Medium."""
-        self.sound_speed = np.atleast_2d(self.sound_speed).astype(self.dtype, copy=False)
-        self.density = np.atleast_2d(self.density).astype(self.dtype, copy=False)
-        self.alpha_exp = np.atleast_2d(self.alpha_exp).astype(self.dtype, copy=False)
-        self.beta = np.atleast_2d(self.beta).astype(self.dtype, copy=False)
 
     def check_fields(self) -> None:
         """Check if the fields have the correct shape."""
@@ -807,6 +795,12 @@ class MediumExponentialAttenuation:
         assert self.alpha_exp.shape == grid_shape, _error_msg(self.alpha_exp, grid_shape)
         assert self.beta.shape == grid_shape, _error_msg(self.beta, grid_shape)
 
+    def _to_numpy(self, arr: NDArray) -> NDArray:
+        """Transfer array to CPU numpy. No-op if already numpy."""
+        if self.xp is not np:
+            return self.xp.asnumpy(arr)
+        return arr
+
     @property
     def air_map(self) -> NDArray[np.int64]:
         """Returns the air map.
@@ -823,15 +817,10 @@ class MediumExponentialAttenuation:
         return coords_to_map(self.air_coords, grid_shape=grid_shape, is_3d=self.is_3d)
 
     @property
-    def bulk_modulus(self) -> NDArray[np.float64]:
-        """Return the bulk_modulus."""
-        xp = getattr(self, "xp", np)
-        if xp is not np:
-            c_gpu = xp.asarray(self.sound_speed)
-            rho_gpu = xp.asarray(self.density)
-            result = c_gpu * c_gpu * rho_gpu
-            return xp.asnumpy(result)
-        return np.multiply(self.sound_speed**2, self.density)
+    def bulk_modulus(self) -> NDArray:
+        """Return the bulk_modulus (stays on same device as source arrays)."""
+        xp = self.xp
+        return xp.multiply(self.sound_speed**2, self.density)
 
     @property
     def n_coords_zero(self) -> int:
@@ -1046,11 +1035,12 @@ class Medium:
         self.is_3d = grid.is_3d
         self.dtype = np.dtype(dtype)
 
-        self.sound_speed = sound_speed
-        self.density = density
-        self.alpha_coeff = alpha_coeff
-        self.alpha_power = alpha_power
-        self.beta = beta
+        xp = self.xp
+        self.sound_speed = xp.atleast_2d(xp.asarray(sound_speed)).astype(self.dtype, copy=False)
+        self.density = xp.atleast_2d(xp.asarray(density)).astype(self.dtype, copy=False)
+        self.alpha_coeff = xp.atleast_2d(xp.asarray(alpha_coeff)).astype(self.dtype, copy=False)
+        self.alpha_power = xp.atleast_2d(xp.asarray(alpha_power)).astype(self.dtype, copy=False)
+        self.beta = xp.atleast_2d(xp.asarray(beta)).astype(self.dtype, copy=False)
 
         if air_coords is not None:
             if air_map is not None:
@@ -1078,17 +1068,8 @@ class Medium:
 
         self.attenuation_builder = attenuation_builder
         self.n_jobs = n_jobs
-        self.__post_init__()
         self.check_fields()
         logger.debug("Medium instance created.")
-
-    def __post_init__(self) -> None:
-        """Post-initialization processing for Medium."""
-        self.sound_speed = np.atleast_2d(self.sound_speed).astype(self.dtype, copy=False)
-        self.density = np.atleast_2d(self.density).astype(self.dtype, copy=False)
-        self.alpha_coeff = np.atleast_2d(self.alpha_coeff).astype(self.dtype, copy=False)
-        self.alpha_power = np.atleast_2d(self.alpha_power).astype(self.dtype, copy=False)
-        self.beta = np.atleast_2d(self.beta).astype(self.dtype, copy=False)
 
     def check_fields(self) -> None:
         """Check if the fields have the correct shape."""
@@ -1126,16 +1107,17 @@ class Medium:
             return np.zeros(grid_shape, dtype=int)
         return coords_to_map(self.air_coords, grid_shape=grid_shape, is_3d=self.is_3d)
 
+    def _to_numpy(self, arr: NDArray) -> NDArray:
+        """Transfer array to CPU numpy. No-op if already numpy."""
+        if self.xp is not np:
+            return self.xp.asnumpy(arr)
+        return arr
+
     @property
-    def bulk_modulus(self) -> NDArray[np.float64]:
-        """Return the bulk_modulus."""
-        xp = getattr(self, "xp", np)
-        if xp is not np:
-            c_gpu = xp.asarray(self.sound_speed)
-            rho_gpu = xp.asarray(self.density)
-            result = c_gpu * c_gpu * rho_gpu
-            return xp.asnumpy(result)
-        return np.multiply(self.sound_speed**2, self.density)
+    def bulk_modulus(self) -> NDArray:
+        """Return the bulk_modulus (stays on same device as source arrays)."""
+        xp = self.xp
+        return xp.multiply(self.sound_speed**2, self.density)
 
     @property
     def n_coords_zero(self) -> int:
@@ -1161,6 +1143,7 @@ class Medium:
         dpi: int = 300,
     ) -> None:
         """Plot the medium fields using matplotlib."""
+        _np = self._to_numpy
         if self.is_3d:
             plt.close("all")
             _, axes = plt.subplots(2, 6, figsize=figsize)
@@ -1168,16 +1151,16 @@ class Medium:
             for ax, map_data, title in zip(
                 axes.flatten(),
                 [
-                    self.sound_speed[:, :, self.grid.nz // 2],
-                    self.sound_speed[:, self.grid.ny // 2, :],
-                    self.density[:, :, self.grid.nz // 2],
-                    self.density[:, self.grid.ny // 2, :],
-                    self.alpha_coeff[:, :, self.grid.nz // 2],
-                    self.alpha_coeff[:, self.grid.ny // 2, :],
-                    self.alpha_power[:, :, self.grid.nz // 2],
-                    self.alpha_power[:, self.grid.ny // 2, :],
-                    self.beta[:, :, self.grid.nz // 2],
-                    self.beta[:, self.grid.ny // 2, :],
+                    _np(self.sound_speed[:, :, self.grid.nz // 2]),
+                    _np(self.sound_speed[:, self.grid.ny // 2, :]),
+                    _np(self.density[:, :, self.grid.nz // 2]),
+                    _np(self.density[:, self.grid.ny // 2, :]),
+                    _np(self.alpha_coeff[:, :, self.grid.nz // 2]),
+                    _np(self.alpha_coeff[:, self.grid.ny // 2, :]),
+                    _np(self.alpha_power[:, :, self.grid.nz // 2]),
+                    _np(self.alpha_power[:, self.grid.ny // 2, :]),
+                    _np(self.beta[:, :, self.grid.nz // 2]),
+                    _np(self.beta[:, self.grid.ny // 2, :]),
                     self.air_map[:, :, self.grid.nz // 2],
                     self.air_map[:, self.grid.ny // 2, :],
                 ],
@@ -1216,11 +1199,11 @@ class Medium:
             for ax, map_data, title in zip(
                 axes.flatten(),
                 [
-                    self.sound_speed,
-                    self.density,
-                    self.alpha_coeff,
-                    self.alpha_power,
-                    self.beta,
+                    _np(self.sound_speed),
+                    _np(self.density),
+                    _np(self.alpha_coeff),
+                    _np(self.alpha_power),
+                    _np(self.beta),
                     self.air_map,
                 ],
                 [
@@ -1285,11 +1268,15 @@ class Medium:
 
         """
         logger.debug("Building MediumRelaxationMaps from alpha and power maps.")
+        xp = self.xp
+        # generate_relaxation_params uses Numba and requires numpy arrays
+        alpha_coeff_np = xp.asnumpy(self.alpha_coeff) if xp is not np else self.alpha_coeff
+        alpha_power_np = xp.asnumpy(self.alpha_power) if xp is not np else self.alpha_power
         if self.attenuation_builder == "lookup":
             relaxation_param_dict = generate_relaxation_params(
                 n_relaxation_mechanisms=self.n_relaxation_mechanisms,
-                alpha_coeff=self.alpha_coeff,
-                alpha_power=self.alpha_power,
+                alpha_coeff=alpha_coeff_np,
+                alpha_power=alpha_power_np,
                 path_database=self.path_relaxation_parameters_database,
             )
         else:
@@ -1302,6 +1289,8 @@ class Medium:
             relaxation_param_dict = {
                 k: v.astype(self.dtype, copy=False) for k, v in relaxation_param_dict.items()
             }
+        # Convert relaxation params to GPU if needed (MediumRelaxationMaps will
+        # call xp.asarray on them in __init__)
         return MediumRelaxationMaps(
             grid=self.grid,
             sound_speed=self.sound_speed,
@@ -1342,9 +1331,9 @@ class Medium:
 
         xp = self.xp
         if xp is not np:
+            # alpha_coeff may already be a CuPy array; asarray is a no-op in that case
             alpha_gpu = xp.asarray(alpha_coeff)
-            result = xp.exp(att_factor_dt * alpha_gpu)
-            return xp.asnumpy(result)
+            return xp.exp(att_factor_dt * alpha_gpu)
         return ne.evaluate("exp(att * a)", local_dict={"a": alpha_coeff, "att": att_factor_dt})
 
     def build_exponential(self) -> MediumExponentialAttenuation:
@@ -1388,19 +1377,20 @@ class Medium:
             A string summarizing the Medium properties.
 
         """
+        xp = self.xp
         return (
             f"Medium: \n"
             f"  Grid: {self.grid}\n"
             "\n"
-            f"  Sound speed: min={np.min(self.sound_speed):.2f}, "
-            f"max={np.max(self.sound_speed):.2f}\n"
-            f"  Density: min={np.min(self.density):.2f}, "
-            f"max={np.max(self.density):.2f}\n"
-            f"  Alpha coeff: min={np.min(self.alpha_coeff):.2f}, "
-            f"max={np.max(self.alpha_coeff):.2f}\n"
-            f"  Alpha power: min={np.min(self.alpha_power):.2f}, "
-            f"max={np.max(self.alpha_power):.2f}\n"
-            f"  Beta: min={np.min(self.beta):.2f}, max={np.max(self.beta):.2f}\n"
+            f"  Sound speed: min={float(xp.min(self.sound_speed)):.2f}, "
+            f"max={float(xp.max(self.sound_speed)):.2f}\n"
+            f"  Density: min={float(xp.min(self.density)):.2f}, "
+            f"max={float(xp.max(self.density)):.2f}\n"
+            f"  Alpha coeff: min={float(xp.min(self.alpha_coeff)):.2f}, "
+            f"max={float(xp.max(self.alpha_coeff)):.2f}\n"
+            f"  Alpha power: min={float(xp.min(self.alpha_power)):.2f}, "
+            f"max={float(xp.max(self.alpha_power)):.2f}\n"
+            f"  Beta: min={float(xp.min(self.beta)):.2f}, max={float(xp.max(self.beta)):.2f}\n"
             f"  Number of air coords: {self.n_air}\n"
             f"  Attenuation builder: {self.attenuation_builder}\n"
         )

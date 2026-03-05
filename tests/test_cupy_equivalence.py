@@ -66,6 +66,13 @@ class DummyGrid3D:
         self.is_3d = True
 
 
+def _to_np(arr):
+    """Convert CuPy array to numpy; no-op for numpy arrays."""
+    if isinstance(arr, np.ndarray):
+        return arr
+    return arr.get()
+
+
 def _dummy_check_functions():
     return type(
         "dummy",
@@ -130,7 +137,7 @@ class TestMediumCupyEquivalence:
         cpu_result = cpu._db_mhz_cm_to_a_exp(cpu.alpha_coeff)
         gpu_result = gpu._db_mhz_cm_to_a_exp(gpu.alpha_coeff)
 
-        np.testing.assert_allclose(gpu_result, cpu_result, rtol=1e-12)
+        np.testing.assert_allclose(_to_np(gpu_result), cpu_result, rtol=1e-12)
 
     def test_db_mhz_cm_to_a_exp_3d(self):
         shape = (16, 16, 16)
@@ -140,7 +147,7 @@ class TestMediumCupyEquivalence:
         cpu_result = cpu._db_mhz_cm_to_a_exp(cpu.alpha_coeff)
         gpu_result = gpu._db_mhz_cm_to_a_exp(gpu.alpha_coeff)
 
-        np.testing.assert_allclose(gpu_result, cpu_result, rtol=1e-12)
+        np.testing.assert_allclose(_to_np(gpu_result), cpu_result, rtol=1e-12)
 
 
 class TestMediumRelaxationMapsCupyEquivalence:
@@ -182,7 +189,7 @@ class TestMediumRelaxationMapsCupyEquivalence:
 
         for key in cpu.relaxation_param_dict:
             np.testing.assert_allclose(
-                gpu.relaxation_param_dict[key],
+                _to_np(gpu.relaxation_param_dict[key]),
                 cpu.relaxation_param_dict[key],
                 rtol=1e-10,
                 err_msg=f"relaxation_param_dict[{key}] mismatch",
@@ -195,7 +202,7 @@ class TestMediumRelaxationMapsCupyEquivalence:
 
         for key in cpu.relaxation_param_dict_for_fw2:
             np.testing.assert_allclose(
-                gpu.relaxation_param_dict_for_fw2[key],
+                _to_np(gpu.relaxation_param_dict_for_fw2[key]),
                 cpu.relaxation_param_dict_for_fw2[key],
                 rtol=1e-10,
                 err_msg=f"relaxation_param_dict_for_fw2[{key}] mismatch",
@@ -215,8 +222,8 @@ class TestMediumRelaxationMapsCupyEquivalence:
         a_cpu, b_cpu = cpu._calc_a_and_b(dx, kappa, alpha, dt)
         a_gpu, b_gpu = gpu._calc_a_and_b(dx, kappa, alpha, dt)
 
-        np.testing.assert_allclose(a_gpu, a_cpu, rtol=1e-12)
-        np.testing.assert_allclose(b_gpu, b_cpu, rtol=1e-12)
+        np.testing.assert_allclose(_to_np(a_gpu), a_cpu, rtol=1e-12)
+        np.testing.assert_allclose(_to_np(b_gpu), b_cpu, rtol=1e-12)
 
 
 # ---------------------------------------------------------------------------
@@ -299,7 +306,7 @@ class TestPMLBuilderCupyEquivalence:
         cpu_result = cpu._extend_map_for_pml(arr.copy(), fill_edge=True)
         gpu_result = gpu._extend_map_for_pml(arr.copy(), fill_edge=True)
 
-        np.testing.assert_allclose(gpu_result, cpu_result, rtol=1e-14)
+        np.testing.assert_allclose(_to_np(gpu_result), cpu_result, rtol=1e-14)
 
     def test_extend_map_for_pml_2d_zero_fill(self, setup_2d):
         grid, medium, source, sensor = setup_2d
@@ -311,7 +318,7 @@ class TestPMLBuilderCupyEquivalence:
         cpu_result = cpu._extend_map_for_pml(arr.copy(), fill_edge=False)
         gpu_result = gpu._extend_map_for_pml(arr.copy(), fill_edge=False)
 
-        np.testing.assert_allclose(gpu_result, cpu_result, rtol=1e-14)
+        np.testing.assert_allclose(_to_np(gpu_result), cpu_result, rtol=1e-14)
 
     def test_apply_transition_and_pml_2d(self, setup_2d):
         grid, medium, source, sensor = setup_2d
@@ -340,7 +347,7 @@ class TestPMLBuilderCupyEquivalence:
                     is_3d=False,
                 )
                 np.testing.assert_allclose(
-                    gpu_result,
+                    _to_np(gpu_result),
                     cpu_result,
                     rtol=1e-12,
                     err_msg=f"axis={axis}, transition_type={transition_type}",
@@ -360,8 +367,8 @@ class TestPMLBuilderCupyEquivalence:
         a_cpu, b_cpu = cpu._calc_a_and_b(dx, kappa, alpha, dt)
         a_gpu, b_gpu = gpu._calc_a_and_b(dx, kappa, alpha, dt)
 
-        np.testing.assert_allclose(a_gpu, a_cpu, rtol=1e-12)
-        np.testing.assert_allclose(b_gpu, b_cpu, rtol=1e-12)
+        np.testing.assert_allclose(_to_np(a_gpu), a_cpu, rtol=1e-12)
+        np.testing.assert_allclose(_to_np(b_gpu), b_cpu, rtol=1e-12)
 
     def test_extended_medium_identical(self, setup_2d):
         """The extended medium (after __init__) should be identical CPU vs GPU."""
@@ -369,27 +376,27 @@ class TestPMLBuilderCupyEquivalence:
         cpu, gpu = self._make_pml_pair(grid, medium, source, sensor)
 
         np.testing.assert_allclose(
-            gpu.extended_medium.sound_speed,
+            _to_np(gpu.extended_medium.sound_speed),
             cpu.extended_medium.sound_speed,
             rtol=1e-14,
         )
         np.testing.assert_allclose(
-            gpu.extended_medium.density,
+            _to_np(gpu.extended_medium.density),
             cpu.extended_medium.density,
             rtol=1e-14,
         )
         np.testing.assert_allclose(
-            gpu.extended_medium.alpha_coeff,
+            _to_np(gpu.extended_medium.alpha_coeff),
             cpu.extended_medium.alpha_coeff,
             rtol=1e-14,
         )
         np.testing.assert_allclose(
-            gpu.extended_medium.alpha_power,
+            _to_np(gpu.extended_medium.alpha_power),
             cpu.extended_medium.alpha_power,
             rtol=1e-14,
         )
         np.testing.assert_allclose(
-            gpu.extended_medium.beta,
+            _to_np(gpu.extended_medium.beta),
             cpu.extended_medium.beta,
             rtol=1e-14,
         )
@@ -460,7 +467,7 @@ class TestPMLBuilderExponentialAttenuationCupyEquivalence:
         cpu_mask = cpu._mask_body_2d(nx, ny, cpu.num_boundary_points)
         gpu_mask = gpu._mask_body_2d(nx, ny, gpu.num_boundary_points)
 
-        np.testing.assert_allclose(gpu_mask, cpu_mask, rtol=1e-5, atol=1e-7)
+        np.testing.assert_allclose(_to_np(gpu_mask), cpu_mask, rtol=1e-5, atol=1e-7)
 
     def test_extended_medium_identical(self, setup_2d):
         grid, medium, source, sensor = setup_2d
@@ -480,12 +487,12 @@ class TestPMLBuilderExponentialAttenuationCupyEquivalence:
         )
 
         np.testing.assert_allclose(
-            gpu.extended_medium.sound_speed,
+            _to_np(gpu.extended_medium.sound_speed),
             cpu.extended_medium.sound_speed,
             rtol=1e-14,
         )
         np.testing.assert_allclose(
-            gpu.extended_medium.density,
+            _to_np(gpu.extended_medium.density),
             cpu.extended_medium.density,
             rtol=1e-14,
         )
@@ -511,23 +518,23 @@ class TestPMLBuilderExponentialAttenuationCupyEquivalence:
         gpu_result = gpu_builder.run(use_pml=True)
 
         np.testing.assert_allclose(
-            gpu_result.sound_speed,
+            _to_np(gpu_result.sound_speed),
             cpu_result.sound_speed,
             rtol=1e-12,
         )
         np.testing.assert_allclose(
-            gpu_result.density,
+            _to_np(gpu_result.density),
             cpu_result.density,
             rtol=1e-12,
         )
         np.testing.assert_allclose(
-            gpu_result.alpha_exp,
+            _to_np(gpu_result.alpha_exp),
             cpu_result.alpha_exp,
             rtol=1e-5,
             atol=1e-7,
         )
         np.testing.assert_allclose(
-            gpu_result.beta,
+            _to_np(gpu_result.beta),
             cpu_result.beta,
             rtol=1e-12,
         )
@@ -570,14 +577,14 @@ class TestMediumExponentialAttenuationCupyEquivalence:
         grid = DummyGrid2D(nx=shape[0], ny=shape[1])
         cpu, gpu = self._make_pair(shape, grid)
 
-        np.testing.assert_allclose(gpu.bulk_modulus, cpu.bulk_modulus, rtol=1e-12)
+        np.testing.assert_allclose(_to_np(gpu.bulk_modulus), cpu.bulk_modulus, rtol=1e-12)
 
     def test_bulk_modulus_3d(self):
         shape = (16, 16, 16)
         grid = DummyGrid3D(nx=shape[0], ny=shape[1], nz=shape[2])
         cpu, gpu = self._make_pair(shape, grid)
 
-        np.testing.assert_allclose(gpu.bulk_modulus, cpu.bulk_modulus, rtol=1e-12)
+        np.testing.assert_allclose(_to_np(gpu.bulk_modulus), cpu.bulk_modulus, rtol=1e-12)
 
 
 class TestMediumRelaxationMapsBulkModulusCupyEquivalence:
@@ -612,7 +619,7 @@ class TestMediumRelaxationMapsBulkModulusCupyEquivalence:
             {k: v.copy() for k, v in relax.items()},
             use_gpu=True,
         )
-        np.testing.assert_allclose(gpu.bulk_modulus, cpu.bulk_modulus, rtol=1e-12)
+        np.testing.assert_allclose(_to_np(gpu.bulk_modulus), cpu.bulk_modulus, rtol=1e-12)
 
 
 class TestInputFileWriterCupyEquivalence:
@@ -702,7 +709,7 @@ class TestInputFileWriterCupyEquivalence:
             use_exponential_attenuation=True,
             use_gpu=True,
         )
-        np.testing.assert_array_equal(gpu_writer._dc_map, cpu_writer._dc_map)
+        np.testing.assert_array_equal(_to_np(gpu_writer._dc_map), cpu_writer._dc_map)
 
 
 class TestPMLBuilderRelaxationCupyEquivalence:
@@ -759,18 +766,18 @@ class TestPMLBuilderRelaxationCupyEquivalence:
         gpu = PMLBuilder(grid, medium, source, sensor, use_gpu=True)
 
         np.testing.assert_allclose(
-            gpu.extended_medium.sound_speed,
+            _to_np(gpu.extended_medium.sound_speed),
             cpu.extended_medium.sound_speed,
             rtol=1e-14,
         )
         np.testing.assert_allclose(
-            gpu.extended_medium.density,
+            _to_np(gpu.extended_medium.density),
             cpu.extended_medium.density,
             rtol=1e-14,
         )
         for key in cpu.extended_medium.relaxation_param_dict:
             np.testing.assert_allclose(
-                gpu.extended_medium.relaxation_param_dict[key],
+                _to_np(gpu.extended_medium.relaxation_param_dict[key]),
                 cpu.extended_medium.relaxation_param_dict[key],
                 rtol=1e-10,
                 err_msg=f"extended relaxation_param_dict[{key}] mismatch",
@@ -785,18 +792,18 @@ class TestPMLBuilderRelaxationCupyEquivalence:
         gpu_result = gpu_builder.run(use_pml=True)
 
         np.testing.assert_allclose(
-            gpu_result.sound_speed,
+            _to_np(gpu_result.sound_speed),
             cpu_result.sound_speed,
             rtol=1e-12,
         )
         np.testing.assert_allclose(
-            gpu_result.density,
+            _to_np(gpu_result.density),
             cpu_result.density,
             rtol=1e-12,
         )
         for key in cpu_result.relaxation_param_dict_for_fw2:
             np.testing.assert_allclose(
-                gpu_result.relaxation_param_dict_for_fw2[key],
+                _to_np(gpu_result.relaxation_param_dict_for_fw2[key]),
                 cpu_result.relaxation_param_dict_for_fw2[key],
                 rtol=1e-10,
                 err_msg=f"run() relaxation_param_dict_for_fw2[{key}] mismatch",
