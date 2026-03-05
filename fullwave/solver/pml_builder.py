@@ -288,20 +288,21 @@ class PMLBuilder:
             relax_attrs = list(self.medium_org.relaxation_param_dict.keys())
 
             if self.xp is not np:
-                # Move medium + relaxation arrays to CPU, then extend via multi-GPU
-                named_arrays = self._ensure_numpy_medium_arrays(base_attrs)
+                # Pass CuPy arrays directly — multi-GPU extension uses D2D copy (NVLink)
+                named_arrays = [(name, getattr(self.medium_org, name)) for name in base_attrs]
+                named_arrays += [
+                    (key, self.medium_org.relaxation_param_dict[key]) for key in relax_attrs
+                ]
+                extended = self._extend_arrays_gpu(named_arrays)
+                # Free original GPU arrays to reclaim memory
+                self._ensure_numpy_medium_arrays(base_attrs)
                 for key in relax_attrs:
                     import cupy as cp  # noqa: PLC0415
 
                     val = self.medium_org.relaxation_param_dict[key]
                     if not isinstance(val, np.ndarray):
-                        val_np = cp.asnumpy(val)
-                        self.medium_org.relaxation_param_dict[key] = val_np
-                    else:
-                        val_np = val
-                    named_arrays.append((key, val_np))
+                        self.medium_org.relaxation_param_dict[key] = cp.asnumpy(val)
                 cp.get_default_memory_pool().free_all_blocks()
-                extended = self._extend_arrays_gpu(named_arrays)
             else:
                 named_arrays = [(name, getattr(self.medium_org, name)) for name in base_attrs] + [
                     (key, self.medium_org.relaxation_param_dict[key]) for key in relax_attrs
@@ -326,8 +327,9 @@ class PMLBuilder:
         else:
             attr_names = ["sound_speed", "density", "beta", "alpha_coeff", "alpha_power"]
             if self.xp is not np:
-                named_arrays = self._ensure_numpy_medium_arrays(attr_names)
+                named_arrays = [(name, getattr(self.medium_org, name)) for name in attr_names]
                 extended = self._extend_arrays_gpu(named_arrays)
+                self._ensure_numpy_medium_arrays(attr_names)
             else:
                 named_arrays = [(name, getattr(self.medium_org, name)) for name in attr_names]
                 extended = self._extend_arrays_cpu(named_arrays)
@@ -617,17 +619,22 @@ class PMLBuilder:
 
         Each thread sets its own CUDA device, transfers data, extends,
         and returns the result as a numpy array.
+        Accepts both numpy and CuPy input arrays. CuPy arrays are copied
+        device-to-device via NVLink when available (faster than PCIe).
         """
         import cupy as cp  # noqa: PLC0415
 
         def extend_on_device(
             args: tuple[str, NDArray, int],
         ) -> tuple[str, NDArray]:
-            name, arr_np, device_id = args
+            name, arr, device_id = args
             with cp.cuda.Device(device_id):
-                result_gpu = self._extend_map_for_pml(arr_np)
+                # cp.asarray handles both numpy (H2D) and CuPy from
+                # another device (D2D via NVLink when available)
+                arr_local = cp.asarray(arr)
+                result_gpu = self._extend_map_for_pml(arr_local)
                 result_np = cp.asnumpy(result_gpu)
-                del result_gpu
+                del arr_local, result_gpu
                 cp.get_default_memory_pool().free_all_blocks()
                 return name, result_np
 
@@ -1831,8 +1838,10 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
         logger.debug("building extended medium for pml...")
         attr_names = ["sound_speed", "density", "beta", "alpha_coeff", "alpha_power"]
         if self.xp is not np:
-            named_arrays = self._ensure_numpy_medium_arrays(attr_names)
+            named_arrays = [(name, getattr(self.medium_org, name)) for name in attr_names]
             extended = self._extend_arrays_gpu(named_arrays)
+            # Free original GPU arrays and replace with numpy to reclaim GPU memory
+            self._ensure_numpy_medium_arrays(attr_names)
         else:
             named_arrays = [(name, getattr(self.medium_org, name)) for name in attr_names]
             extended = self._extend_arrays_cpu(named_arrays)

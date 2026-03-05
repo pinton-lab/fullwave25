@@ -64,6 +64,98 @@ def _cleanup_gpu_arrays(obj: object, attr_names: list[str]) -> None:
         pass
 
 
+def _upload_arrays_multi_gpu(
+    named_arrays: list[tuple[str, np.ndarray]],
+    dtype: np.dtype,
+    target_device: int = 0,
+) -> dict[str, object]:
+    """Upload numpy arrays to *target_device* using parallel PCIe via multiple GPUs.
+
+    Each array is first transferred to a different GPU (one per PCIe link),
+    then copied to *target_device* via peer-to-peer (NVLink when available).
+
+    Parameters
+    ----------
+    named_arrays
+        List of (name, numpy_array) pairs to upload.
+    dtype
+        Target CuPy dtype for the arrays.
+    target_device
+        CUDA device ID where all arrays should end up (default 0).
+
+    Returns
+    -------
+    dict mapping name -> CuPy array on *target_device*.
+
+    """
+    from concurrent.futures import as_completed  # noqa: PLC0415
+
+    import cupy as cp  # noqa: PLC0415
+
+    n_gpus = cp.cuda.runtime.getDeviceCount()
+    n_arrays = len(named_arrays)
+    n_workers = min(n_gpus, n_arrays)
+    results: dict[str, object] = {}
+
+    logger.info(
+        "Uploading %d arrays to GPU using %d devices (of %d available).",
+        n_arrays,
+        n_workers,
+        n_gpus,
+    )
+
+    def _upload_one(name: str, arr_np: np.ndarray, device_id: int) -> tuple[str, object]:
+        with cp.cuda.Device(device_id):
+            gpu_arr = cp.asarray(arr_np, dtype=dtype)
+            if device_id != target_device:
+                with cp.cuda.Device(target_device):
+                    result = cp.array(gpu_arr)
+                del gpu_arr
+                cp.get_default_memory_pool().free_all_blocks()
+                return name, result
+            return name, gpu_arr
+
+    with ThreadPoolExecutor(max_workers=n_workers) as executor:
+        futures = [
+            executor.submit(_upload_one, name, arr, i % n_gpus)
+            for i, (name, arr) in enumerate(named_arrays)
+        ]
+        for future in as_completed(futures):
+            name, result = future.result()
+            results[name] = result
+
+    return results
+
+
+def _upload_or_convert_arrays(
+    xp: object,
+    dtype: np.dtype,
+    named_arrays: list[tuple[str, np.ndarray]],
+) -> dict[str, object]:
+    """Upload arrays to GPU (multi-GPU if available) or convert with numpy/cupy.
+
+    Returns dict mapping name -> array on the target backend.
+    """
+    if xp is np:
+        return {
+            name: np.atleast_2d(np.asarray(arr)).astype(dtype, copy=False)
+            for name, arr in named_arrays
+        }
+
+    sample_arr = np.asarray(named_arrays[0][1])
+    if sample_arr.ndim >= 3 and _check_cupy():
+        import cupy as cp  # noqa: PLC0415
+
+        n_gpus = cp.cuda.runtime.getDeviceCount()
+        if n_gpus > 1:
+            np_arrays = [(name, np.atleast_2d(np.asarray(arr))) for name, arr in named_arrays]
+            return _upload_arrays_multi_gpu(np_arrays, dtype)
+
+    return {
+        name: xp.atleast_2d(xp.asarray(arr)).astype(dtype, copy=False) for name, arr in named_arrays
+    }
+
+
 @dataclass
 class MediumRelaxationMaps:
     """Medium class for Fullwave."""
@@ -793,24 +885,28 @@ class MediumExponentialAttenuation:
         self.dtype = np.dtype(dtype)
 
         xp = self.xp
+        attr_names = ["sound_speed", "density", "alpha_exp", "beta"]
+        named_inputs = [
+            ("sound_speed", sound_speed),
+            ("density", density),
+            ("alpha_exp", alpha_exp),
+            ("beta", beta),
+        ]
         try:
-            self.sound_speed = xp.atleast_2d(xp.asarray(sound_speed)).astype(self.dtype, copy=False)
-            self.density = xp.atleast_2d(xp.asarray(density)).astype(self.dtype, copy=False)
-            self.alpha_exp = xp.atleast_2d(xp.asarray(alpha_exp)).astype(self.dtype, copy=False)
-            self.beta = xp.atleast_2d(xp.asarray(beta)).astype(self.dtype, copy=False)
+            gpu_arrays = _upload_or_convert_arrays(xp, self.dtype, named_inputs)
+            for name in attr_names:
+                setattr(self, name, gpu_arrays[name])
         except Exception:
             if xp is np:
                 raise
             logger.warning(
                 "GPU OOM in MediumExponentialAttenuation.__init__. Falling back to CPU (numpy)."
             )
-            _cleanup_gpu_arrays(self, ["sound_speed", "density", "alpha_exp", "beta"])
+            _cleanup_gpu_arrays(self, attr_names)
             self.xp = np
-            xp = np
-            self.sound_speed = np.atleast_2d(np.asarray(sound_speed)).astype(self.dtype, copy=False)
-            self.density = np.atleast_2d(np.asarray(density)).astype(self.dtype, copy=False)
-            self.alpha_exp = np.atleast_2d(np.asarray(alpha_exp)).astype(self.dtype, copy=False)
-            self.beta = np.atleast_2d(np.asarray(beta)).astype(self.dtype, copy=False)
+            gpu_arrays = _upload_or_convert_arrays(np, self.dtype, named_inputs)
+            for name in attr_names:
+                setattr(self, name, gpu_arrays[name])
 
         if air_coords is not None:
             if air_map is not None:
@@ -1085,26 +1181,27 @@ class Medium:
         self.dtype = np.dtype(dtype)
 
         xp = self.xp
+        attr_names = ["sound_speed", "density", "alpha_coeff", "alpha_power", "beta"]
+        named_inputs = [
+            ("sound_speed", sound_speed),
+            ("density", density),
+            ("alpha_coeff", alpha_coeff),
+            ("alpha_power", alpha_power),
+            ("beta", beta),
+        ]
         try:
-            self.sound_speed = xp.atleast_2d(xp.asarray(sound_speed)).astype(self.dtype, copy=False)
-            self.density = xp.atleast_2d(xp.asarray(density)).astype(self.dtype, copy=False)
-            self.alpha_coeff = xp.atleast_2d(xp.asarray(alpha_coeff)).astype(self.dtype, copy=False)
-            self.alpha_power = xp.atleast_2d(xp.asarray(alpha_power)).astype(self.dtype, copy=False)
-            self.beta = xp.atleast_2d(xp.asarray(beta)).astype(self.dtype, copy=False)
+            gpu_arrays = _upload_or_convert_arrays(xp, self.dtype, named_inputs)
+            for name in attr_names:
+                setattr(self, name, gpu_arrays[name])
         except Exception:
             if xp is np:
                 raise
             logger.warning("GPU OOM in Medium.__init__. Falling back to CPU (numpy).")
-            _cleanup_gpu_arrays(
-                self, ["sound_speed", "density", "alpha_coeff", "alpha_power", "beta"]
-            )
+            _cleanup_gpu_arrays(self, attr_names)
             self.xp = np
-            xp = np
-            self.sound_speed = np.atleast_2d(np.asarray(sound_speed)).astype(self.dtype, copy=False)
-            self.density = np.atleast_2d(np.asarray(density)).astype(self.dtype, copy=False)
-            self.alpha_coeff = np.atleast_2d(np.asarray(alpha_coeff)).astype(self.dtype, copy=False)
-            self.alpha_power = np.atleast_2d(np.asarray(alpha_power)).astype(self.dtype, copy=False)
-            self.beta = np.atleast_2d(np.asarray(beta)).astype(self.dtype, copy=False)
+            gpu_arrays = _upload_or_convert_arrays(np, self.dtype, named_inputs)
+            for name in attr_names:
+                setattr(self, name, gpu_arrays[name])
 
         if air_coords is not None:
             if air_map is not None:
