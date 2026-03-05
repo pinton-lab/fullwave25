@@ -1,15 +1,17 @@
 """Medium class for Fullwave."""
 
+from __future__ import annotations
+
 import logging
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as plt
 import numexpr as ne
 import numpy as np
-from numpy.typing import NDArray
 
 from fullwave import Grid
 from fullwave.solver.utils import initialize_relaxation_param_dict
@@ -17,7 +19,36 @@ from fullwave.utils import check_functions, plot_utils
 from fullwave.utils.coordinates import coords_to_map, map_to_coords
 from fullwave.utils.relaxation_parameters import generate_relaxation_params
 
+if TYPE_CHECKING:
+    from types import ModuleType
+
+    from numpy.typing import NDArray
+
 logger = logging.getLogger("__main__." + __name__)
+
+_CUPY_AVAILABLE: bool | None = None
+
+
+def _check_cupy() -> bool:
+    """Return True if CuPy is importable; result is cached after the first call."""
+    global _CUPY_AVAILABLE  # noqa: PLW0603
+    if _CUPY_AVAILABLE is None:
+        try:
+            import cupy  # noqa: F401, PLC0415
+
+            _CUPY_AVAILABLE = True
+        except ImportError:
+            _CUPY_AVAILABLE = False
+    return _CUPY_AVAILABLE
+
+
+def _get_array_module(*, use_gpu: bool) -> ModuleType:
+    """Return ``cupy`` when *use_gpu* is True and CuPy is available, else ``numpy``."""
+    if use_gpu and _check_cupy():
+        import cupy  # noqa: PLC0415
+
+        return cupy
+    return np
 
 
 @dataclass
@@ -47,6 +78,7 @@ class MediumRelaxationMaps:
         use_isotropic_relaxation: bool = True,
         n_jobs: int = -1,
         dtype: type = np.float64,
+        use_gpu: bool = False,
     ) -> None:
         """Medium class for Fullwave.
 
@@ -91,6 +123,9 @@ class MediumRelaxationMaps:
         dtype : type, optional
             Data type for medium arrays. Default is np.float64.
             Use np.float32 to reduce Python-side memory usage by ~50%.
+        use_gpu : bool, optional
+            If True, use CuPy for GPU-accelerated computation (default is False).
+            Requires CuPy to be installed. Falls back to CPU if CuPy is unavailable.
 
         """
         check_functions.check_compatible_value(
@@ -98,6 +133,15 @@ class MediumRelaxationMaps:
             [2],
             "Only n_relaxation_mechanisms=2 are supported currently.",
         )
+        self.use_gpu = use_gpu
+        self.xp: ModuleType = _get_array_module(use_gpu=use_gpu)
+        if self.xp is not np:
+            logger.info("MediumRelaxationMaps: using CuPy GPU backend")
+        elif use_gpu:
+            logger.warning(
+                "MediumRelaxationMaps: use_gpu=True but CuPy is not available. "
+                "Falling back to CPU (numpy)."
+            )
         self.n_relaxation_mechanisms = n_relaxation_mechanisms
         self.dtype = np.dtype(dtype)
         self.relaxation_param_dict = initialize_relaxation_param_dict(
@@ -169,7 +213,10 @@ class MediumRelaxationMaps:
         # SIMD/cache-friendly pass over contiguous arrays.
         # x1 and x2 directions are independent, so run in parallel threads
         # (numpy/numexpr release the GIL during computation).
-        def _sort_by_time_const(
+        xp = self.xp
+        use_gpu = xp is not np
+
+        def _sort_by_time_const_cpu(
             d_arrays: list[NDArray[np.float64]],
             a_arrays: list[NDArray[np.float64]],
             kappa: NDArray[np.float64],  # noqa: ARG001
@@ -184,11 +231,38 @@ class MediumRelaxationMaps:
                     a_arrays[i] = np.where(swap, aj, ai)
                     a_arrays[j] = np.where(swap, ai, aj)
 
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            fut_x1 = pool.submit(_sort_by_time_const, d_x1, a_x1, kappa_x1)
-            fut_x2 = pool.submit(_sort_by_time_const, d_x2, a_x2, kappa_x2)
-            fut_x1.result()
-            fut_x2.result()
+        def _sort_by_time_const_gpu(
+            d_arrays: list,
+            a_arrays: list,
+            kappa: NDArray[np.float64],
+        ) -> None:
+            kappa_gpu = xp.asarray(kappa)
+            d_gpu = [xp.asarray(d) for d in d_arrays]
+            a_gpu = [xp.asarray(a) for a in a_arrays]
+            for i in range(n_nu):
+                for j in range(i + 1, n_nu):
+                    swap = d_gpu[i] / kappa_gpu + a_gpu[i] > d_gpu[j] / kappa_gpu + a_gpu[j]
+                    d_gpu[i], d_gpu[j] = (
+                        xp.where(swap, d_gpu[j], d_gpu[i]),
+                        xp.where(swap, d_gpu[i], d_gpu[j]),
+                    )
+                    a_gpu[i], a_gpu[j] = (
+                        xp.where(swap, a_gpu[j], a_gpu[i]),
+                        xp.where(swap, a_gpu[i], a_gpu[j]),
+                    )
+            for i in range(n_nu):
+                d_arrays[i] = xp.asnumpy(d_gpu[i])
+                a_arrays[i] = xp.asnumpy(a_gpu[i])
+
+        if use_gpu:
+            _sort_by_time_const_gpu(d_x1, a_x1, kappa_x1)
+            _sort_by_time_const_gpu(d_x2, a_x2, kappa_x2)
+        else:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                fut_x1 = pool.submit(_sort_by_time_const_cpu, d_x1, a_x1, kappa_x1)
+                fut_x2 = pool.submit(_sort_by_time_const_cpu, d_x2, a_x2, kappa_x2)
+                fut_x1.result()
+                fut_x2.result()
 
         # Write results into relaxation_param_dict
         param_dict = self.relaxation_param_dict
@@ -288,34 +362,43 @@ class MediumRelaxationMaps:
         """Return the number of air coordinates."""
         return self.air_coords.shape[0]
 
-    @staticmethod
     def _calc_a_and_b(
+        self,
         dx: float | NDArray[np.float64],
         kappa_x: float | NDArray[np.float64],
         alpha_x: float | NDArray[np.float64],
         dt: float | NDArray[np.float64],
         output_dtype: np.dtype | None = None,
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        dx = np.asarray(dx, dtype=np.float64)
-        kappa_x = np.asarray(kappa_x, dtype=np.float64)
-        alpha_x = np.asarray(alpha_x, dtype=np.float64)
-        dt = np.asarray(dt, dtype=np.float64)
+        xp = self.xp
+        use_gpu = xp is not np
 
-        eps = np.finfo(np.float64).eps  # noqa: F841
+        dx = xp.asarray(dx, dtype=xp.float64)
+        kappa_x = xp.asarray(kappa_x, dtype=xp.float64)
+        alpha_x = xp.asarray(alpha_x, dtype=xp.float64)
+        dt = xp.asarray(dt, dtype=xp.float64)
 
-        # b = exp(-(dx/kappa_x + alpha_x) * dt)
-        b = ne.evaluate("exp(-(dx/kappa_x + alpha_x) * dt)")
+        eps = xp.finfo(xp.float64).eps
 
-        # denom = kappa_x*(dx + kappa_x*alpha_x) + eps
-        denom = ne.evaluate("kappa_x*(dx + kappa_x*alpha_x) + eps")  # noqa: F841
+        if use_gpu:
+            b = xp.exp(-(dx / kappa_x + alpha_x) * dt)
+            denom = kappa_x * (dx + kappa_x * alpha_x) + eps
+            a = dx / denom * (b - 1)
+        else:
+            eps_local = eps  # noqa: F841
+            # b = exp(-(dx/kappa_x + alpha_x) * dt)
+            b = ne.evaluate("exp(-(dx/kappa_x + alpha_x) * dt)")
+            # denom = kappa_x*(dx + kappa_x*alpha_x) + eps
+            denom = ne.evaluate("kappa_x*(dx + kappa_x*alpha_x) + eps_local")
+            # a = dx/denom*(b - 1)
+            a = ne.evaluate("dx/denom*(b - 1)")
 
-        # a = dx/denom*(b - 1)
-        a = ne.evaluate("dx/denom*(b - 1)")
-
-        if output_dtype is not None and output_dtype != np.float64:
+        if output_dtype is not None and output_dtype != xp.float64:
             a = a.astype(output_dtype, copy=False)
             b = b.astype(output_dtype, copy=False)
 
+        if use_gpu:
+            return xp.asnumpy(a), xp.asnumpy(b)
         return a, b
 
     @staticmethod
@@ -582,7 +665,7 @@ class MediumRelaxationMaps:
         """
         return str(self)
 
-    def build(self) -> "MediumRelaxationMaps":
+    def build(self) -> MediumRelaxationMaps:
         """Build the MediumRelaxationMaps instance.
 
         It returns self for compatibility with Solver class.
@@ -859,6 +942,7 @@ class Medium:
         use_isotropic_relaxation: bool = True,
         n_jobs: int = -1,
         dtype: type = np.float64,
+        use_gpu: bool = False,
     ) -> None:
         """Medium class for Fullwave.
 
@@ -913,6 +997,9 @@ class Medium:
             Use np.float32 to reduce Python-side memory usage by ~50%.
             The CUDA solver reads all data as float32, so float32 storage
             avoids redundant conversion copies.
+        use_gpu : bool, optional
+            If True, use CuPy for GPU-accelerated computation (default is False).
+            Requires CuPy to be installed. Falls back to CPU if CuPy is unavailable.
 
         """
         check_functions.check_compatible_value(
@@ -922,6 +1009,14 @@ class Medium:
         )
         check_functions.check_instance(grid, Grid)
         check_functions.check_path_exists(path_relaxation_parameters_database)
+        self.use_gpu = use_gpu
+        self.xp: ModuleType = _get_array_module(use_gpu=use_gpu)
+        if self.xp is not np:
+            logger.info("Medium: using CuPy GPU backend")
+        elif use_gpu:
+            logger.warning(
+                "Medium: use_gpu=True but CuPy is not available. Falling back to CPU (numpy)."
+            )
         self.grid = grid
         self.is_3d = grid.is_3d
         self.dtype = np.dtype(dtype)
@@ -1187,6 +1282,7 @@ class Medium:
             use_isotropic_relaxation=self.use_isotropic_relaxation,
             n_jobs=self.n_jobs,
             dtype=self.dtype,
+            use_gpu=self.use_gpu,
         )
 
     def _db_mhz_cm_to_a_exp(
@@ -1213,7 +1309,11 @@ class Medium:
         f0 = self.grid.omega / (2.0 * np.pi * 1e6)  # scalar
         att_factor_dt = -self.grid.dt * 0.5 * f0 * self.grid.c0 / (1e-2 * np_factor)
 
-        # numexpr: exp(att_factor_dt * alpha_coeff)
+        xp = self.xp
+        if xp is not np:
+            alpha_gpu = xp.asarray(alpha_coeff)
+            result = xp.exp(att_factor_dt * alpha_gpu)
+            return xp.asnumpy(result)
         return ne.evaluate("exp(att * a)", local_dict={"a": alpha_coeff, "att": att_factor_dt})
 
     def build_exponential(self) -> MediumExponentialAttenuation:

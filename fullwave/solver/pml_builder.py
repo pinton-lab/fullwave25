@@ -343,6 +343,7 @@ class PMLBuilder:
                 n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
                 n_jobs=self.medium_org.n_jobs,
                 dtype=getattr(self.medium_org, "dtype", np.float64),
+                use_gpu=self.use_gpu,
             )
         else:
             if self.xp is not np:
@@ -393,6 +394,7 @@ class PMLBuilder:
                 attenuation_builder=self.medium_org.attenuation_builder,
                 n_jobs=self.medium_org.n_jobs,
                 dtype=getattr(self.medium_org, "dtype", np.float64),
+                use_gpu=self.use_gpu,
             )
         logger.debug("building extended medium for pml...done")
 
@@ -1751,6 +1753,7 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             path_relaxation_parameters_database=self.medium_org.path_relaxation_parameters_database,
             attenuation_builder=self.medium_org.attenuation_builder,
             dtype=getattr(self.medium_org, "dtype", np.float64),
+            use_gpu=self.use_gpu,
         )
         logger.debug("Extended medium for PML built successfully.")
 
@@ -1906,7 +1909,7 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             mmax = float(xp.sqrt(mask_sq.max()))
             if mmax > 0.0:
                 mask_sq = mask_sq / (mmax * mmax)
-            result = 1 - xp.sqrt(mask_sq)
+            result = xp.maximum(1 - xp.sqrt(mask_sq), 0)
             return xp.asnumpy(result)
 
         rx_np = rx  # noqa: F841
@@ -1915,7 +1918,8 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
         mmax = float(np.sqrt(mask_sq.max()))
         if mmax > 0.0:
             mask_sq = ne.evaluate("mask_sq / (mmax*mmax)")
-        return ne.evaluate("1 - sqrt(mask_sq)")
+        result = ne.evaluate("1 - sqrt(mask_sq)")
+        return np.maximum(result, 0)
 
     def _mask_body_3d(self, nx: int, ny: int, nz: int, n_body: int) -> NDArray[np.float32]:
         """Create a mask for the PML region.
@@ -1957,7 +1961,7 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             mmax = float(xp.sqrt(mask_sq.max()))
             if mmax > 0.0:
                 mask_sq = mask_sq / (mmax * mmax)
-            result = 1 - xp.sqrt(mask_sq)
+            result = xp.maximum(1 - xp.sqrt(mask_sq), 0)
             return xp.asnumpy(result)
 
         rx_np = rx  # noqa: F841
@@ -1973,7 +1977,8 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             mask_sq = ne.evaluate("mask_sq / (mmax*mmax)")
 
         # 4) final sqrt elementwise
-        return ne.evaluate("1 - sqrt(mask_sq)")
+        result = ne.evaluate("1 - sqrt(mask_sq)")
+        return np.maximum(result, 0)
 
     def _apply_pml_3d(
         self,
