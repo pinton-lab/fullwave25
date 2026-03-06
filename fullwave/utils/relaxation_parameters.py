@@ -247,6 +247,91 @@ def _map_parameters_search(
     return output_flat.reshape(*spatial_shape, n_params)
 
 
+def _map_parameters_search_gpu(
+    input_tensor: NDArray[np.float64],
+    look_up_table: NDArray[np.float64],
+    alpha_list: NDArray[np.float64],
+    power_list: NDArray[np.float64],
+    invalid_matrix: NDArray[np.bool_],
+) -> NDArray[np.float64]:
+    """GPU version of _map_parameters_search using CuPy searchsorted + fancy indexing.
+
+    Parameters
+    ----------
+    input_tensor : cp.ndarray
+        Input tensor with shape (..., 2) where last dim is (alpha, power).
+    look_up_table : NDArray[np.float64]
+        Precomputed parameter table shape (B1, B2, 4 * n_relaxation + 2).
+    alpha_list : NDArray[np.float64]
+        List of alpha values for the lookup table.
+    power_list : NDArray[np.float64]
+        List of power values for the lookup table.
+    invalid_matrix : NDArray[np.bool_]
+        Matrix indicating invalid (alpha, power) combinations.
+
+    Returns
+    -------
+    cp.ndarray
+        Output tensor with shape (..., 4 * n_relaxation + 2).
+
+    """
+    import cupy as cp  # noqa: PLC0415
+
+    logger.debug("Mapping parameters using CuPy GPU kernel.")
+    time_start = time.time()
+
+    spatial_shape = input_tensor.shape[:-1]
+
+    # Transfer small LUT arrays to GPU (these are tiny, ~KB)
+    alpha_sorted = cp.asarray(alpha_list[0].round(10))
+    power_sorted = cp.asarray(power_list[0].round(10))
+    lut_gpu = cp.asarray(look_up_table)
+
+    # Flatten spatial dims
+    n_elements = int(cp.prod(cp.asarray(list(spatial_shape))))
+    input_flat = input_tensor.reshape(n_elements, 2)
+
+    # Searchsorted on GPU
+    alpha_indices = cp.searchsorted(alpha_sorted, input_flat[:, 0], side="left")
+    power_indices = cp.searchsorted(power_sorted, input_flat[:, 1], side="left")
+
+    # Clip to valid range
+    alpha_indices = cp.clip(alpha_indices, 0, len(alpha_sorted) - 1)
+    power_indices = cp.clip(power_indices, 0, len(power_sorted) - 1)
+
+    # LUT lookup via fancy indexing
+    output_flat = lut_gpu[alpha_indices, power_indices, :]
+
+    time_end = time.time()
+    logger.debug("CuPy GPU kernel time: %.4f seconds.", time_end - time_start)
+
+    # Check for invalid combinations (transfer only the boolean result)
+    invalid_gpu = cp.asarray(invalid_matrix)
+    has_invalid = bool(cp.any(invalid_gpu[alpha_indices, power_indices]))
+    if has_invalid:
+        invalid_flags = invalid_gpu[alpha_indices, power_indices].reshape(spatial_shape)
+        # Transfer only the small set of invalid points for the warning message
+        invalid_indices_np = cp.asnumpy(invalid_flags)
+        input_np = cp.asnumpy(input_tensor)
+        invalid_alpha_power = np.unique(
+            input_np[..., :2][np.where(invalid_indices_np)],
+            axis=0,
+        )
+        invalid_attenuation = ", ".join(
+            [f"({a:.4f}, {p:.4f})" for a, p in invalid_alpha_power],
+        )
+        message = (
+            "Warning: Some attenuation values correspond to invalid relaxation parameters. "
+            "This is due to the limitations of the precomputed lookup table. "
+            "Please change the attenuation values.\n"
+            f"Number of invalid points: {int(cp.sum(invalid_flags))}.\n"
+            f"Invalid attenuation values (alpha, power): {invalid_attenuation}\n"
+        )
+        logger.warning(message)
+
+    return output_flat.reshape(*spatial_shape, look_up_table.shape[2])
+
+
 def generate_relaxation_params(
     alpha_coeff: NDArray[np.float64],
     alpha_power: NDArray[np.float64],
@@ -361,6 +446,9 @@ class RelaxationParametersGenerator:
     ) -> dict[str, NDArray[np.float64]]:
         """Generate relaxation parameters based on attenuation values.
 
+        Dispatches to CuPy GPU path when inputs are CuPy arrays,
+        otherwise uses the Numba CPU path.
+
         Parameters
         ----------
         alpha_coeff : NDArray[np.float64]
@@ -374,32 +462,24 @@ class RelaxationParametersGenerator:
             A dictionary containing the computed relaxation parameters.
 
         """
-        if np.any(alpha_coeff < self.alpha_min) or np.any(alpha_power < self.power_min):
-            error_msg = (
-                "attenuation is out of range."
-                "the out-of-range values will be clipped to the min value."
-                f"alpha minimum: {self.alpha_min}, "
-                f"power minimum: {self.power_min}"
-            )
-            logger.warning(error_msg)
-        if np.any(alpha_coeff > self.alpha_max) or np.any(alpha_power > self.power_max):
-            error_msg = (
-                "attenuation is out of range."
-                "the out-of-range values will be clipped to the max value."
-                f"alpha maximum: {self.alpha_max}, "
-                f"power maximum: {self.power_max}"
-            )
-            logger.warning(error_msg)
+        use_gpu = not isinstance(alpha_coeff, np.ndarray)
+
+        if use_gpu:
+            return self._generate_gpu(alpha_coeff, alpha_power)
+        return self._generate_cpu(alpha_coeff, alpha_power)
+
+    def _generate_cpu(
+        self,
+        alpha_coeff: NDArray[np.float64],
+        alpha_power: NDArray[np.float64],
+    ) -> dict[str, NDArray[np.float64]]:
+        """CPU path using Numba fused kernel."""
+        self._warn_out_of_range(alpha_coeff, alpha_power, xp=np)
 
         alpha_coeff = np.clip(alpha_coeff, self.alpha_min, self.alpha_max)
         alpha_power = np.clip(alpha_power, self.power_min, self.power_max)
 
-        # # Normalize to [0, 1] for the lookup table
-        # alpha_coeff = (alpha_coeff - self.alpha_min) / (self.alpha_max - self.alpha_min)
-        # alpha_power = (alpha_power - self.power_min) / (self.power_max - self.power_min)
-
         input_data = np.stack([alpha_coeff, alpha_power], axis=-1)
-        # output = _map_parameters(input_data, self.look_up_table, self.alpha_list, self.power_list)
         output = _map_parameters_search(
             input_data,
             self.look_up_table,
@@ -412,3 +492,49 @@ class RelaxationParametersGenerator:
         for i, key in enumerate(relaxation_param_dict.keys()):
             relaxation_param_dict[key] = output[..., i]
         return relaxation_param_dict
+
+    def _generate_gpu(
+        self,
+        alpha_coeff: NDArray[np.float64],
+        alpha_power: NDArray[np.float64],
+    ) -> dict[str, NDArray[np.float64]]:
+        """GPU path using CuPy searchsorted + fancy indexing."""
+        import cupy as cp  # noqa: PLC0415
+
+        self._warn_out_of_range(alpha_coeff, alpha_power, xp=cp)
+
+        alpha_coeff = cp.clip(alpha_coeff, self.alpha_min, self.alpha_max)
+        alpha_power = cp.clip(alpha_power, self.power_min, self.power_max)
+
+        input_data = cp.stack([alpha_coeff, alpha_power], axis=-1)
+        output = _map_parameters_search_gpu(
+            input_data,
+            self.look_up_table,
+            self.alpha_list,
+            self.power_list,
+            self.invalid_matrix,
+        )
+
+        relaxation_param_dict = initialize_relaxation_param_dict(self.n_relaxation_mechanisms)
+        for i, key in enumerate(relaxation_param_dict.keys()):
+            relaxation_param_dict[key] = output[..., i]
+        return relaxation_param_dict
+
+    def _warn_out_of_range(self, alpha_coeff: NDArray, alpha_power: NDArray, *, xp: object) -> None:
+        """Log warnings if attenuation values are out of LUT range."""
+        if xp.any(alpha_coeff < self.alpha_min) or xp.any(alpha_power < self.power_min):
+            error_msg = (
+                "attenuation is out of range."
+                "the out-of-range values will be clipped to the min value."
+                f"alpha minimum: {self.alpha_min}, "
+                f"power minimum: {self.power_min}"
+            )
+            logger.warning(error_msg)
+        if xp.any(alpha_coeff > self.alpha_max) or xp.any(alpha_power > self.power_max):
+            error_msg = (
+                "attenuation is out of range."
+                "the out-of-range values will be clipped to the max value."
+                f"alpha maximum: {self.alpha_max}, "
+                f"power maximum: {self.power_max}"
+            )
+            logger.warning(error_msg)

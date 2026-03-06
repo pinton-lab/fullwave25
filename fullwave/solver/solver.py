@@ -330,6 +330,7 @@ class Solver:
         cuda_device_id: str | int | list | None = None,
         save_gpu_memory: bool = False,
         verify_gpu: bool = True,
+        use_gpu_pml: bool = False,
     ) -> None:
         """Initialize a Solver instance for the fullwave simulation.
 
@@ -407,6 +408,11 @@ class Solver:
             example 2: 2 for using GPU 2 or "2" as a string.
         save_gpu_memory : bool, optional
             Whether to save GPU memory by using ICMAT_MEMORY_SAVING flag in the simulation.
+        use_gpu_pml : bool, optional
+            Whether to use CuPy for GPU-accelerated PML computation (default is False).
+            Requires CuPy to be installed. Falls back to CPU if CuPy is unavailable.
+            This accelerates the PML array padding and transition computations
+            using the GPU, which is especially beneficial for large 3D grids.
             The simulation does not load initial conditions into GPU memory and
             it loads the slice of the wavefield needed for the current time step
             from CPU memory at each time step.
@@ -554,6 +560,7 @@ class Solver:
 
         self.path_fullwave_simulation_bin = path_fullwave_simulation_bin
         self.cuda_device_id = cuda_device_id
+        self.use_gpu_pml = use_gpu_pml
 
         self.fullwave_launcher = Launcher(
             path_fullwave_simulation_bin,
@@ -572,6 +579,7 @@ class Solver:
                 sensor=self.sensor,
                 m_spatial_order=m_spatial_order,
                 n_pml_layer=pml_layer_thickness_px,
+                use_gpu=use_gpu_pml,
             )
         else:
             self.pml_builder = PMLBuilder(
@@ -583,6 +591,7 @@ class Solver:
                 n_pml_layer=pml_layer_thickness_px,
                 n_transition_layer=n_transition_layer,
                 use_isotropic_relaxation=use_isotropic_relaxation,
+                use_gpu=use_gpu_pml,
             )
 
     @staticmethod
@@ -935,6 +944,7 @@ class Solver:
             use_isotropic_relaxation=self.use_isotropic_relaxation,
             release_after_write=release_after_write,
             pml_thickness=pml_thickness,
+            use_gpu=self.use_gpu_pml,
         )
         simulation_dir = input_file_writer.run(
             simulation_dir_name,

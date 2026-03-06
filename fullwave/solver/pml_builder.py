@@ -1,44 +1,96 @@
 """Perfectly Matched Layer (PML) setup for Fullwave."""
 
+from __future__ import annotations
+
 import concurrent.futures
 import logging
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as plt
 import numexpr as ne
 import numpy as np
-from numpy.typing import NDArray
 
 import fullwave
+
+if TYPE_CHECKING:
+    from types import ModuleType
+
+    from numpy.typing import NDArray
 from fullwave.solver.utils import initialize_relaxation_param_dict
 from fullwave.utils import check_functions, plot_utils
 
 logger = logging.getLogger("__main__." + __name__)
 
-
-def _smooth_transition_function_part(x: NDArray[np.float64]) -> NDArray[np.float64]:
-    return np.where(x > 0, np.exp(-1 / (x + 1e-20)), 0)
+_CUPY_AVAILABLE: bool | None = None
 
 
-def _smooth_transition_function(x: NDArray[np.float64]) -> NDArray[np.float64]:
-    return _smooth_transition_function_part(x) / (
-        _smooth_transition_function_part(x) + _smooth_transition_function_part(1 - x)
+def _check_cupy() -> bool:
+    """Return True if CuPy is importable; result is cached after the first call."""
+    global _CUPY_AVAILABLE  # noqa: PLW0603
+    if _CUPY_AVAILABLE is None:
+        try:
+            import cupy  # noqa: F401, PLC0415
+
+            _CUPY_AVAILABLE = True
+        except ImportError:
+            _CUPY_AVAILABLE = False
+    return _CUPY_AVAILABLE
+
+
+def _get_array_module(*, use_gpu: bool) -> ModuleType:
+    """Return ``cupy`` when *use_gpu* is True and CuPy is available, else ``numpy``."""
+    if use_gpu and _check_cupy():
+        import cupy  # noqa: PLC0415
+
+        return cupy
+    return np
+
+
+def _smooth_transition_function_part(
+    x: NDArray[np.float64],
+    xp: ModuleType = np,
+) -> NDArray[np.float64]:
+    """Smooth bump helper (works with numpy or cupy)."""
+    return xp.where(x > 0, xp.exp(-1 / (x + 1e-20)), 0)
+
+
+def _smooth_transition_function(
+    x: NDArray[np.float64],
+    xp: ModuleType = np,
+) -> NDArray[np.float64]:
+    """Smooth transition function (works with numpy or cupy)."""
+    return _smooth_transition_function_part(x, xp=xp) / (
+        _smooth_transition_function_part(x, xp=xp) + _smooth_transition_function_part(1 - x, xp=xp)
     )
 
 
-def _linear_transition_function(x: NDArray[np.float64]) -> NDArray[np.float64]:
+def _linear_transition_function(
+    x: NDArray[np.float64],
+    xp: ModuleType = np,  # noqa: ARG001
+) -> NDArray[np.float64]:
+    """Linear transition function."""
     return x
 
 
-def _n_th_deg_polynomial_function(x: NDArray[np.float64], n: int = 2) -> NDArray[np.float64]:
+def _n_th_deg_polynomial_function(
+    x: NDArray[np.float64],
+    n: int = 2,
+    xp: ModuleType = np,  # noqa: ARG001
+) -> NDArray[np.float64]:
+    """N-th degree polynomial transition function."""
     return x**n
 
 
-def _cosine_transition_function(x: NDArray[np.float64]) -> NDArray[np.float64]:
-    return 0.5 * (1 - np.cos(np.pi * x))
+def _cosine_transition_function(
+    x: NDArray[np.float64],
+    xp: ModuleType = np,
+) -> NDArray[np.float64]:
+    """Cosine transition function (works with numpy or cupy)."""
+    return 0.5 * (1 - xp.cos(xp.pi * x))
 
 
 def _obtain_relax_var_rename_dict(
@@ -113,7 +165,7 @@ class PMLBuilder:
     pml_mask_x: NDArray[np.float64] = field(init=False)
     pml_mask_y: NDArray[np.float64] = field(init=False)
 
-    def __init__(
+    def __init__(  # noqa: PLR0912
         self,
         grid: fullwave.Grid,
         medium: fullwave.Medium,
@@ -124,6 +176,7 @@ class PMLBuilder:
         n_pml_layer: int = 40,
         n_transition_layer: int = 40,
         use_isotropic_relaxation: bool = False,
+        use_gpu: bool = False,
         # pml_alpha_target: float = 1.1,
         # pml_alpha_power_target: float = 1.6,
         # pml_strength_factor: float = 2.0,
@@ -158,6 +211,9 @@ class PMLBuilder:
             This option omits the anisotropic relaxation mechanisms to model the attenuation.
             We usually recommend using isotropic relaxation mechanisms
             unless the anisotropic attenuation is required for the simulation.
+        use_gpu : bool, optional
+            If True, use CuPy for GPU-accelerated PML computation (default is False).
+            Requires CuPy to be installed. Falls back to CPU if CuPy is unavailable.
 
         """
         check_functions.check_instance(
@@ -183,6 +239,15 @@ class PMLBuilder:
         self.sensor_org = sensor
         self.is_3d = grid.is_3d
         self.use_isotropic_relaxation = use_isotropic_relaxation
+
+        self.use_gpu = use_gpu
+        self.xp: ModuleType = _get_array_module(use_gpu=use_gpu)
+        if self.xp is not np:
+            logger.info("PMLBuilder: using CuPy GPU backend")
+        elif use_gpu:
+            logger.warning(
+                "PMLBuilder: use_gpu=True but CuPy is not available. Falling back to CPU (numpy)."
+            )
 
         self.m_spatial_order = m_spatial_order
         self.n_pml_layer = n_pml_layer
@@ -219,95 +284,72 @@ class PMLBuilder:
 
         logger.debug("building extended medium for pml...")
         if isinstance(self.medium_org, fullwave.MediumRelaxationMaps):
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future_sound_speed = executor.submit(
-                    self._extend_map_for_pml,
-                    self.medium_org.sound_speed,
-                )
-                future_density = executor.submit(
-                    self._extend_map_for_pml,
-                    self.medium_org.density,
-                )
-                future_beta = executor.submit(
-                    self._extend_map_for_pml,
-                    self.medium_org.beta,
-                )
-                future_alpha_coeff = executor.submit(
-                    self._extend_map_for_pml,
-                    self.medium_org.alpha_coeff,
-                )
-                future_alpha_power = executor.submit(
-                    self._extend_map_for_pml,
-                    self.medium_org.alpha_power,
-                )
-                future_relaxation_param_dict = {
-                    key: executor.submit(self._extend_map_for_pml, value)
-                    for key, value in self.medium_org.relaxation_param_dict.items()
-                }
+            base_attrs = ["sound_speed", "density", "beta"]
+            relax_attrs = list(self.medium_org.relaxation_param_dict.keys())
 
-                extended_sound_speed = future_sound_speed.result()
-                extended_density = future_density.result()
-                extended_beta = future_beta.result()
-                extended_alpha_coeff = future_alpha_coeff.result()
-                extended_alpha_power = future_alpha_power.result()
-                extended_relaxation_param_dict = {
-                    key: future.result() for key, future in future_relaxation_param_dict.items()
-                }
+            if self.xp is not np:
+                # Pass CuPy arrays directly — multi-GPU extension uses D2D copy (NVLink)
+                named_arrays = [(name, getattr(self.medium_org, name)) for name in base_attrs]
+                named_arrays += [
+                    (key, self.medium_org.relaxation_param_dict[key]) for key in relax_attrs
+                ]
+                extended = self._extend_arrays_gpu(named_arrays)
+                # Free original GPU arrays to reclaim memory
+                self._ensure_numpy_medium_arrays(base_attrs)
+                for key in relax_attrs:
+                    import cupy as cp  # noqa: PLC0415
 
+                    val = self.medium_org.relaxation_param_dict[key]
+                    if not isinstance(val, np.ndarray):
+                        self.medium_org.relaxation_param_dict[key] = cp.asnumpy(val)
+                cp.get_default_memory_pool().free_all_blocks()
+            else:
+                named_arrays = [(name, getattr(self.medium_org, name)) for name in base_attrs] + [
+                    (key, self.medium_org.relaxation_param_dict[key]) for key in relax_attrs
+                ]
+                extended = self._extend_arrays_cpu(named_arrays)
+
+            extended_relaxation_param_dict = {key: extended[key] for key in relax_attrs}
+            # Extended arrays are numpy — skip re-upload to GPU to avoid
+            # wasting PCIe bandwidth. CPU numexpr handles subsequent computation.
             self.extended_medium = fullwave.MediumRelaxationMaps(
                 grid=self.extended_grid,
-                sound_speed=extended_sound_speed,
-                density=extended_density,
-                beta=extended_beta,
-                alpha_coeff=extended_alpha_coeff,
-                alpha_power=extended_alpha_power,
+                sound_speed=extended["sound_speed"],
+                density=extended["density"],
+                beta=extended["beta"],
                 relaxation_param_dict=extended_relaxation_param_dict,
                 air_coords=self.medium_org.air_coords + self.num_boundary_points,
                 n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
                 n_jobs=self.medium_org.n_jobs,
                 dtype=getattr(self.medium_org, "dtype", np.float64),
+                use_gpu=False,
             )
         else:
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future_sound_speed = executor.submit(
-                    self._extend_map_for_pml,
-                    self.medium_org.sound_speed,
-                )
-                future_density = executor.submit(
-                    self._extend_map_for_pml,
-                    self.medium_org.density,
-                )
-                future_beta = executor.submit(
-                    self._extend_map_for_pml,
-                    self.medium_org.beta,
-                )
-                future_alpha_coeff = executor.submit(
-                    self._extend_map_for_pml,
-                    self.medium_org.alpha_coeff,
-                )
-                future_alpha_power = executor.submit(
-                    self._extend_map_for_pml,
-                    self.medium_org.alpha_power,
-                )
+            attr_names = ["sound_speed", "density", "beta", "alpha_coeff", "alpha_power"]
+            if self.xp is not np:
+                named_arrays = [(name, getattr(self.medium_org, name)) for name in attr_names]
+                extended = self._extend_arrays_gpu(named_arrays)
+                self._ensure_numpy_medium_arrays(attr_names)
+            else:
+                named_arrays = [(name, getattr(self.medium_org, name)) for name in attr_names]
+                extended = self._extend_arrays_cpu(named_arrays)
 
-                extended_sound_speed = future_sound_speed.result()
-                extended_density = future_density.result()
-                extended_beta = future_beta.result()
-                extended_alpha_coeff = future_alpha_coeff.result()
-                extended_alpha_power = future_alpha_power.result()
+            # Extended arrays are numpy — skip re-upload to GPU to avoid
+            # wasting PCIe bandwidth. CPU numexpr handles subsequent computation.
             self.extended_medium = fullwave.Medium(
                 grid=self.extended_grid,
-                sound_speed=extended_sound_speed,
-                density=extended_density,
-                beta=extended_beta,
-                alpha_coeff=extended_alpha_coeff,
-                alpha_power=extended_alpha_power,
+                sound_speed=extended["sound_speed"],
+                density=extended["density"],
+                beta=extended["beta"],
+                alpha_coeff=extended["alpha_coeff"],
+                alpha_power=extended["alpha_power"],
                 air_coords=self.medium_org.air_coords + self.num_boundary_points,
                 n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
                 path_relaxation_parameters_database=self.medium_org.path_relaxation_parameters_database,
                 attenuation_builder=self.medium_org.attenuation_builder,
                 n_jobs=self.medium_org.n_jobs,
                 dtype=getattr(self.medium_org, "dtype", np.float64),
+                use_gpu=False,
             )
         logger.debug("building extended medium for pml...done")
 
@@ -456,22 +498,30 @@ class PMLBuilder:
         *,
         fill_edge: bool = True,
     ) -> NDArray[np.float64 | np.int64 | np.bool_]:
-        """Fast version using pre-allocation and direct assignment instead of np.pad."""
+        """Fast version using pre-allocation and direct assignment instead of np.pad.
+
+        When ``self.use_gpu`` is True and CuPy is available, the computation
+        runs on the GPU and the result is returned as a numpy array.
+        """
+        xp = self.xp
         pad = self.num_boundary_points
+
+        # Ensure array is on the correct device (no-op if already there)
+        input_gpu = xp.asarray(input_map)
 
         # Pre-allocate output array with correct dtype
         if self.is_3d:
-            nx, ny, nz = input_map.shape
-            output = np.empty((nx + 2 * pad, ny + 2 * pad, nz + 2 * pad), dtype=input_map.dtype)
+            nx, ny, nz = input_gpu.shape
+            output = xp.empty((nx + 2 * pad, ny + 2 * pad, nz + 2 * pad), dtype=input_gpu.dtype)
 
             # Fill center with original data (single copy)
-            output[pad : pad + nx, pad : pad + ny, pad : pad + nz] = input_map
+            output[pad : pad + nx, pad : pad + ny, pad : pad + nz] = input_gpu
 
             if fill_edge:
                 # Fill edges efficiently using broadcasting
                 # X boundaries
-                output[:pad, pad : pad + ny, pad : pad + nz] = input_map[0:1, :, :]
-                output[pad + nx :, pad : pad + ny, pad : pad + nz] = input_map[-1:, :, :]
+                output[:pad, pad : pad + ny, pad : pad + nz] = input_gpu[0:1, :, :]
+                output[pad + nx :, pad : pad + ny, pad : pad + nz] = input_gpu[-1:, :, :]
 
                 # Y boundaries (now includes X corners)
                 output[:, :pad, pad : pad + nz] = output[:, pad : pad + 1, pad : pad + nz]
@@ -493,16 +543,16 @@ class PMLBuilder:
                 output[:, :, :pad] = 0
                 output[:, :, pad + nz :] = 0
         else:  # 2D case
-            nx, ny = input_map.shape
-            output = np.empty((nx + 2 * pad, ny + 2 * pad), dtype=input_map.dtype)
+            nx, ny = input_gpu.shape
+            output = xp.empty((nx + 2 * pad, ny + 2 * pad), dtype=input_gpu.dtype)
 
             # Fill center
-            output[pad : pad + nx, pad : pad + ny] = input_map
+            output[pad : pad + nx, pad : pad + ny] = input_gpu
 
             if fill_edge:
                 # Fill edges
-                output[:pad, pad : pad + ny] = input_map[0:1, :]
-                output[pad + nx :, pad : pad + ny] = input_map[-1:, :]
+                output[:pad, pad : pad + ny] = input_gpu[0:1, :]
+                output[pad + nx :, pad : pad + ny] = input_gpu[-1:, :]
                 output[:, :pad] = output[:, pad : pad + 1]
                 output[:, pad + ny :] = output[:, pad + ny - 1 : pad + ny]
             else:
@@ -512,6 +562,146 @@ class PMLBuilder:
                 output[:, pad + ny :] = 0
 
         return output
+
+    def _extend_arrays_gpu(
+        self,
+        named_arrays: list[tuple[str, NDArray]],
+    ) -> dict[str, NDArray]:
+        """Extend medium arrays using multi-GPU, single-GPU, or CPU fallback.
+
+        Parameters
+        ----------
+        named_arrays : list of (name, numpy_array) pairs
+            Arrays to extend. Must be numpy arrays (CPU).
+
+        Returns
+        -------
+        dict[str, NDArray]
+            Extended arrays as numpy arrays.
+
+        """
+        import cupy as cp  # noqa: PLC0415
+
+        n_gpus = cp.cuda.runtime.getDeviceCount()
+        logger.info("CUDA devices available: %d", n_gpus)
+
+        # Strategy 1: Multi-GPU parallel
+        if n_gpus > 1:
+            n_workers = min(n_gpus, len(named_arrays))
+            try:
+                logger.info(
+                    "Extending %d medium arrays using %d GPUs (of %d available).",
+                    len(named_arrays),
+                    n_workers,
+                    n_gpus,
+                )
+                return self._extend_arrays_multi_gpu(named_arrays, n_gpus)
+            except Exception:
+                logger.warning("Multi-GPU extension failed. Falling back to sequential single-GPU.")
+
+        # Strategy 2: Sequential single-GPU (extend one, free, repeat)
+        try:
+            logger.info("Extending %d medium arrays sequentially on GPU 0.", len(named_arrays))
+            return self._extend_arrays_sequential_gpu(named_arrays)
+        except Exception:
+            logger.warning("Single-GPU extension failed. Falling back to CPU.")
+
+        # Strategy 3: CPU
+        logger.info("Extending %d medium arrays on CPU.", len(named_arrays))
+        return self._extend_arrays_cpu(named_arrays)
+
+    def _extend_arrays_multi_gpu(
+        self,
+        named_arrays: list[tuple[str, NDArray]],
+        n_gpus: int,
+    ) -> dict[str, NDArray]:
+        """Extend arrays in parallel, each on a different GPU.
+
+        Each thread sets its own CUDA device, transfers data, extends,
+        and returns the result as a numpy array.
+        Accepts both numpy and CuPy input arrays. CuPy arrays are copied
+        device-to-device via NVLink when available (faster than PCIe).
+        """
+        import cupy as cp  # noqa: PLC0415
+
+        def extend_on_device(
+            args: tuple[str, NDArray, int],
+        ) -> tuple[str, NDArray]:
+            name, arr, device_id = args
+            with cp.cuda.Device(device_id):
+                # cp.asarray handles both numpy (H2D) and CuPy from
+                # another device (D2D via NVLink when available)
+                arr_local = cp.asarray(arr)
+                result_gpu = self._extend_map_for_pml(arr_local)
+                result_np = cp.asnumpy(result_gpu)
+                del arr_local, result_gpu
+                cp.get_default_memory_pool().free_all_blocks()
+                return name, result_np
+
+        items = [(name, arr, i % n_gpus) for i, (name, arr) in enumerate(named_arrays)]
+
+        results = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(n_gpus, len(items))) as executor:
+            futures = [executor.submit(extend_on_device, item) for item in items]
+            for future in concurrent.futures.as_completed(futures):
+                name, result = future.result()
+                results[name] = result
+        return results
+
+    def _extend_arrays_sequential_gpu(
+        self,
+        named_arrays: list[tuple[str, NDArray]],
+    ) -> dict[str, NDArray]:
+        """Extend arrays one at a time on GPU, freeing after each."""
+        import cupy as cp  # noqa: PLC0415
+
+        results = {}
+        pool = cp.get_default_memory_pool()
+        for name, arr_np in named_arrays:
+            result_gpu = self._extend_map_for_pml(arr_np)
+            results[name] = cp.asnumpy(result_gpu)
+            del result_gpu
+            pool.free_all_blocks()
+        return results
+
+    def _extend_arrays_cpu(
+        self,
+        named_arrays: list[tuple[str, NDArray]],
+    ) -> dict[str, NDArray]:
+        """Extend arrays on CPU using ThreadPoolExecutor."""
+        orig_xp = self.xp
+        self.xp = np
+        try:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                futures = {
+                    name: executor.submit(self._extend_map_for_pml, arr)
+                    for name, arr in named_arrays
+                }
+                return {name: future.result() for name, future in futures.items()}
+        finally:
+            self.xp = orig_xp
+
+    def _ensure_numpy_medium_arrays(
+        self,
+        attr_names: list[str],
+    ) -> list[tuple[str, NDArray]]:
+        """Convert medium arrays to numpy and free GPU memory.
+
+        Returns list of (name, numpy_array) pairs.
+        """
+        import cupy as cp  # noqa: PLC0415
+
+        named_arrays = []
+        for name in attr_names:
+            arr = getattr(self.medium_org, name)
+            if not isinstance(arr, np.ndarray):
+                arr_np = cp.asnumpy(arr)
+                setattr(self.medium_org, name, arr_np)
+            else:
+                arr_np = arr
+            named_arrays.append((name, arr_np))
+        cp.get_default_memory_pool().free_all_blocks()
+        return named_arrays
 
     def _localize_pml_region(self) -> tuple[NDArray[np.float64], ...]:
         if self.is_3d:
@@ -587,31 +777,38 @@ class PMLBuilder:
 
         return pml_mask_x, pml_mask_y
 
-    @staticmethod
     def _calc_a_and_b(
+        self,
         d_x: float | NDArray[np.float64],
         kappa_x: float | NDArray[np.float64],
         alpha_x: float | NDArray[np.float64],
         dt: float | NDArray[np.float64],
         output_dtype: np.dtype | None = None,
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-        d_x = np.asarray(d_x, dtype=np.float64)
-        kappa_x = np.asarray(kappa_x, dtype=np.float64)
-        alpha_x = np.asarray(alpha_x, dtype=np.float64)
-        dt = np.asarray(dt, dtype=np.float64)
+        xp = self.xp
+        use_gpu = xp is not np
 
-        eps = np.finfo(np.float64).eps  # noqa: F841
+        d_x = xp.asarray(d_x, dtype=xp.float64)
+        kappa_x = xp.asarray(kappa_x, dtype=xp.float64)
+        alpha_x = xp.asarray(alpha_x, dtype=xp.float64)
+        dt = xp.asarray(dt, dtype=xp.float64)
 
-        # b = exp(-(dx/kappa_x + alpha_x) * dt)
-        b = ne.evaluate("exp(-(d_x/kappa_x + alpha_x) * dt)")
+        eps = xp.finfo(xp.float64).eps
 
-        # denom = kappa_x*(dx + kappa_x*alpha_x) + eps
-        denom = ne.evaluate("kappa_x*(d_x + kappa_x*alpha_x) + eps")  # noqa: F841
+        if use_gpu:
+            b = xp.exp(-(d_x / kappa_x + alpha_x) * dt)
+            denom = kappa_x * (d_x + kappa_x * alpha_x) + eps
+            a = d_x / denom * (b - 1)
+        else:
+            eps_local = eps  # noqa: F841
+            # b = exp(-(dx/kappa_x + alpha_x) * dt)
+            b = ne.evaluate("exp(-(d_x/kappa_x + alpha_x) * dt)")
+            # denom = kappa_x*(dx + kappa_x*alpha_x) + eps
+            denom = ne.evaluate("kappa_x*(d_x + kappa_x*alpha_x) + eps_local")
+            # a = dx/denom*(b - 1)
+            a = ne.evaluate("d_x/denom*(b - 1)")
 
-        # a = dx/denom*(b - 1)
-        a = ne.evaluate("d_x/denom*(b - 1)")
-
-        if output_dtype is not None and output_dtype != np.float64:
+        if output_dtype is not None and output_dtype != xp.float64:
             a = a.astype(output_dtype, copy=False)
             b = b.astype(output_dtype, copy=False)
 
@@ -832,10 +1029,10 @@ class PMLBuilder:
 
         items = list(rename_dict.items())
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = [
-                executor.submit(
-                    _compute_one,
+        if self.xp is not np:
+            # GPU path: run sequentially to avoid CuPy multi-thread CUDA context issues
+            results = [
+                _compute_one(
                     key_fw2,
                     key_py,
                     relaxation_param_dict,
@@ -849,7 +1046,25 @@ class PMLBuilder:
                 )
                 for key_fw2, key_py in items
             ]
-            results = [f.result() for f in futures]
+        else:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                futures = [
+                    executor.submit(
+                        _compute_one,
+                        key_fw2,
+                        key_py,
+                        relaxation_param_dict,
+                        alpha_target_higher_nu,
+                        d_target_higher_nu,
+                        alpha_target_pml,
+                        d_target_pml,
+                        n_polynomial,
+                        self.is_3d,
+                        self._apply_transition_and_pml,
+                    )
+                    for key_fw2, key_py in items
+                ]
+                results = [f.result() for f in futures]
         out_dict = dict(results)
 
         logger.debug("Calculating PML a and b coefficients...")
@@ -877,9 +1092,13 @@ class PMLBuilder:
             # Return keys + values so parent can update dict safely
             return (f"a_pml_{axis}{nu}", a, f"b_pml_{axis}{nu}", b)
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = [executor.submit(_worker, nu, axis) for nu, axis in tasks]
-            results = [f.result() for f in futures]
+        if self.xp is not np:
+            # GPU path: run sequentially
+            results = [_worker(nu, axis) for nu, axis in tasks]
+        else:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                futures = [executor.submit(_worker, nu, axis) for nu, axis in tasks]
+                results = [f.result() for f in futures]
 
         for a_key, a_val, b_key, b_val in results:
             out_dict[a_key] = a_val
@@ -1116,10 +1335,11 @@ class PMLBuilder:
             raise ValueError(error_msg)
 
         items = list(rename_dict.items())
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = [
-                executor.submit(
-                    _compute_one,
+
+        if self.xp is not np:
+            # GPU path: run sequentially to avoid CuPy multi-thread CUDA context issues
+            results = [
+                _compute_one(
                     key_fw2,
                     key_py,
                     relaxation_param_dict,
@@ -1133,7 +1353,25 @@ class PMLBuilder:
                 )
                 for key_fw2, key_py in items
             ]
-            results = [f.result() for f in futures]
+        else:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                futures = [
+                    executor.submit(
+                        _compute_one,
+                        key_fw2,
+                        key_py,
+                        relaxation_param_dict,
+                        alpha_target_higher_nu,
+                        d_target_higher_nu,
+                        alpha_target_pml,
+                        d_target_pml,
+                        n_polynomial,
+                        self.is_3d,
+                        self._apply_transition_and_pml,
+                    )
+                    for key_fw2, key_py in items
+                ]
+                results = [f.result() for f in futures]
         out_dict = dict(results)
 
         logger.debug("Calculating PML a and b coefficients...")
@@ -1162,9 +1400,13 @@ class PMLBuilder:
             # Return keys + values so parent can update dict safely
             return (f"a_pml_{axis}{nu}", a, f"b_pml_{axis}{nu}", b)
 
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = [executor.submit(_worker, nu, axis) for nu, axis in tasks]
-            results = [f.result() for f in futures]
+        if self.xp is not np:
+            # GPU path: run sequentially
+            results = [_worker(nu, axis) for nu, axis in tasks]
+        else:
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                futures = [executor.submit(_worker, nu, axis) for nu, axis in tasks]
+                results = [f.result() for f in futures]
 
         for a_key, a_val, b_key, b_val in results:
             out_dict[a_key] = a_val
@@ -1237,7 +1479,9 @@ class PMLBuilder:
             layer_offset = 0
 
         # Compute transition function once
-        transition_linspace = np.linspace(0, 1, layer_thickness + 1)
+        xp = self.xp
+        use_gpu = xp is not np
+        transition_linspace = xp.linspace(0, 1, layer_thickness + 1)
         transition_map = {
             "smooth": _smooth_transition_function,
             "linear": _linear_transition_function,
@@ -1256,9 +1500,10 @@ class PMLBuilder:
             transition_function = transition_map[transition_type](
                 transition_linspace,
                 n=n_polynomial,
+                xp=xp,
             )
         else:
-            transition_function = transition_map[transition_type](transition_linspace)
+            transition_function = transition_map[transition_type](transition_linspace, xp=xp)
 
         n_axis_extended = array_shape[axis]
         m_offset = self.m_spatial_order + layer_offset
@@ -1267,10 +1512,18 @@ class PMLBuilder:
         up_end = m_offset + layer_thickness
         down_start = n_axis_extended - m_offset - layer_thickness - 1
 
+        # Transfer to GPU if needed
+        if use_gpu:
+            input_array = xp.asarray(input_array)
+
         # Move axis to 0 for uniform processing
-        working_array = np.moveaxis(input_array, axis, 0)
-        # make working_array writeable
-        working_array.setflags(write=True)
+        working_array = xp.moveaxis(input_array, axis, 0)
+        if not use_gpu:
+            # make working_array writeable (numpy-specific)
+            working_array.setflags(write=True)
+        else:
+            # CuPy arrays are always writeable; ensure contiguous copy
+            working_array = working_array.copy()
 
         # Apply boundary conditions
         working_array[: m_offset + layer_thickness] = value_target
@@ -1303,7 +1556,7 @@ class PMLBuilder:
         working_array[down_start:down_end] = down_vals - trans_down * (down_vals - value_target)
 
         # Move axis back
-        return np.moveaxis(working_array, 0, axis)
+        return xp.moveaxis(working_array, 0, axis)
 
     @staticmethod
     def _calc_time_constants(
@@ -1470,6 +1723,7 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
         *,
         m_spatial_order: int = 8,
         n_pml_layer: int = 40,
+        use_gpu: bool = False,
         # n_transition_layer: int = 40,
         # pml_alpha_target: float = 1.1,
         # pml_alpha_power_target: float = 1.6,
@@ -1495,6 +1749,9 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             see Pinton, G. (2021) http://arxiv.org/abs/2106.11476 for more detail.
         n_pml_layer : int, optional
             PML layer thickness (default is 40).
+        use_gpu : bool, optional
+            If True, use CuPy for GPU-accelerated PML computation (default is False).
+            Requires CuPy to be installed. Falls back to CPU if CuPy is unavailable.
         n_transition_layer : int, optional
             Number of transition layers (default is 40).
         pml_alpha_target : float, optional
@@ -1534,6 +1791,16 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
         self.sensor_org = sensor
         self.is_3d = grid.is_3d
 
+        self.use_gpu = use_gpu
+        self.xp: ModuleType = _get_array_module(use_gpu=use_gpu)
+        if self.xp is not np:
+            logger.info("PMLBuilderExponentialAttenuation: using CuPy GPU backend")
+        elif use_gpu:
+            logger.warning(
+                "PMLBuilderExponentialAttenuation: use_gpu=True but CuPy is not available. "
+                "Falling back to CPU (numpy)."
+            )
+
         self.m_spatial_order = m_spatial_order
         self.n_pml_layer = n_pml_layer
         # self.n_transition_layer = n_transition_layer
@@ -1569,47 +1836,31 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
         )
 
         logger.debug("building extended medium for pml...")
-        # run _extend_map_for_pml in parallel for all medium properties since it is a bottleneck
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future_sound_speed = executor.submit(
-                self._extend_map_for_pml,
-                self.medium_org.sound_speed,
-            )
-            future_density = executor.submit(
-                self._extend_map_for_pml,
-                self.medium_org.density,
-            )
-            future_beta = executor.submit(
-                self._extend_map_for_pml,
-                self.medium_org.beta,
-            )
-            future_alpha_coeff = executor.submit(
-                self._extend_map_for_pml,
-                self.medium_org.alpha_coeff,
-            )
-            future_alpha_power = executor.submit(
-                self._extend_map_for_pml,
-                self.medium_org.alpha_power,
-            )
+        attr_names = ["sound_speed", "density", "beta", "alpha_coeff", "alpha_power"]
+        if self.xp is not np:
+            named_arrays = [(name, getattr(self.medium_org, name)) for name in attr_names]
+            extended = self._extend_arrays_gpu(named_arrays)
+            # Free original GPU arrays and replace with numpy to reclaim GPU memory
+            self._ensure_numpy_medium_arrays(attr_names)
+        else:
+            named_arrays = [(name, getattr(self.medium_org, name)) for name in attr_names]
+            extended = self._extend_arrays_cpu(named_arrays)
 
-            extended_sound_speed = future_sound_speed.result()
-            extended_density = future_density.result()
-            extended_beta = future_beta.result()
-            extended_alpha_coeff = future_alpha_coeff.result()
-            extended_alpha_power = future_alpha_power.result()
-
+        # Extended arrays are numpy — skip re-upload to GPU to avoid
+        # wasting PCIe bandwidth. CPU numexpr handles subsequent computation.
         self.extended_medium = fullwave.Medium(
             grid=self.extended_grid,
-            sound_speed=extended_sound_speed,
-            density=extended_density,
-            beta=extended_beta,
-            alpha_coeff=extended_alpha_coeff,
-            alpha_power=extended_alpha_power,
+            sound_speed=extended["sound_speed"],
+            density=extended["density"],
+            beta=extended["beta"],
+            alpha_coeff=extended["alpha_coeff"],
+            alpha_power=extended["alpha_power"],
             air_coords=self.medium_org.air_coords + self.num_boundary_points,
             n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
             path_relaxation_parameters_database=self.medium_org.path_relaxation_parameters_database,
             attenuation_builder=self.medium_org.attenuation_builder,
             dtype=getattr(self.medium_org, "dtype", np.float64),
+            use_gpu=False,
         )
         logger.debug("Extended medium for PML built successfully.")
 
@@ -1708,6 +1959,8 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             extended_medium: fullwave.MediumExponentialAttenuation = (
                 self.extended_medium.build_exponential()
             )
+            # Free the intermediate Medium's GPU arrays — only alpha_exp is needed
+            self._free_extended_medium_gpu()
             logger.debug("Extended medium for PML built successfully.")
             if self.is_3d:
                 logger.debug("Applying 3D PML to the extended medium...")
@@ -1724,11 +1977,29 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
         extended_medium: fullwave.MediumExponentialAttenuation = (
             self.extended_medium.build_exponential()
         )
+        self._free_extended_medium_gpu()
         logger.debug("Extended medium built successfully without applying PML.")
         return extended_medium
 
-    @staticmethod
-    def _mask_body_2d(nx: int, ny: int, n_body: int) -> NDArray[np.float32]:
+    def _free_extended_medium_gpu(self) -> None:
+        """Free GPU arrays from extended_medium that are no longer needed.
+
+        After build_exponential(), the Medium's alpha_coeff, alpha_power,
+        sound_speed, density, and beta are duplicated in the returned
+        MediumExponentialAttenuation. Free them to reclaim GPU memory.
+        """
+        if self.xp is np:
+            return
+        import cupy as cp  # noqa: PLC0415
+
+        medium = self.extended_medium
+        for attr in ("sound_speed", "density", "beta", "alpha_coeff", "alpha_power"):
+            val = getattr(medium, attr, None)
+            if val is not None and not isinstance(val, np.ndarray):
+                setattr(medium, attr, cp.asnumpy(val))
+        cp.get_default_memory_pool().free_all_blocks()
+
+    def _mask_body_2d(self, nx: int, ny: int, n_body: int) -> NDArray[np.float32]:
         """Create a mask for the PML region.
 
         Parameters
@@ -1747,28 +2018,37 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             Interior (body) region is 1, PML boundary approaches 0.
 
         """
+        xp = self.xp
+        use_gpu = xp is not np
 
         def edge_distance_1d(n: int, n_body: int) -> NDArray[np.float32]:
-            d = np.zeros(n, dtype=np.float32)
+            d = xp.zeros(n, dtype=xp.float32)
             if n_body <= 0:
                 return d
-            d[:n_body] = np.arange(n_body, 0, -1, dtype=np.float32)
-            d[-n_body:] = np.arange(1, n_body + 1, dtype=np.float32)
+            d[:n_body] = xp.arange(n_body, 0, -1, dtype=xp.float32)
+            d[-n_body:] = xp.arange(1, n_body + 1, dtype=xp.float32)
             return d
 
-        rx = edge_distance_1d(nx, n_body)[:, None]  # noqa: F841
-        ry = edge_distance_1d(ny, n_body)[None, :]  # noqa: F841
+        rx = edge_distance_1d(nx, n_body)[:, None]
+        ry = edge_distance_1d(ny, n_body)[None, :]
 
-        mask_sq = ne.evaluate("rx*rx + ry*ry")
+        if use_gpu:
+            mask_sq = rx * rx + ry * ry
+            mmax = float(xp.sqrt(mask_sq.max()))
+            if mmax > 0.0:
+                mask_sq = mask_sq / (mmax * mmax)
+            return xp.maximum(1 - xp.sqrt(mask_sq), 0)
 
+        rx_np = rx  # noqa: F841
+        ry_np = ry  # noqa: F841
+        mask_sq = ne.evaluate("rx_np*rx_np + ry_np*ry_np")
         mmax = float(np.sqrt(mask_sq.max()))
         if mmax > 0.0:
             mask_sq = ne.evaluate("mask_sq / (mmax*mmax)")
+        result = ne.evaluate("1 - sqrt(mask_sq)")
+        return np.maximum(result, 0)
 
-        return ne.evaluate("1 - sqrt(mask_sq)")
-
-    @staticmethod
-    def _mask_body_3d(nx: int, ny: int, nz: int, n_body: int) -> NDArray[np.float32]:
+    def _mask_body_3d(self, nx: int, ny: int, nz: int, n_body: int) -> NDArray[np.float32]:
         """Create a mask for the PML region.
 
         Parameters
@@ -1788,21 +2068,33 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             A 3D numpy array representing the PML mask.
 
         """
+        xp = self.xp
+        use_gpu = xp is not np
 
         def edge_distance_1d(n: int, n_body: int) -> NDArray[np.float32]:
-            d = np.zeros(n, dtype=np.float32)
+            d = xp.zeros(n, dtype=xp.float32)
             if n_body <= 0:
                 return d
-            d[:n_body] = np.arange(n_body, 0, -1, dtype=np.float32)
-            d[-n_body:] = np.arange(1, n_body + 1, dtype=np.float32)
+            d[:n_body] = xp.arange(n_body, 0, -1, dtype=xp.float32)
+            d[-n_body:] = xp.arange(1, n_body + 1, dtype=xp.float32)
             return d
 
-        rx = edge_distance_1d(nx, n_body)[:, None, None]  # noqa: F841
-        ry = edge_distance_1d(ny, n_body)[None, :, None]  # noqa: F841
-        rz = edge_distance_1d(nz, n_body)[None, None, :]  # noqa: F841
+        rx = edge_distance_1d(nx, n_body)[:, None, None]
+        ry = edge_distance_1d(ny, n_body)[None, :, None]
+        rz = edge_distance_1d(nz, n_body)[None, None, :]
 
+        if use_gpu:
+            mask_sq = rx * rx + ry * ry + rz * rz
+            mmax = float(xp.sqrt(mask_sq.max()))
+            if mmax > 0.0:
+                mask_sq = mask_sq / (mmax * mmax)
+            return xp.maximum(1 - xp.sqrt(mask_sq), 0)
+
+        rx_np = rx  # noqa: F841
+        ry_np = ry  # noqa: F841
+        rz_np = rz  # noqa: F841
         # 1) compute squared distance with numexpr (no reduction here)
-        mask_sq = ne.evaluate("rx*rx + ry*ry + rz*rz")  # shape (nx, ny, nz), float32
+        mask_sq = ne.evaluate("rx_np*rx_np + ry_np*ry_np + rz_np*rz_np")
 
         # 2) reduction done by NumPy, then scalar sqrt
         mmax = float(np.sqrt(mask_sq.max()))
@@ -1811,7 +2103,8 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             mask_sq = ne.evaluate("mask_sq / (mmax*mmax)")
 
         # 4) final sqrt elementwise
-        return ne.evaluate("1 - sqrt(mask_sq)")
+        result = ne.evaluate("1 - sqrt(mask_sq)")
+        return np.maximum(result, 0)
 
     def _apply_pml_3d(
         self,
@@ -1823,6 +2116,10 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             nz=extended_medium.alpha_exp.shape[2],
             n_body=self.num_boundary_points,
         )
+        if isinstance(extended_medium.alpha_exp, np.ndarray) and not isinstance(a_mask, np.ndarray):
+            import cupy as cp  # noqa: PLC0415
+
+            a_mask = cp.asnumpy(a_mask)
         extended_medium.alpha_exp *= a_mask
         return extended_medium
 
@@ -1835,5 +2132,9 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             ny=extended_medium.alpha_exp.shape[1],
             n_body=self.num_boundary_points,
         )
+        if isinstance(extended_medium.alpha_exp, np.ndarray) and not isinstance(a_mask, np.ndarray):
+            import cupy as cp  # noqa: PLC0415
+
+            a_mask = cp.asnumpy(a_mask)
         extended_medium.alpha_exp *= a_mask
         return extended_medium
