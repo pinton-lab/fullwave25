@@ -1,5 +1,6 @@
 """solver module."""
 
+import gc
 import logging
 import time
 from pathlib import Path
@@ -595,6 +596,24 @@ class Solver:
             )
 
     @staticmethod
+    def _release_gpu_memory_pools() -> None:
+        """Release all CuPy GPU memory pool blocks back to CUDA.
+
+        Call ``gc.collect()`` first so that Python releases references to
+        CuPy arrays, then drain both the device and pinned memory pools.
+        This prevents stale allocations from causing memory pressure when
+        subsequent operations allocate large GPU arrays.
+        """
+        gc.collect()
+        try:
+            import cupy as cp  # noqa: PLC0415
+
+            cp.get_default_memory_pool().free_all_blocks()
+            cp.get_default_pinned_memory_pool().free_all_blocks()
+        except ImportError:
+            pass
+
+    @staticmethod
     def _check_input(
         grid: fullwave.Grid,
         medium: fullwave.Medium,
@@ -966,6 +985,7 @@ class Solver:
                 "Input data generation completed in %s. Skipping simulation execution.",
                 simulation_dir,
             )
+            self._release_gpu_memory_pools()
             return simulation_dir
 
         sim_result = self.fullwave_launcher.run(
