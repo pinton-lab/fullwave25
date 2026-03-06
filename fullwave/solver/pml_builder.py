@@ -597,14 +597,17 @@ class PMLBuilder:
                 )
                 return self._extend_arrays_multi_gpu(named_arrays, n_gpus)
             except Exception:
-                logger.warning("Multi-GPU extension failed. Falling back to sequential single-GPU.")
+                logger.warning(
+                    "Multi-GPU extension failed. Falling back to sequential single-GPU.",
+                    exc_info=True,
+                )
 
         # Strategy 2: Sequential single-GPU (extend one, free, repeat)
         try:
             logger.info("Extending %d medium arrays sequentially on GPU 0.", len(named_arrays))
             return self._extend_arrays_sequential_gpu(named_arrays)
         except Exception:
-            logger.warning("Single-GPU extension failed. Falling back to CPU.")
+            logger.warning("Single-GPU extension failed. Falling back to CPU.", exc_info=True)
 
         # Strategy 3: CPU
         logger.info("Extending %d medium arrays on CPU.", len(named_arrays))
@@ -669,13 +672,21 @@ class PMLBuilder:
         named_arrays: list[tuple[str, NDArray]],
     ) -> dict[str, NDArray]:
         """Extend arrays on CPU using ThreadPoolExecutor."""
+        # Convert any CuPy arrays to numpy before CPU fallback
+        numpy_arrays = []
+        for name, arr in named_arrays:
+            if hasattr(arr, "get"):
+                numpy_arrays.append((name, arr.get()))
+            else:
+                numpy_arrays.append((name, arr))
+
         orig_xp = self.xp
         self.xp = np
         try:
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 futures = {
                     name: executor.submit(self._extend_map_for_pml, arr)
-                    for name, arr in named_arrays
+                    for name, arr in numpy_arrays
                 }
                 return {name: future.result() for name, future in futures.items()}
         finally:
