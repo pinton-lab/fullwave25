@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import gc
 import logging
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -563,6 +564,33 @@ class PMLBuilder:
 
         return output
 
+    def _move_named_arrays_to_cpu(
+        self,
+        named_arrays: list[tuple[str, NDArray]],
+        attr_names: list[str] | None = None,
+    ) -> list[tuple[str, NDArray]]:
+        """Convert CuPy arrays to numpy and free GPU memory pools.
+
+        Also replaces the corresponding ``medium_org`` attributes (given by
+        *attr_names*) so the original GPU arrays can be garbage-collected.
+        """
+        import cupy as cp  # noqa: PLC0415
+
+        numpy_arrays = []
+        for name, arr in named_arrays:
+            if hasattr(arr, "get"):
+                arr_np = arr.get()
+                numpy_arrays.append((name, arr_np))
+                # Update medium_org so the CuPy array can be freed
+                if attr_names and name in attr_names:
+                    setattr(self.medium_org, name, arr_np)
+            else:
+                numpy_arrays.append((name, arr))
+        gc.collect()
+        cp.get_default_memory_pool().free_all_blocks()
+        cp.get_default_pinned_memory_pool().free_all_blocks()
+        return numpy_arrays
+
     def _extend_arrays_gpu(
         self,
         named_arrays: list[tuple[str, NDArray]],
@@ -571,8 +599,8 @@ class PMLBuilder:
 
         Parameters
         ----------
-        named_arrays : list of (name, numpy_array) pairs
-            Arrays to extend. Must be numpy arrays (CPU).
+        named_arrays : list of (name, numpy_array) or (name, cupy_array) pairs
+            Arrays to extend.
 
         Returns
         -------
@@ -584,6 +612,8 @@ class PMLBuilder:
 
         n_gpus = cp.cuda.runtime.getDeviceCount()
         logger.info("CUDA devices available: %d", n_gpus)
+
+        attr_names = [name for name, _ in named_arrays]
 
         # Strategy 1: Multi-GPU parallel
         if n_gpus > 1:
@@ -598,18 +628,14 @@ class PMLBuilder:
                 return self._extend_arrays_multi_gpu(named_arrays, n_gpus)
             except Exception:
                 logger.warning(
-                    "Multi-GPU extension failed. Falling back to sequential single-GPU.",
+                    "Multi-GPU extension failed. Falling back to CPU.",
                     exc_info=True,
                 )
 
-        # Strategy 2: Sequential single-GPU (extend one, free, repeat)
-        try:
-            logger.info("Extending %d medium arrays sequentially on GPU 0.", len(named_arrays))
-            return self._extend_arrays_sequential_gpu(named_arrays)
-        except Exception:
-            logger.warning("Single-GPU extension failed. Falling back to CPU.", exc_info=True)
+        # Move arrays to CPU and free GPU memory before CPU fallback.
+        # The original medium arrays may still occupy GPU memory.
+        named_arrays = self._move_named_arrays_to_cpu(named_arrays, attr_names)
 
-        # Strategy 3: CPU
         logger.info("Extending %d medium arrays on CPU.", len(named_arrays))
         return self._extend_arrays_cpu(named_arrays)
 
