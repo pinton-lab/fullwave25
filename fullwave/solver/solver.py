@@ -988,6 +988,8 @@ class Solver:
             self._release_gpu_memory_pools()
             return simulation_dir
 
+        self._release_gpu_memory_pools()
+
         sim_result = self.fullwave_launcher.run(
             simulation_dir,
             load_results=load_results,
