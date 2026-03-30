@@ -77,18 +77,21 @@ def test_float32_dtype(base_params):
 
 
 def test_fractional_layer_delay_preserves_phase(base_params):
-    """Fractional-sample layer delays must preserve peak polarity.
+    """Fractional-sample layer delays must match a manual integer shift.
 
     Previously, fractional delays caused carrier phase errors that inverted
     the peak sign for odd layers (Finding 19 in cross-physics experiment).
+    The fix corrects carrier phase so that the layered signal matches an
+    integer-sample-shifted version of the base (high NCC, same peak sign).
     """
     # cfl=0.3 => dt_layer/cfl = 3.33e-8 s per i_layer
     # dt_sim = 2.5e-9 s => 13.33 sim samples per i_layer (fractional)
     dt_layer_frac = 1e-8
     cfl_frac = 0.3
+    dt_sim = base_params["duration"] / base_params["nt"]
+    delay_per_layer_sec = dt_layer_frac / cfl_frac
 
     y_base = gaussian_modulated_sinusoidal_signal(**base_params)
-    base_peak_sign = np.sign(y_base[np.argmax(np.abs(y_base))])
 
     for i in range(1, 6):
         y_layer = gaussian_modulated_sinusoidal_signal(
@@ -97,11 +100,14 @@ def test_fractional_layer_delay_preserves_phase(base_params):
             dt_for_layer_delay=dt_layer_frac,
             cfl_for_layer_delay=cfl_frac,
         )
-        peak_idx = np.argmax(np.abs(y_layer))
-        layer_peak_sign = np.sign(y_layer[peak_idx])
-        assert layer_peak_sign == base_peak_sign, (
-            f"i_layer={i}: peak sign {layer_peak_sign} != base sign {base_peak_sign}"
-        )
+        # Manual integer shift of base signal
+        shift = round(delay_per_layer_sec * i / dt_sim)
+        y_manual = np.zeros_like(y_base)
+        y_manual[shift:] = y_base[: len(y_base) - shift]
+
+        # NCC must be high (signals should be nearly identical)
+        ncc = np.dot(y_layer, y_manual) / (np.linalg.norm(y_layer) * np.linalg.norm(y_manual))
+        assert ncc > 0.999, f"i_layer={i}: NCC={ncc:.6f}, expected > 0.999"
 
 
 def test_integer_layer_delay_unchanged(base_params):
