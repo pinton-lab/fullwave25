@@ -61,6 +61,7 @@ def gaussian_modulated_sinusoidal_signal(
     dt = duration / nt
     t_offset = ncycles / f0 + delay_sec
 
+    phase_correction = 0.0
     if i_layer is not None:
         if dt_for_layer_delay is None:
             error_msg = "dt_for_layer_delay must be provided if i_layer is provided"
@@ -68,7 +69,17 @@ def gaussian_modulated_sinusoidal_signal(
         if cfl_for_layer_delay is None:
             error_msg = "cfl_for_layer_delay must be provided if i_layer is provided"
             raise ValueError(error_msg)
-        t_offset += (dt_for_layer_delay / cfl_for_layer_delay) * i_layer
+        layer_delay_sec = (dt_for_layer_delay / cfl_for_layer_delay) * i_layer
+        t_offset += layer_delay_sec
+        # Correct carrier phase for fractional-sample delays.
+        # A continuous time shift of a fractional number of samples changes
+        # the carrier phase at each discrete sample point, causing sign
+        # inversion and wrong peak positions. Remove the fractional phase
+        # offset so the carrier stays on the same discrete phase grid as
+        # the base (i_layer=0) signal.
+        delay_samples = layer_delay_sec / dt
+        fractional_samples = delay_samples - round(delay_samples)
+        phase_correction = 2.0 * np.pi * f0 * fractional_samples * dt
 
     t = np.arange(nt, dtype=dtype) * dt - t_offset
 
@@ -87,5 +98,5 @@ def gaussian_modulated_sinusoidal_signal(
     else:
         env = np.exp(-(a_sq**drop_off))
 
-    # Compute final signal
-    return env * np.sin(w_t) * p0
+    # Compute final signal with phase-corrected carrier
+    return env * np.sin(w_t + phase_correction) * p0

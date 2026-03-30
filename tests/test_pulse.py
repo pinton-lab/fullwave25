@@ -76,6 +76,62 @@ def test_float32_dtype(base_params):
     assert y.dtype == np.float32
 
 
+def test_fractional_layer_delay_preserves_phase(base_params):
+    """Fractional-sample layer delays must preserve peak polarity.
+
+    Previously, fractional delays caused carrier phase errors that inverted
+    the peak sign for odd layers (Finding 19 in cross-physics experiment).
+    """
+    # cfl=0.3 => dt_layer/cfl = 3.33e-8 s per i_layer
+    # dt_sim = 2.5e-9 s => 13.33 sim samples per i_layer (fractional)
+    dt_layer_frac = 1e-8
+    cfl_frac = 0.3
+
+    y_base = gaussian_modulated_sinusoidal_signal(**base_params)
+    base_peak_sign = np.sign(y_base[np.argmax(np.abs(y_base))])
+
+    for i in range(1, 6):
+        y_layer = gaussian_modulated_sinusoidal_signal(
+            **base_params,
+            i_layer=i,
+            dt_for_layer_delay=dt_layer_frac,
+            cfl_for_layer_delay=cfl_frac,
+        )
+        peak_idx = np.argmax(np.abs(y_layer))
+        layer_peak_sign = np.sign(y_layer[peak_idx])
+        assert layer_peak_sign == base_peak_sign, (
+            f"i_layer={i}: peak sign {layer_peak_sign} != base sign {base_peak_sign}"
+        )
+
+
+def test_integer_layer_delay_unchanged(base_params):
+    """Integer-sample layer delays should produce NCC ~ 1.0 vs manual shift."""
+    dt_layer = 1e-8
+    cfl_layer = 0.4
+    # delay per i_layer = 2.5e-8 s = 10 sim samples (integer)
+    dt_sim = base_params["duration"] / base_params["nt"]
+    delay_per_layer_samples = (dt_layer / cfl_layer) / dt_sim
+    assert delay_per_layer_samples == 10.0  # confirm integer
+
+    y_base = gaussian_modulated_sinusoidal_signal(**base_params)
+
+    for i_layer in [1, 2, 4]:
+        y_layer = gaussian_modulated_sinusoidal_signal(
+            **base_params,
+            i_layer=i_layer,
+            dt_for_layer_delay=dt_layer,
+            cfl_for_layer_delay=cfl_layer,
+        )
+        # Manual integer shift
+        shift = int(round(delay_per_layer_samples * i_layer))
+        y_manual = np.zeros_like(y_base)
+        y_manual[shift:] = y_base[: len(y_base) - shift]
+
+        # NCC should be very high
+        ncc = np.dot(y_layer, y_manual) / (np.linalg.norm(y_layer) * np.linalg.norm(y_manual))
+        assert ncc > 0.999, f"i_layer={i_layer}: NCC={ncc:.6f}, expected > 0.999"
+
+
 def test_performance(base_params):
     """Ensure the function completes in well under 1 second."""
     start = time.perf_counter()
