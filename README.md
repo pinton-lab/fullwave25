@@ -56,13 +56,16 @@ Fullwave 2.5 is developed and maintained by [Pinton Lab](https://github.com/pint
 If you use Fullwave 2.5 in your research, please cite this repository as:
 
 ```bibtex
-@software{Sode2025-fullwave25,
-  author = {Sode, Masashi and Pinton, Gianmarco},
-  title = {{Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities}},
-  year = {2025},
-  month = oct,
-  doi = {10.5281/zenodo.17497689},
-  url = {https://github.com/pinton-lab/fullwave25},
+@ARTICLE{Sode2026-rd,
+  title        = {Spatially heterogeneous power-law attenuation with multiple
+                  relaxation mechanisms for ultrasound modeling},
+  author       = {Sode, Masashi and Pinton, Gianmarco},
+  journaltitle = {arXiv [physics.med-ph]},
+  date         = {2026},
+  eprint       = {2606.11103},
+  eprinttype   = {arXiv},
+  eprintclass  = {physics.med-ph},
+  url          = {http://arxiv.org/abs/2606.11103},
 }
 
 @ARTICLE{Pinton2021-to,
@@ -76,6 +79,15 @@ If you use Fullwave 2.5 in your research, please cite this repository as:
   eprinttype   = {arXiv},
   eprintclass  = {physics.med-ph},
   url          = {http://arxiv.org/abs/2106.11476},
+}
+
+@software{Sode2025-fullwave25,
+  author = {Sode, Masashi and Pinton, Gianmarco},
+  title = {{Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities}},
+  year = {2025},
+  month = oct,
+  doi = {10.5281/zenodo.17497689},
+  url = {https://github.com/pinton-lab/fullwave25},
 }
 
 ```
