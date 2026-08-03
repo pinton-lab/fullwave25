@@ -68,18 +68,21 @@ If you use Fullwave 2.5 in your research, please cite this repository as:
   url          = {http://arxiv.org/abs/2606.11103},
 }
 
-@ARTICLE{Pinton2021-to,
-  title        = {A fullwave model of the nonlinear wave equation with multiple
-                  relaxations and relaxing perfectly matched layers for
-                  high-order numerical finite-difference solutions},
-  author       = {Pinton, Gianmarco},
-  journaltitle = {arXiv [physics.med-ph]},
-  date         = {2021-06-22},
-  eprint       = {2106.11476},
-  eprinttype   = {arXiv},
-  eprintclass  = {physics.med-ph},
-  url          = {http://arxiv.org/abs/2106.11476},
+@ARTICLE{Sode2026-fullwave2,
+  title     = "{A fullwave model of the nonlinear wave equation with multiple
+               relaxations and relaxing perfectly matched layers for high-order
+               numerical finite difference solutions}",
+  author    = "Sode, Masashi and Pinton, Gianmarco",
+  journal   = "Phys. Med. Biol.",
+  publisher = "IOP Publishing",
+  month     =  "27~" # jul,
+  year      =  2026,
+  url       = "http://dx.doi.org/10.1088/1361-6560/ae9116",
+  doi       = "10.1088/1361-6560/ae9116",
+  issn      = "0031-9155,1361-6560",
+  language  = "en"
 }
+
 
 @software{Sode2025-fullwave25,
   author = {Sode, Masashi and Pinton, Gianmarco},
