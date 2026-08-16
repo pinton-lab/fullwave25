@@ -54,10 +54,11 @@ COMPATIBLE_CUDA_VERSIONS = [
     12.4,
     12.9,
     13.0,
+    13.1,
 ]
 
 COMPATIBLE_CUDA_RANGES = [
-    (11.8, 13.0),
+    (11.8, 13.1),
 ]
 
 VERIFIED_CUDA_VERSIONS = [
@@ -332,6 +333,8 @@ class Solver:
         save_gpu_memory: bool = False,
         verify_gpu: bool = True,
         use_gpu_pml: bool = False,
+        pml_design: str = "decoupled",
+        pml_alpha_entrance: float | None = None,
     ) -> None:
         """Initialize a Solver instance for the fullwave simulation.
 
@@ -536,9 +539,9 @@ class Solver:
             n_transition_layer = 0
 
         if pml_layer_thickness_px is None:
-            pml_layer_thickness_px = self.grid.ppw * 3
+            pml_layer_thickness_px = self.grid.ppw * 4
         if n_transition_layer is None:
-            n_transition_layer = self.grid.ppw * 3
+            n_transition_layer = self.grid.ppw * 2
 
         if source is not None:
             self.source = source
@@ -572,6 +575,14 @@ class Solver:
             verify_gpu=verify_gpu,
         )
 
+        if use_exponential_attenuation and pml_design != "medium_matched":
+            error_msg = (
+                f"pml_design {pml_design!r} is not implemented for the "
+                "exponential attenuation PML. Pass pml_design='medium_matched'."
+            )
+            logger.error(error_msg)
+            raise NotImplementedError(error_msg)
+
         if use_exponential_attenuation:
             self.pml_builder = PMLBuilderExponentialAttenuation(
                 grid=self.grid,
@@ -593,6 +604,8 @@ class Solver:
                 n_transition_layer=n_transition_layer,
                 use_isotropic_relaxation=use_isotropic_relaxation,
                 use_gpu=use_gpu_pml,
+                pml_design=pml_design,
+                pml_alpha_entrance=pml_alpha_entrance,
             )
 
     @staticmethod

@@ -178,6 +178,8 @@ class PMLBuilder:
         n_transition_layer: int = 40,
         use_isotropic_relaxation: bool = False,
         use_gpu: bool = False,
+        pml_design: str = "decoupled",
+        pml_alpha_entrance: float | None = None,
         # pml_alpha_target: float = 1.1,
         # pml_alpha_power_target: float = 1.6,
         # pml_strength_factor: float = 2.0,
@@ -215,6 +217,18 @@ class PMLBuilder:
         use_gpu : bool, optional
             If True, use CuPy for GPU-accelerated PML computation (default is False).
             Requires CuPy to be installed. Falls back to CPU if CuPy is unavailable.
+        pml_design : str, optional
+            How the two-stage PML is built from the medium's relaxation
+            parameters, ``medium_matched`` or ``decoupled``. Defaults to ``decoupled``.
+            Pass ``medium_matched`` to reproduce the PML used up to and
+            including version 1.2.6. Only the 2D path implements ``decoupled``;
+            the 3D path raises rather than silently building the other one.
+        pml_alpha_entrance : float, optional
+            The relaxation frequency at the inner edge of the PML layer, used by
+            ``decoupled`` only. ``None`` means twice the angular evaluation
+            frequency, which is where the reflection coefficient was measured to
+            be lowest. The optimum is sharp, so change it only with a
+            measurement in hand.
 
         """
         check_functions.check_instance(
@@ -249,6 +263,21 @@ class PMLBuilder:
             logger.warning(
                 "PMLBuilder: use_gpu=True but CuPy is not available. Falling back to CPU (numpy)."
             )
+
+        if pml_design not in ("medium_matched", "decoupled"):
+            error_msg = f"pml_design must be 'medium_matched' or 'decoupled', got {pml_design!r}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        if self.is_3d and pml_design != "medium_matched":
+            error_msg = (
+                f"pml_design {pml_design!r} is implemented for 2D only. "
+                "Pass pml_design='medium_matched' for a 3D simulation."
+            )
+            logger.error(error_msg)
+            raise NotImplementedError(error_msg)
+        self.pml_design = pml_design
+        self.pml_alpha_entrance = pml_alpha_entrance
+        logger.info("PMLBuilder: pml_design=%s", pml_design)
 
         self.m_spatial_order = m_spatial_order
         self.n_pml_layer = n_pml_layer
@@ -873,6 +902,123 @@ class PMLBuilder:
         extended_medium: fullwave.MediumRelaxationMaps = self.extended_medium.build()
         return extended_medium
 
+    def _medium_copy(self, relaxation_param_dict: dict, key: str) -> NDArray[np.float64]:
+        """Return a fresh float64 copy of one medium map."""
+        return self.xp.array(relaxation_param_dict[key], dtype=self.xp.float64, copy=True)
+
+    def _ramp_on_every_axis(
+        self, field: NDArray[np.float64], **kwargs: object
+    ) -> NDArray[np.float64]:
+        """Apply one ramp along both grid axes in turn."""
+        out = field
+        for axis_index in (0, 1):
+            out = self._apply_transition_and_pml(
+                out, array_shape=field.shape, axis=axis_index, is_3d=False, **kwargs
+            )
+        return out
+
+    def _empty_damping_in_transition_layer(
+        self, damping: NDArray[np.float64]
+    ) -> NDArray[np.float64]:
+        """Return the damping strength taken to zero across the transition layer."""
+        return self._ramp_on_every_axis(
+            damping,
+            value_target=0.0,
+            transition_type="cosine",
+            transit_within_transition_layer=True,
+        )
+
+    def _raise_damping_in_pml_layer(
+        self,
+        damping: NDArray[np.float64],
+        n_polynomial: float,
+        d_target_pml: float,
+    ) -> NDArray[np.float64]:
+        """Return the damping strength raised to the PML target across the PML layer."""
+        return self._ramp_on_every_axis(
+            damping,
+            value_target=d_target_pml,
+            n_polynomial=n_polynomial,
+            transition_type="polynomial",
+            transit_within_pml_layer=True,
+        )
+
+    def _splice_entrance_frequency_into_pml_layer(
+        self,
+        relaxation_frequency: NDArray[np.float64],
+        entrance: float,
+    ) -> NDArray[np.float64]:
+        """Return the relaxation frequency replaced by the CFS ramp inside the PML layer.
+
+        Replaced rather than ramped into, because ramping a relaxation frequency
+        through the evaluation frequency is what confines the damping to the
+        outer edge.
+        """
+        xp = self.xp
+        edge = self.m_spatial_order + self.n_pml_layer
+        out = xp.asarray(relaxation_frequency)
+        for axis_index in (0, 1):
+            ramp = xp.asarray(
+                self._apply_transition_and_pml(
+                    xp.full_like(relaxation_frequency, entrance),
+                    value_target=0.0,
+                    array_shape=relaxation_frequency.shape,
+                    axis=axis_index,
+                    transition_type="linear",
+                    transit_within_pml_layer=True,
+                    is_3d=False,
+                )
+            )
+            work = xp.moveaxis(out, axis_index, 0).copy()
+            band = xp.moveaxis(ramp, axis_index, 0)
+            work[:edge] = band[:edge]
+            work[work.shape[0] - edge :] = band[band.shape[0] - edge :]
+            out = xp.moveaxis(work, 0, axis_index)
+        return out
+
+    def _build_decoupled_2d(
+        self,
+        extended_medium: fullwave.MediumRelaxationMaps,
+        rename_dict: dict,
+        n_polynomial: float,
+        d_target_pml: float,
+    ) -> dict:
+        """Return every PML array for the `decoupled` design, 2D only.
+
+        Each interior mechanism is emptied inside the transition layer, then a
+        complex frequency shifted profile is built inside the PML layer alone,
+        so the result does not depend on the tissue.
+        """
+        entrance = (
+            4.0 * np.pi * self.extended_grid.f0
+            if self.pml_alpha_entrance is None
+            else self.pml_alpha_entrance
+        )
+        relaxation_param_dict = extended_medium.relaxation_param_dict
+        letters = sorted(key.split("_", 1)[1] for key in rename_dict if key.startswith("kappa_"))
+        out_dict: dict = {}
+        for letter in letters:
+            out_dict[f"kappa_{letter}"] = relaxation_param_dict[rename_dict[f"kappa_{letter}"]]
+            for nu in range(1, extended_medium.n_relaxation_mechanisms + 1):
+                damping = self._medium_copy(
+                    relaxation_param_dict, rename_dict[f"d_{letter}_nu{nu}"]
+                )
+                relaxation_frequency = self._medium_copy(
+                    relaxation_param_dict, rename_dict[f"alpha_{letter}_nu{nu}"]
+                )
+                emptied = self._empty_damping_in_transition_layer(damping)
+                if nu > 1:
+                    out_dict[f"d_{letter}_nu{nu}"] = emptied
+                    out_dict[f"alpha_{letter}_nu{nu}"] = relaxation_frequency
+                    continue
+                out_dict[f"d_{letter}_nu{nu}"] = self._raise_damping_in_pml_layer(
+                    emptied, n_polynomial, d_target_pml
+                )
+                out_dict[f"alpha_{letter}_nu{nu}"] = self._splice_entrance_frequency_into_pml_layer(
+                    relaxation_frequency, entrance
+                )
+        return out_dict
+
     def _apply_pml_2d(
         self,
         extended_medium: fullwave.MediumRelaxationMaps,
@@ -1057,7 +1203,13 @@ class PMLBuilder:
 
         items = list(rename_dict.items())
 
-        if self.xp is not np:
+        if self.pml_design == "decoupled":
+            results = list(
+                self._build_decoupled_2d(
+                    extended_medium, rename_dict, n_polynomial, d_target_pml
+                ).items()
+            )
+        elif self.xp is not np:
             # GPU path: run sequentially to avoid CuPy multi-thread CUDA context issues
             results = [
                 _compute_one(
@@ -1545,13 +1697,7 @@ class PMLBuilder:
             input_array = xp.asarray(input_array)
 
         # Move axis to 0 for uniform processing
-        working_array = xp.moveaxis(input_array, axis, 0)
-        if not use_gpu:
-            # make working_array writeable (numpy-specific)
-            working_array.setflags(write=True)
-        else:
-            # CuPy arrays are always writeable; ensure contiguous copy
-            working_array = working_array.copy()
+        working_array = xp.moveaxis(input_array, axis, 0).copy()
 
         # Apply boundary conditions
         working_array[: m_offset + layer_thickness] = value_target
