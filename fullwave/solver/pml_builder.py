@@ -823,7 +823,6 @@ class PMLBuilder:
         output_dtype: np.dtype | None = None,
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         xp = self.xp
-        use_gpu = xp is not np
 
         d_x = xp.asarray(d_x, dtype=xp.float64)
         kappa_x = xp.asarray(kappa_x, dtype=xp.float64)
@@ -832,18 +831,10 @@ class PMLBuilder:
 
         eps = xp.finfo(xp.float64).eps
 
-        if use_gpu:
-            b = xp.exp(-(d_x / kappa_x + alpha_x) * dt)
-            denom = kappa_x * (d_x + kappa_x * alpha_x) + eps
-            a = d_x / denom * (b - 1)
-        else:
-            eps_local = eps  # noqa: F841
-            # b = exp(-(dx/kappa_x + alpha_x) * dt)
-            b = ne.evaluate("exp(-(d_x/kappa_x + alpha_x) * dt)")
-            # denom = kappa_x*(dx + kappa_x*alpha_x) + eps
-            denom = ne.evaluate("kappa_x*(d_x + kappa_x*alpha_x) + eps_local")
-            # a = dx/denom*(b - 1)
-            a = ne.evaluate("d_x/denom*(b - 1)")
+        rate = d_x / kappa_x + alpha_x
+        two_over_dt = 2.0 / dt
+        b = (two_over_dt - rate) / (two_over_dt + rate)
+        a = -(d_x / (kappa_x**2 + eps)) / (rate + two_over_dt)
 
         if output_dtype is not None and output_dtype != xp.float64:
             a = a.astype(output_dtype, copy=False)

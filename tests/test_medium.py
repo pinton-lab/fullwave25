@@ -643,12 +643,15 @@ def test_calc_relaxation_param_dict_for_fw2_values(monkeypatch):
 
     fw2_dict = medium_relax.relaxation_param_dict_for_fw2
 
-    # Manually calculate expected a and b for nu1
-    expected_b = np.exp(-(d_x1_nu1 / kappa_x1 + alpha_x1_nu1) * dt)
-    eps = 1e-10
-    expected_a = (
-        d_x1_nu1 / (kappa_x1 * (d_x1_nu1 + kappa_x1 * alpha_x1_nu1) + eps) * (expected_b - 1)
-    )
+    # The bilinear recursion, which is what _calc_a_and_b implements. The
+    # earlier zero-order-hold form gave the same b to third order but twice
+    # this a, because there a0 and a1 are equal and the kernel applies the
+    # coefficient at two time levels, so each carries half the weight.
+    eps = np.finfo(np.float64).eps
+    rate = d_x1_nu1 / kappa_x1 + alpha_x1_nu1
+    two_over_dt = 2.0 / dt
+    expected_b = (two_over_dt - rate) / (two_over_dt + rate)
+    expected_a = -(d_x1_nu1 / (kappa_x1**2 + eps)) / (rate + two_over_dt)
 
     np.testing.assert_allclose(fw2_dict["b_pml_u1"], expected_b, rtol=1e-10)
     np.testing.assert_allclose(fw2_dict["a_pml_u1"], expected_a, rtol=1e-10)
