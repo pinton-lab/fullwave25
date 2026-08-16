@@ -956,25 +956,18 @@ class PMLBuilder:
         """
         xp = self.xp
         edge = self.m_spatial_order + self.n_pml_layer
-        out = xp.asarray(relaxation_frequency)
+        ramp = self._ramp_on_every_axis(
+            xp.full_like(relaxation_frequency, entrance),
+            value_target=0.0,
+            transition_type="linear",
+            transit_within_pml_layer=True,
+        )
+        inside_pml_layer = xp.zeros(relaxation_frequency.shape, dtype=bool)
         for axis_index in (0, 1):
-            ramp = xp.asarray(
-                self._apply_transition_and_pml(
-                    xp.full_like(relaxation_frequency, entrance),
-                    value_target=0.0,
-                    array_shape=relaxation_frequency.shape,
-                    axis=axis_index,
-                    transition_type="linear",
-                    transit_within_pml_layer=True,
-                    is_3d=False,
-                )
-            )
-            work = xp.moveaxis(out, axis_index, 0).copy()
-            band = xp.moveaxis(ramp, axis_index, 0)
-            work[:edge] = band[:edge]
-            work[work.shape[0] - edge :] = band[band.shape[0] - edge :]
-            out = xp.moveaxis(work, 0, axis_index)
-        return out
+            view = xp.moveaxis(inside_pml_layer, axis_index, 0)
+            view[:edge] = True
+            view[view.shape[0] - edge :] = True
+        return xp.where(inside_pml_layer, xp.asarray(ramp), xp.asarray(relaxation_frequency))
 
     def _build_decoupled_2d(
         self,
