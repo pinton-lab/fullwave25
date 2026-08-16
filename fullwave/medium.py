@@ -1090,6 +1090,8 @@ class Medium:
         n_relaxation_mechanisms: int = 2,
         attenuation_builder: str = "lookup",
         use_isotropic_relaxation: bool = True,
+        sound_speed_transfer: bool = True,
+        band_scale: float = 1.0,
         n_jobs: int = -1,
         dtype: type = np.float64,
         use_gpu: bool = False,
@@ -1139,6 +1141,17 @@ class Medium:
             This option omits the anisotropic relaxation mechanisms to model the attenuation.
             We usually recommend using isotropic relaxation mechanisms
             unless the anisotropic attenuation is required for the simulation.
+        sound_speed_transfer : bool, optional
+            Correct the looked-up relaxation parameters for the medium's sound
+            speed. The table was calibrated at 1540 m/s, where this is the
+            identity. Elsewhere the uncorrected attenuation is wrong by
+            1540/c, reaching 9.1% at a fat sound speed of 1412 m/s. Set False
+            to reproduce a result produced before this existed.
+        band_scale : float, optional
+            Transfer the calibration to a frequency band scaled by this factor,
+            so 0.1 moves the usable band from 1-20 MHz to 0.1-2 MHz. Give it
+            explicitly rather than deriving it from the transmit frequency,
+            which needs no transfer while it lies inside the calibrated band.
         n_jobs : int, optional
             Number of parallel jobs for relaxation parameter calculation.
             Default is -1, which uses all available CPUs.
@@ -1219,6 +1232,8 @@ class Medium:
             self.air_coords = np.empty((0, ndim), dtype=np.int64)
 
         self.attenuation_builder = attenuation_builder
+        self.sound_speed_transfer = sound_speed_transfer
+        self.band_scale = band_scale
         self.n_jobs = n_jobs
         self.check_fields()
         logger.debug("Medium instance created.")
@@ -1426,6 +1441,8 @@ class Medium:
                 alpha_coeff=self.alpha_coeff,
                 alpha_power=self.alpha_power,
                 path_database=self.path_relaxation_parameters_database,
+                band_scale=self.band_scale,
+                sound_speed=self.sound_speed if self.sound_speed_transfer else None,
             )
         else:
             error_msg = (

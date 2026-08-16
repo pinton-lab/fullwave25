@@ -35,6 +35,8 @@ class MediumBuilder:
         / "relaxation_params_database_num_relax=2_20260113_0957.mat",
         n_relaxation_mechanisms: int = 2,
         attenuation_builder: str = "lookup",
+        sound_speed_transfer: bool = True,
+        band_scale: float = 1.0,
         n_jobs: int = -1,
     ) -> None:
         """Initialize a DomainOrganizer.
@@ -82,6 +84,8 @@ class MediumBuilder:
         self.path_relaxation_parameters_database = path_relaxation_parameters_database
         self.n_relaxation_mechanisms = n_relaxation_mechanisms
         self.attenuation_builder = attenuation_builder
+        self.sound_speed_transfer = sound_speed_transfer
+        self.band_scale = band_scale
         self.n_jobs = n_jobs
 
     def register_domain(self, domain: Domain) -> None:
@@ -193,6 +197,8 @@ class MediumBuilder:
             path_relaxation_parameters_database=self.path_relaxation_parameters_database,
             n_relaxation_mechanisms=self.n_relaxation_mechanisms,
             attenuation_builder=self.attenuation_builder,
+            sound_speed_transfer=self.sound_speed_transfer,
+            band_scale=self.band_scale,
             n_jobs=self.n_jobs,
         )
 

@@ -17,6 +17,85 @@ from fullwave.solver.utils import initialize_relaxation_param_dict
 logger = logging.getLogger("__main__." + __name__)
 
 
+def _array_module(array: NDArray) -> object:
+    if isinstance(array, np.ndarray):
+        return np
+    import cupy as cp  # noqa: PLC0415
+
+    return cp
+
+
+def transfer_relaxation_params_to_sound_speed(
+    relaxation_param_dict: dict[str, NDArray[np.float64]],
+    sound_speed: NDArray[np.float64] | float,
+    n_relaxation_mechanisms: int = 2,
+    reference_sound_speed: float = 1540.0,
+) -> dict[str, NDArray[np.float64]]:
+    """Make a lookup entry deliver its requested attenuation law at another sound speed.
+
+    The wavenumber is ``omega / c`` times a bracket built from the relaxation
+    parameters alone, so an entry calibrated at ``reference_sound_speed`` and
+    used at ``c`` attenuates by the wrong factor ``reference_sound_speed / c``.
+    Scaling the bracket's departure from unity by ``c / reference_sound_speed``
+    corrects it. The relaxation frequencies are left alone so that no mechanism
+    moves through the evaluation band. An array ``sound_speed`` transfers per
+    voxel. The input dictionary is not modified.
+    """
+    xp = _array_module(next(iter(relaxation_param_dict.values())))
+    ratio = xp.asarray(sound_speed, dtype=xp.float64) / reference_sound_speed
+    if ratio.ndim == 0 and float(ratio) == 1.0:
+        return dict(relaxation_param_dict)
+
+    transferred = dict(relaxation_param_dict)
+    for direction in ("x1", "x2"):
+        stretching = f"kappa_{direction}"
+        transferred[stretching] = 1.0 + ratio * (relaxation_param_dict[stretching] - 1.0)
+        for i_relax in range(n_relaxation_mechanisms):
+            strength = f"d_{direction}_nu{i_relax + 1}"
+            transferred[strength] = ratio * relaxation_param_dict[strength]
+    return transferred
+
+
+def transfer_relaxation_params_to_band(
+    relaxation_param_dict: dict[str, NDArray[np.float64]],
+    band_scale: float,
+    n_relaxation_mechanisms: int = 2,
+) -> dict[str, NDArray[np.float64]]:
+    """Multiply every relaxation rate by ``band_scale``, the rate half of the band transfer.
+
+    Scaling the rates and the evaluation frequency together leaves each
+    relaxation term unchanged, so the transfer is exact. The stretching factors
+    are already non-dimensional and do not move. The key half is
+    ``band_scaled_alpha_coeff`` and runs before the table is read. The input
+    dictionary is not modified.
+    """
+    if band_scale == 1.0:
+        return dict(relaxation_param_dict)
+
+    transferred = dict(relaxation_param_dict)
+    for direction in ("x1", "x2"):
+        for i_relax in range(n_relaxation_mechanisms):
+            suffix = f"{direction}_nu{i_relax + 1}"
+            transferred[f"d_{suffix}"] = band_scale * relaxation_param_dict[f"d_{suffix}"]
+            transferred[f"alpha_{suffix}"] = band_scale * relaxation_param_dict[f"alpha_{suffix}"]
+    return transferred
+
+
+def band_scaled_alpha_coeff(
+    alpha_coeff: NDArray[np.float64],
+    alpha_power: NDArray[np.float64],
+    band_scale: float,
+) -> NDArray[np.float64]:
+    """Return the lookup key for a calibration band scaled by ``band_scale``.
+
+    The key half of the band transfer. The exponent carries over unchanged and
+    only the coefficient moves, with ``alpha_power == 1`` as the fixed point.
+    """
+    if band_scale == 1.0:
+        return alpha_coeff
+    return alpha_coeff * band_scale ** (alpha_power - 1.0)
+
+
 @nb.njit(parallel=True, fastmath=True)
 def _searchsorted_parallel_sorted_a(
     a_sorted: NDArray[np.float64],
@@ -336,9 +415,14 @@ def generate_relaxation_params(
     alpha_coeff: NDArray[np.float64],
     alpha_power: NDArray[np.float64],
     n_relaxation_mechanisms: int = 2,
-    path_database: Path = Path(__file__).parent
+    path_database: Path = Path(__file__).parent.parent
+    / "solver"
     / "bins"
+    / "database"
     / "relaxation_params_database_num_relax=2_20260113_0957.mat",
+    *,
+    band_scale: float = 1.0,
+    sound_speed: NDArray[np.float64] | float | None = None,
 ) -> dict[str, NDArray[np.float64]]:
     """Generate relaxation parameters using a precomputed lookup table and input attenuation values.
 
@@ -355,6 +439,12 @@ def generate_relaxation_params(
         Number of relaxation mechanisms (default is 4).
     path_database : Path, optional
         Path to the relaxation parameters database.
+    band_scale : float, optional
+        Transfer the calibration to a frequency band scaled by this factor.
+        1.0, the default, is the identity and reads the table as calibrated.
+    sound_speed : NDArray[np.float64] | float | None, optional
+        Transfer the calibration to this sound speed. None, the default, is no
+        transfer and reads the table as calibrated.
 
     Returns
     -------
@@ -366,7 +456,12 @@ def generate_relaxation_params(
         n_relaxation_mechanisms=n_relaxation_mechanisms,
         path_database=path_database,
     )
-    return relaxation_parameters_generator.generate(alpha_coeff, alpha_power)
+    return relaxation_parameters_generator.generate(
+        alpha_coeff,
+        alpha_power,
+        band_scale=band_scale,
+        sound_speed=sound_speed,
+    )
 
 
 class RelaxationParametersGenerator:
@@ -376,7 +471,8 @@ class RelaxationParametersGenerator:
         self,
         *,
         n_relaxation_mechanisms: int = 2,
-        path_database: Path = Path(__file__).parent
+        path_database: Path = Path(__file__).parent.parent
+        / "solver"
         / "bins"
         / "database"
         / "relaxation_params_database_num_relax=2_20260113_0957.mat",
@@ -443,11 +539,19 @@ class RelaxationParametersGenerator:
         self,
         alpha_coeff: NDArray[np.float64],
         alpha_power: NDArray[np.float64],
+        *,
+        band_scale: float = 1.0,
+        sound_speed: NDArray[np.float64] | float | None = None,
     ) -> dict[str, NDArray[np.float64]]:
         """Generate relaxation parameters based on attenuation values.
 
         Dispatches to CuPy GPU path when inputs are CuPy arrays,
         otherwise uses the Numba CPU path.
+
+        The band transfer straddles the table read, since its key half chooses
+        which entry is looked up and its rate half scales what comes back. The
+        sound-speed transfer only changes what comes back. Both default to the
+        identity.
 
         Parameters
         ----------
@@ -455,6 +559,10 @@ class RelaxationParametersGenerator:
             Array of attenuation coefficients.
         alpha_power : NDArray[np.float64]
             Array of attenuation power values.
+        band_scale : float, optional
+            Transfer the calibration to a frequency band scaled by this factor.
+        sound_speed : NDArray[np.float64] | float | None, optional
+            Transfer the calibration to this sound speed.
 
         Returns
         -------
@@ -462,11 +570,26 @@ class RelaxationParametersGenerator:
             A dictionary containing the computed relaxation parameters.
 
         """
-        use_gpu = not isinstance(alpha_coeff, np.ndarray)
+        alpha_coeff = band_scaled_alpha_coeff(alpha_coeff, alpha_power, band_scale)
 
+        use_gpu = not isinstance(alpha_coeff, np.ndarray)
         if use_gpu:
-            return self._generate_gpu(alpha_coeff, alpha_power)
-        return self._generate_cpu(alpha_coeff, alpha_power)
+            relaxation_param_dict = self._generate_gpu(alpha_coeff, alpha_power)
+        else:
+            relaxation_param_dict = self._generate_cpu(alpha_coeff, alpha_power)
+
+        relaxation_param_dict = transfer_relaxation_params_to_band(
+            relaxation_param_dict,
+            band_scale,
+            self.n_relaxation_mechanisms,
+        )
+        if sound_speed is not None:
+            relaxation_param_dict = transfer_relaxation_params_to_sound_speed(
+                relaxation_param_dict,
+                sound_speed,
+                self.n_relaxation_mechanisms,
+            )
+        return relaxation_param_dict
 
     def _generate_cpu(
         self,
