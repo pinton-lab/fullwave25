@@ -156,6 +156,33 @@ def _upload_or_convert_arrays(
     }
 
 
+def _resolve_lossless_marking(
+    alpha_coeff: NDArray[np.float64] | float | None,
+    lossless_coords: NDArray[np.int64] | None,
+    xp: ModuleType,
+    dtype: np.dtype,
+) -> tuple[NDArray[np.float64] | float | None, NDArray[np.int64] | None]:
+    """Return the stored `(alpha_coeff, lossless_coords)` pair.
+
+    A scalar stays a scalar and coordinates stay coordinates, so neither costs a
+    domain-sized array.
+    """
+    if lossless_coords is not None and np.ndim(alpha_coeff) > 0:
+        message = (
+            "lossless_coords and an array alpha_coeff both mark the lossless voxels, "
+            "so give one or the other"
+        )
+        raise ValueError(message)
+    if alpha_coeff is None:
+        stored_coefficient = None
+    elif np.ndim(alpha_coeff) == 0:
+        stored_coefficient = float(alpha_coeff)
+    else:
+        stored_coefficient = xp.atleast_2d(xp.asarray(alpha_coeff)).astype(dtype, copy=False)
+    stored_coords = None if lossless_coords is None else np.asarray(lossless_coords, dtype=np.int64)
+    return stored_coefficient, stored_coords
+
+
 @dataclass
 class MediumRelaxationMaps:
     """Medium class for Fullwave."""
@@ -167,6 +194,8 @@ class MediumRelaxationMaps:
     air_coords: NDArray[np.int64]
     relaxation_param_dict: dict[str, NDArray[np.float64]]
     relaxation_param_dict_for_fw2: dict[str, NDArray[np.float64]]
+    alpha_coeff: NDArray[np.float64] | float | None
+    lossless_coords: NDArray[np.int64] | None
     use_regression: bool = False
 
     def __init__(
@@ -177,6 +206,8 @@ class MediumRelaxationMaps:
         beta: NDArray[np.float64],
         relaxation_param_dict: dict[str, NDArray[np.float64]],
         *,
+        alpha_coeff: NDArray[np.float64] | float | None = None,
+        lossless_coords: NDArray[np.int64] | None = None,
         air_map: NDArray[np.int64] | None = None,
         air_coords: NDArray[np.int64] | None = None,
         n_relaxation_mechanisms: int = 2,
@@ -206,6 +237,16 @@ class MediumRelaxationMaps:
             key: kappa_x1, kappa_x2, d_x1_nu{i}, alpha_x1_nu{i}, d_x2_nu{i}, alpha_x2_nu{i}
             value.shape: [nx, ny] for 2D, [nx, ny, nz] for 3D for each value
             see Pinton, G. (2021) http://arxiv.org/abs/2106.11476 for more detail.
+        alpha_coeff : float or NDArray[np.float64], optional
+            Attenuation coefficient the relaxation parameters were built for
+            [dB/(MHz^y cm)]. Marks a voxel lossless where it is exactly 0, which
+            the relaxation maps alone cannot express because the lookup clips a
+            smaller request to its minimum. Prefer a scalar, or lossless_coords.
+            None leaves the zero-attenuation gate a no-op for this medium.
+        lossless_coords : NDArray[np.int64], optional
+            Coordinates of the voxels that carry no attenuation, shape
+            [n_lossless, ndim], as air_coords does for air. Mutually exclusive
+            with an array alpha_coeff.
         air_map: NDArray[np.int64], optional
             Binary matrix where the medium is air.
             shape: [nx, ny] for 2D, [nx, ny, nz] for 3D
@@ -261,6 +302,9 @@ class MediumRelaxationMaps:
             self.sound_speed = xp.atleast_2d(xp.asarray(sound_speed)).astype(self.dtype, copy=False)
             self.density = xp.atleast_2d(xp.asarray(density)).astype(self.dtype, copy=False)
             self.beta = xp.atleast_2d(xp.asarray(beta)).astype(self.dtype, copy=False)
+            self.alpha_coeff, self.lossless_coords = _resolve_lossless_marking(
+                alpha_coeff, lossless_coords, xp, self.dtype
+            )
         except Exception:
             if xp is np:
                 raise
