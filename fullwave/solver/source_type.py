@@ -90,11 +90,67 @@ def node_sound_speeds(
 
     The relation is local, so a source that crosses a sound-speed contrast
     carries one scale per node rather than one scale for the whole row.
+
+    `sound_speed` is a scalar, a map over the grid, or one value per source
+    position. A grid map has the dimension of the grid, so only the last form is
+    one dimensional with as many entries as there are positions.
     """
     values = np.asarray(sound_speed, dtype=float)
     if values.ndim == 0:
         return np.full(len(coords), float(values))
+    if values.ndim == 1 and len(values) == len(coords):
+        return values
     return values[tuple(np.asarray(coords).T)]
+
+
+def _mechanism_response(
+    relaxation: dict,
+    side: int,
+    kappa: NDArray[np.float64],
+    coords: NDArray[np.int64],
+    angular_frequency: float,
+) -> NDArray[np.complex128]:
+    """Return gamma for one side of the dispersion relation, at each source position."""
+    index = tuple(np.asarray(coords).T)
+    total = np.zeros(len(coords), dtype=complex)
+    mechanism = 1
+    while f"d_x{side}_nu{mechanism}" in relaxation:
+        strength = np.asarray(relaxation[f"d_x{side}_nu{mechanism}"], dtype=float)[index]
+        rate = np.asarray(relaxation[f"alpha_x{side}_nu{mechanism}"], dtype=float)[index]
+        total += (strength / kappa**2) / (strength / kappa + rate + 1j * angular_frequency)
+        mechanism += 1
+    return total
+
+
+def relaxation_phase_speed(
+    relaxation: dict,
+    sound_speed: NDArray[np.float64],
+    coords: NDArray[np.int64],
+    frequency: float,
+) -> NDArray[np.float64]:
+    """Return the phase speed at each source position, in m/s.
+
+    This is the dispersion relation of the multiple relaxation model, derived in
+    the appendix of the Fullwave 2 paper. With
+    `G_i = 1 / kappa_x_i - gamma_i`, the wavenumber is
+    `k = (omega / c) * (G_1 * G_2) ** -0.5`, and the phase speed is
+    `omega / k.real`.
+
+    The relaxation mechanisms move the wave off the stored sound speed, and an
+    added source radiates in proportion to the speed the wave actually travels
+    at. A drive scaled by the stored speed therefore radiates the wrong
+    amplitude by the ratio of the two speeds.
+    """
+    index = tuple(np.asarray(coords).T)
+    angular_frequency = 2 * np.pi * frequency
+    kappa_1 = np.asarray(relaxation["kappa_x1"], dtype=float)[index]
+    kappa_2 = np.asarray(relaxation["kappa_x2"], dtype=float)[index]
+    side_1 = 1 / kappa_1 - _mechanism_response(relaxation, 1, kappa_1, coords, angular_frequency)
+    side_2 = 1 / kappa_2 - _mechanism_response(relaxation, 2, kappa_2, coords, angular_frequency)
+    speeds = np.asarray(sound_speed, dtype=float)
+    stored = np.full(len(coords), float(speeds)) if speeds.ndim == 0 else speeds[index]
+    wavenumber = (angular_frequency / stored) * (side_1 * side_2) ** -0.5
+    return angular_frequency / wavenumber.real
 
 
 def additive_source(
@@ -153,18 +209,26 @@ def as_additive_source(
     grid : fullwave.Grid
         The grid the source is defined on, read for `dt` and `dx`.
     medium : fullwave.Medium
-        The medium, read for the sound speed at each source position.
+        The medium. Its relaxation parameters give the phase speed at each source
+        position. A medium without them is read for its sound speed instead.
 
     Returns
     -------
     Source
         A source with no assigned positions and a scaled additive drive.
     """
+    coords = np.asarray(source.incoords, dtype=np.int64)
+    relaxation = getattr(medium, "relaxation_param_dict", None)
+    speed = (
+        relaxation_phase_speed(relaxation, medium.sound_speed, coords, float(grid.f0))
+        if relaxation
+        else medium.sound_speed
+    )
     return additive_source(
         source.p0,
-        source.incoords,
+        coords,
         source.grid_shape,
-        medium.sound_speed,
+        speed,
         float(grid.dt),
         float(grid.dx),
     )

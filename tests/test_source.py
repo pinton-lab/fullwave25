@@ -211,7 +211,12 @@ def test_incoords_add_separate_from_incoords():
 
 
 def test_incoords_add_additive_only_with_explicit_coords():
-    """Additive-only source with grid_shape and incoords_add (no mask/coords)."""
+    """An additive-only source has no hard nodes.
+
+    The hard node list used to take the additive positions, which made the
+    solver assign a zero pressure at them on every step. That is a
+    pressure-release wall standing on the source.
+    """
     grid_shape = (2, 2)
     incoords_add = np.array([[0, 1], [1, 0]])
     p0_add = np.array([[0.1, 0.2], [0.3, 0.4]])
@@ -221,12 +226,43 @@ def test_incoords_add_additive_only_with_explicit_coords():
         coords_additive=incoords_add,
         p0_additive=p0_add,
     )
-    assert src.n_sources == 2
+    assert src.n_sources == 0
     assert src.n_sources_add == 2
-    np.testing.assert_array_equal(src.incoords, incoords_add)
+    assert src.incoords.shape == (0, 2)
+    assert src.p0.shape == (0, p0_add.shape[1])
     np.testing.assert_array_equal(src.incoords_add, incoords_add)
-    np.testing.assert_array_almost_equal(src.p0, np.zeros_like(p0_add))
     np.testing.assert_array_almost_equal(src.p0_additive, p0_add)
+
+
+def test_hard_and_additive_together_keep_their_own_nodes():
+    """A model may drive a clamped source and an added source at once."""
+    hard = np.zeros((6, 4), dtype=bool)
+    hard[0] = True
+    additive = np.zeros((6, 4), dtype=bool)
+    additive[3] = True
+    src = Source(
+        p0=np.ones((4, 5)),
+        mask=hard,
+        p0_additive=2 * np.ones((4, 5)),
+        mask_additive=additive,
+    )
+    assert src.n_sources == 4
+    assert src.n_sources_add == 4
+    np.testing.assert_array_equal(np.unique(src.incoords[:, 0]), [0])
+    np.testing.assert_array_equal(np.unique(src.incoords_add[:, 0]), [3])
+    assert src.p0.max() == 1.0
+    assert src.p0_additive.max() == 2.0
+
+
+def test_additive_only_with_mask_has_no_hard_nodes():
+    """The same holds when the additive positions come from a mask."""
+    mask_add = np.zeros((3, 4), dtype=bool)
+    mask_add[0] = True
+    p0_add = np.ones((4, 5))
+    src = Source(p0_additive=p0_add, mask_additive=mask_add)
+    assert src.n_sources == 0
+    assert src.n_sources_add == 4
+    assert src.grid_shape == (3, 4)
 
 
 def test_p0_additive_incoords_add_length_mismatch_raises():

@@ -85,6 +85,42 @@ def test_node_sound_speeds_follow_the_map():
     assert source_type.node_sound_speeds(speeds, coords).tolist() == [1540.0, 1600.0, 1540.0]
 
 
+def test_node_sound_speeds_pass_a_per_position_array_through():
+    coords = np.array([[0, 0], [0, 1], [0, 2]])
+    per_position = np.array([1500.0, 1540.0, 1580.0])
+    assert source_type.node_sound_speeds(per_position, coords).tolist() == per_position.tolist()
+
+
+def test_relaxation_phase_speed_matches_the_stored_speed_without_relaxation():
+    shape = (4, 3)
+    coords = np.array([[0, column] for column in range(shape[1])], dtype=np.int64)
+    relaxation = {
+        "kappa_x1": np.ones(shape),
+        "kappa_x2": np.ones(shape),
+        "d_x1_nu1": np.zeros(shape),
+        "alpha_x1_nu1": np.zeros(shape),
+        "d_x2_nu1": np.zeros(shape),
+        "alpha_x2_nu1": np.zeros(shape),
+    }
+    speeds = source_type.relaxation_phase_speed(relaxation, 1540.0, coords, 1e6)
+    assert speeds == pytest.approx(np.full(shape[1], 1540.0))
+
+
+def test_relaxation_phase_speed_follows_kappa():
+    shape = (4, 3)
+    coords = np.array([[0, column] for column in range(shape[1])], dtype=np.int64)
+    relaxation = {
+        "kappa_x1": np.full(shape, 1.01),
+        "kappa_x2": np.full(shape, 1.01),
+        "d_x1_nu1": np.zeros(shape),
+        "alpha_x1_nu1": np.zeros(shape),
+        "d_x2_nu1": np.zeros(shape),
+        "alpha_x2_nu1": np.zeros(shape),
+    }
+    speeds = source_type.relaxation_phase_speed(relaxation, 1540.0, coords, 1e6)
+    assert speeds == pytest.approx(np.full(shape[1], 1540.0 / 1.01))
+
+
 def test_conversion_empties_the_assigned_positions():
     shape = (6, 4)
     converted = source_type.as_additive_source(

@@ -131,23 +131,21 @@ class Source:
             self.grid_shape = mask.shape
             self.incoords = map_to_coords(mask)
         elif p0_additive is not None and (coords_additive is not None or mask_additive is not None):
-            # Additive-only: no primary mask/coords; use additive positions as primary
+            # Additive-only: there is no hard source, so the hard node list stays
+            # empty. Copying the additive positions here would make the solver
+            # assign a zero pressure at them on every step, which is a
+            # pressure-release wall standing on the source.
             if coords_additive is not None:
                 if grid_shape is None:
                     error_msg = "grid_shape is required for additive-only with coords_additive"
                     raise ValueError(
                         error_msg,
                     )
-                self.incoords = np.atleast_2d(coords_additive).astype(
-                    np.int64,
-                    copy=False,
-                )
                 self.grid_shape = tuple(grid_shape)
             else:
                 assert mask_additive is not None
-                mask_add = np.atleast_2d(mask_additive)
-                self.grid_shape = mask_add.shape
-                self.incoords = map_to_coords(mask_add)
+                self.grid_shape = np.atleast_2d(mask_additive).shape
+            self.incoords = np.empty((0, len(self.grid_shape)), dtype=np.int64)
         elif u0 is not None or v0 is not None or w0 is not None:
             # Velocity-only: no hard pressure nodes; pressure arrays will be empty
             if grid_shape is None:
@@ -198,7 +196,6 @@ class Source:
                 raise ValueError(error_msg)
             self.p0_additive = np.atleast_2d(p0_additive) if p0_additive is not None else None
         elif p0_additive is not None:
-            # Additive-only: icmat written as zeros
             p0_add = np.atleast_2d(p0_additive)
             n_add = _coords_add.shape[0] if _coords_add is not None else self.incoords.shape[0]
             if p0_add.shape[0] != n_add:
@@ -207,13 +204,7 @@ class Source:
                     f"(coords_additive/mask_additive or primary coords)"
                 )
                 raise ValueError(error_msg)
-            if _coords_add is None:
-                self.p0 = np.zeros_like(p0_add, dtype=np.float64)
-            else:
-                self.p0 = np.zeros(
-                    (self.incoords.shape[0], p0_add.shape[1]),
-                    dtype=np.float64,
-                )
+            self.p0 = np.zeros((self.incoords.shape[0], p0_add.shape[1]), dtype=np.float64)
             self.p0_additive = p0_add
         else:
             # Velocity-only: no pressure nodes; derive nt from the first velocity signal
