@@ -12,6 +12,12 @@ import fullwave
 from fullwave.solver.input_file_writer import InputFileWriter
 from fullwave.solver.launcher import Launcher
 from fullwave.solver.pml_builder import PMLBuilder, PMLBuilderExponentialAttenuation
+from fullwave.solver.source_type import (
+    CLAMPED,
+    SOURCE_TYPES,
+    as_additive_source,
+    is_additive,
+)
 from fullwave.utils import (
     MemoryTempfile,
     check_functions,
@@ -335,6 +341,7 @@ class Solver:
         use_gpu_pml: bool = False,
         pml_design: str = "decoupled",
         pml_alpha_entrance: float | None = None,
+        source_type: str = CLAMPED,
     ) -> None:
         """Initialize a Solver instance for the fullwave simulation.
 
@@ -550,6 +557,14 @@ class Solver:
         else:
             error_msg = "source or transducer must be provided"
             raise ValueError(error_msg)
+
+        if source_type not in SOURCE_TYPES:
+            error_msg = f"source_type {source_type!r} is not one of {SOURCE_TYPES}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        if is_additive(source_type):
+            self.source = as_additive_source(self.source, self.grid, self.medium)
+            logger.info("source_type=%s, the source is driven by addition", source_type)
 
         if sensor is not None:
             self.sensor = sensor

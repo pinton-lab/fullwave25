@@ -1,0 +1,158 @@
+"""Tests for the added source conversion."""
+
+import numpy as np
+import pytest
+
+import fullwave
+from fullwave.solver import source_type
+
+
+def _row_coords(shape, row=0):
+    return np.array([[row, column] for column in range(shape[1])], dtype=np.int64)
+
+
+def _source(shape, n_time=5, amplitude=1.0, row=0):
+    coords = _row_coords(shape, row)
+    p0 = np.full((len(coords), n_time), amplitude)
+    return fullwave.Source(p0=p0, coords=coords, grid_shape=shape)
+
+
+class _Medium:
+    def __init__(self, sound_speed):
+        self.sound_speed = sound_speed
+
+
+class _Grid:
+    def __init__(self, dt, dx):
+        self.dt = dt
+        self.dx = dx
+
+
+def test_scale_is_twice_the_courant_number():
+    dx = 9.625e-5
+    for courant in (0.2, 0.1, 0.05):
+        dt = courant * dx / 1540.0
+        assert source_type.additive_drive_scale(1540.0, dt, dx) == pytest.approx(2 * courant)
+
+
+def test_scale_follows_the_sound_speed():
+    dx = 1e-4
+    dt = 1e-8
+    slow = source_type.additive_drive_scale(1000.0, dt, dx)
+    fast = source_type.additive_drive_scale(2000.0, dt, dx)
+    assert fast == pytest.approx(2 * slow)
+
+
+def test_source_row_finds_the_row():
+    assert source_type.source_row(_row_coords((6, 4), row=3), (6, 4)) == 3
+
+
+def test_source_row_rejects_a_partial_row():
+    with pytest.raises(ValueError, match="one whole row of the grid"):
+        source_type.source_row(_row_coords((6, 4))[:2], (6, 4))
+
+
+def test_source_row_rejects_two_rows():
+    coords = np.concatenate([_row_coords((6, 4), row=0), _row_coords((6, 4), row=2)])
+    with pytest.raises(ValueError, match="one whole row of the grid"):
+        source_type.source_row(coords, (6, 4))
+
+
+def test_source_row_never_allocates_the_grid():
+    coords = np.array([[7, 0]], dtype=np.int64)
+    with pytest.raises(ValueError, match="one whole row of the grid"):
+        source_type.source_row(coords, (10**6, 10**6))
+
+
+def test_source_row_accepts_a_three_dimensional_row():
+    shape = (4, 3, 2)
+    coords = np.array(
+        [[1, y, z] for y in range(shape[1]) for z in range(shape[2])],
+        dtype=np.int64,
+    )
+    assert source_type.source_row(coords, shape) == 1
+
+
+def test_node_sound_speeds_from_a_scalar():
+    coords = np.array([[0, 0], [0, 1], [0, 2]])
+    assert source_type.node_sound_speeds(1540.0, coords).tolist() == [1540.0] * 3
+
+
+def test_node_sound_speeds_follow_the_map():
+    speeds = np.full((6, 4), 1540.0)
+    speeds[0, 1] = 1600.0
+    coords = np.array([[0, 0], [0, 1], [0, 2]])
+    assert source_type.node_sound_speeds(speeds, coords).tolist() == [1540.0, 1600.0, 1540.0]
+
+
+def test_conversion_empties_the_assigned_positions():
+    shape = (6, 4)
+    converted = source_type.as_additive_source(
+        _source(shape),
+        _Grid(dt=0.2 * 1e-4 / 1540.0, dx=1e-4),
+        _Medium(np.full(shape, 1540.0)),
+    )
+    assert converted.incoords.shape[0] == 0
+    assert converted.incoords_add.shape[0] == shape[1]
+
+
+def test_conversion_scales_the_drive():
+    shape = (6, 4)
+    dx = 1e-4
+    courant = 0.2
+    converted = source_type.as_additive_source(
+        _source(shape, amplitude=1.0e5),
+        _Grid(dt=courant * dx / 1540.0, dx=dx),
+        _Medium(np.full(shape, 1540.0)),
+    )
+    assert converted.p0_additive.max() == pytest.approx(1.0e5 * 2 * courant)
+
+
+def test_conversion_keeps_the_source_position():
+    shape = (6, 4)
+    converted = source_type.as_additive_source(
+        _source(shape, row=2),
+        _Grid(dt=0.2 * 1e-4 / 1540.0, dx=1e-4),
+        _Medium(np.full(shape, 1540.0)),
+    )
+    assert np.unique(converted.incoords_add[:, 0]).tolist() == [2]
+
+
+def test_a_varying_row_scales_node_by_node():
+    shape = (6, 4)
+    dx = 1e-4
+    courant = 0.2
+    speeds = np.full(shape, 1540.0)
+    speeds[0, 1] = 3080.0
+    converted = source_type.as_additive_source(
+        _source(shape, amplitude=1.0e5),
+        _Grid(dt=courant * dx / 1540.0, dx=dx),
+        _Medium(speeds),
+    )
+    drives = converted.p0_additive[:, 0]
+    column = converted.incoords_add[:, 1].tolist().index(1)
+    assert drives[column] == pytest.approx(1.0e5 * 2 * courant * 2)
+    assert drives.max() == pytest.approx(1.0e5 * 2 * courant * 2)
+
+
+def test_solver_rejects_an_unknown_source_type(tmp_path):
+    grid = fullwave.Grid((1e-3, 1e-3), 1e6, 1e-6, c0=1540, ppw=8, cfl=0.2)
+    shape = (grid.nx, grid.ny)
+    medium = fullwave.Medium(
+        grid=grid,
+        sound_speed=np.full(shape, 1540.0),
+        density=np.full(shape, 1000.0),
+        alpha_coeff=np.zeros(shape),
+        alpha_power=np.full(shape, 1.0001),
+        beta=np.zeros(shape),
+    )
+    sensor = fullwave.Sensor(mask=np.ones(shape, dtype=bool))
+    with pytest.raises(ValueError, match="source_type"):
+        fullwave.Solver(
+            work_dir=tmp_path,
+            grid=grid,
+            medium=medium,
+            source=_source(shape, n_time=grid.nt),
+            sensor=sensor,
+            source_type="assign",
+        )
