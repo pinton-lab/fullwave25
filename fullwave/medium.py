@@ -17,7 +17,10 @@ from fullwave import Grid
 from fullwave.solver.utils import initialize_relaxation_param_dict
 from fullwave.utils import check_functions, plot_utils
 from fullwave.utils.coordinates import coords_to_map, map_to_coords
-from fullwave.utils.relaxation_parameters import generate_relaxation_params
+from fullwave.utils.relaxation_parameters import (
+    band_scaled_sound_speed,
+    generate_relaxation_params,
+)
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -1136,6 +1139,7 @@ class Medium:
         use_isotropic_relaxation: bool = True,
         sound_speed_transfer: bool = True,
         band_scale: float = 1.0,
+        scale_to_requested_alpha_coeff: bool = False,
         n_jobs: int = -1,
         dtype: type = np.float64,
         use_gpu: bool = False,
@@ -1196,6 +1200,22 @@ class Medium:
             so 0.1 moves the usable band from 1-20 MHz to 0.1-2 MHz. Give it
             explicitly rather than deriving it from the transmit frequency,
             which needs no transfer while it lies inside the calibrated band.
+            A value other than 1.0 also moves the sound speed the built medium
+            carries, by up to 0.5%, because the transfer re-anchors the
+            Kramers-Kronig phase velocity. ``sound_speed`` is then the speed the
+            medium carries at the calibration reference frequency of 5 MHz, and
+            ``MediumRelaxationMaps.sound_speed`` reports the base speed that
+            gives it. See ``band_scaled_sound_speed``.
+        scale_to_requested_alpha_coeff : bool, optional
+            Give the requested attenuation coefficient rather than the
+            calibrated level the lookup serves. The coefficient axis holds
+            0.0022 and then 0.01 to 1.00 in absolute steps of 0.01, so a request
+            between two levels is served the one above and a request past either
+            end is clipped. Setting this True scales the relaxation departure by
+            the shortfall instead. It matters most under a band transfer, which
+            multiplies the request by a factor and often carries it off the
+            axis. False, the default, reproduces every result produced before
+            this existed.
         n_jobs : int, optional
             Number of parallel jobs for relaxation parameter calculation.
             Default is -1, which uses all available CPUs.
@@ -1278,6 +1298,7 @@ class Medium:
         self.attenuation_builder = attenuation_builder
         self.sound_speed_transfer = sound_speed_transfer
         self.band_scale = band_scale
+        self.scale_to_requested_alpha_coeff = scale_to_requested_alpha_coeff
         self.n_jobs = n_jobs
         self.check_fields()
         logger.debug("Medium instance created.")
@@ -1479,6 +1500,12 @@ class Medium:
 
         """
         logger.debug("Building MediumRelaxationMaps from alpha and power maps.")
+        sound_speed = band_scaled_sound_speed(
+            self.sound_speed,
+            self.alpha_coeff,
+            self.alpha_power,
+            self.band_scale,
+        )
         if self.attenuation_builder == "lookup":
             relaxation_param_dict = generate_relaxation_params(
                 n_relaxation_mechanisms=self.n_relaxation_mechanisms,
@@ -1486,7 +1513,8 @@ class Medium:
                 alpha_power=self.alpha_power,
                 path_database=self.path_relaxation_parameters_database,
                 band_scale=self.band_scale,
-                sound_speed=self.sound_speed if self.sound_speed_transfer else None,
+                sound_speed=sound_speed if self.sound_speed_transfer else None,
+                scale_to_requested_alpha_coeff=self.scale_to_requested_alpha_coeff,
             )
         else:
             error_msg = (
@@ -1502,7 +1530,7 @@ class Medium:
         # call xp.asarray on them in __init__)
         return MediumRelaxationMaps(
             grid=self.grid,
-            sound_speed=self.sound_speed,
+            sound_speed=sound_speed,
             density=self.density,
             beta=self.beta,
             relaxation_param_dict=relaxation_param_dict,

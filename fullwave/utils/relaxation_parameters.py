@@ -25,35 +25,175 @@ def _array_module(array: NDArray) -> object:
     return cp
 
 
+def scale_relaxation_attenuation(
+    relaxation_param_dict: dict[str, NDArray[np.float64]],
+    factor: NDArray[np.float64] | float,
+    n_relaxation_mechanisms: int = 2,
+    *,
+    exact: bool = False,
+) -> dict[str, NDArray[np.float64]]:
+    """Scale the attenuation coefficient of the relaxation parameters.
+
+    The attenuation coefficient is multiplied by ``factor``, and the exponent
+    does not move. Kramers-Kronig dispersion is proportional to the
+    coefficient, so the dispersion scales with it.
+
+    The wavenumber is ``omega / c`` times ``(S_x1 * S_x2) ** (-1/2)``, where each
+    ``S = 1 / kappa - gamma`` is the stretched spatial operator of one direction.
+    An ``S`` of one is a lossless, non-dispersive medium, and the whole
+    attenuation and dispersion of the model sit in how far ``S`` is from one.
+    Both rules below act on that quantity.
+
+    The default rule moves ``kappa`` toward one and scales every strength, and
+    leaves every rate. It is first order.
+
+    The exact rule holds ``S - 1`` exactly proportional to ``factor`` at every
+    frequency. It is refused where it would make a rate negative or carry a
+    stretching factor through zero, since the memory variable recursion is then
+    unstable. Those voxels take the default rule and a warning is logged.
+
+    An array ``factor`` scales per voxel. The input dictionary is not modified.
+
+    Parameters
+    ----------
+    relaxation_param_dict : dict[str, NDArray[np.float64]]
+        Relaxation parameters, as the lookup returns them.
+    factor : NDArray[np.float64] | float
+        What the attenuation coefficient is multiplied by.
+    n_relaxation_mechanisms : int, optional
+        Number of relaxation mechanisms.
+    exact : bool, optional
+        Use the exact rule. False, the default, is the first-order rule.
+
+    Returns
+    -------
+    dict[str, NDArray[np.float64]]
+        A new dictionary. A ``factor`` of 1.0 returns the input values unchanged.
+
+    """
+    xp = _array_module(next(iter(relaxation_param_dict.values())))
+    ratio = xp.asarray(factor, dtype=xp.float64)
+    if ratio.ndim == 0 and float(ratio) == 1.0:
+        return dict(relaxation_param_dict)
+
+    if not exact:
+        return _first_order_attenuation(
+            relaxation_param_dict, ratio, n_relaxation_mechanisms, xp=xp
+        )
+
+    candidate, admissible = _exact_attenuation(
+        relaxation_param_dict, ratio, n_relaxation_mechanisms, xp=xp
+    )
+    if bool(xp.all(admissible)):
+        return candidate
+
+    first_order = _first_order_attenuation(
+        relaxation_param_dict, ratio, n_relaxation_mechanisms, xp=xp
+    )
+    if not bool(xp.any(admissible)):
+        logger.warning(
+            "the exact attenuation scaling is inadmissible everywhere, "
+            "so the first-order rule is used instead.",
+        )
+        return first_order
+    logger.warning(
+        "the exact attenuation scaling is inadmissible at some voxels, "
+        "which take the first-order rule instead.",
+    )
+    return {
+        key: xp.where(admissible, candidate[key], first_order[key]) for key in relaxation_param_dict
+    }
+
+
+def _first_order_attenuation(
+    relaxation_param_dict: dict[str, NDArray[np.float64]],
+    ratio: NDArray[np.float64],
+    n_relaxation_mechanisms: int,
+    *,
+    xp: object,
+) -> dict[str, NDArray[np.float64]]:
+    """Move kappa toward one and scale every strength, leaving every rate.
+
+    A factor at or above ``1 / (1 - kappa)`` carries the stretching factor to zero
+    or below. The memory variable decay ``exp(-(d / kappa + rate) * dt)`` then
+    exceeds one and the recursion grows without bound, so that is refused.
+    """
+    scaled = dict(relaxation_param_dict)
+    for direction in ("x1", "x2"):
+        stretching = f"kappa_{direction}"
+        moved = 1.0 + ratio * (relaxation_param_dict[stretching] - 1.0)
+        if bool(xp.any(moved <= 0.0)):
+            error_msg = (
+                f"scaling the attenuation by this factor carries {stretching} to "
+                f"{float(xp.min(moved)):.6g}, at or below zero, which makes the memory "
+                "variable recursion unstable. The exact rule cannot reach zero, so a "
+                "smaller factor is the only route where it has already been refused."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        scaled[stretching] = moved
+        for i_relax in range(n_relaxation_mechanisms):
+            strength = f"d_{direction}_nu{i_relax + 1}"
+            scaled[strength] = ratio * relaxation_param_dict[strength]
+    return scaled
+
+
+def _exact_attenuation(
+    relaxation_param_dict: dict[str, NDArray[np.float64]],
+    ratio: NDArray[np.float64],
+    n_relaxation_mechanisms: int,
+    *,
+    xp: object,
+) -> tuple[dict[str, NDArray[np.float64]], NDArray[np.bool_]]:
+    """Hold each stretched operator exactly proportional, and say where that is admissible.
+
+    Each of the three lines is forced by matching one term of
+    ``S = 1 / kappa - gamma`` so that ``S - 1`` carries the factor exactly.
+    """
+    scaled = dict(relaxation_param_dict)
+    admissible = xp.ones_like(ratio + relaxation_param_dict["kappa_x1"], dtype=bool)
+    for direction in ("x1", "x2"):
+        stretching = f"kappa_{direction}"
+        before = relaxation_param_dict[stretching]
+        reciprocal = 1.0 + ratio * (1.0 / before - 1.0)
+        admissible = admissible & (reciprocal > 0.0)
+        after = 1.0 / xp.where(reciprocal > 0.0, reciprocal, 1.0)
+        scaled[stretching] = after
+        for i_relax in range(n_relaxation_mechanisms):
+            strength = f"d_{direction}_nu{i_relax + 1}"
+            rate = f"alpha_{direction}_nu{i_relax + 1}"
+            moved = ratio * relaxation_param_dict[strength] * (after / before) ** 2
+            shifted = (
+                relaxation_param_dict[rate]
+                + relaxation_param_dict[strength] / before
+                - moved / after
+            )
+            admissible = admissible & (shifted >= 0.0)
+            scaled[strength] = moved
+            scaled[rate] = shifted
+    return scaled, admissible
+
+
 def transfer_relaxation_params_to_sound_speed(
     relaxation_param_dict: dict[str, NDArray[np.float64]],
     sound_speed: NDArray[np.float64] | float,
     n_relaxation_mechanisms: int = 2,
     reference_sound_speed: float = 1540.0,
 ) -> dict[str, NDArray[np.float64]]:
-    """Make a lookup entry deliver its requested attenuation law at another sound speed.
+    """Hold a lookup entry's attenuation law fixed at another sound speed.
 
     The wavenumber is ``omega / c`` times a bracket built from the relaxation
     parameters alone, so an entry calibrated at ``reference_sound_speed`` and
     used at ``c`` attenuates by the wrong factor ``reference_sound_speed / c``.
-    Scaling the bracket's departure from unity by ``c / reference_sound_speed``
-    corrects it. The relaxation frequencies are left alone so that no mechanism
-    moves through the evaluation band. An array ``sound_speed`` transfers per
-    voxel. The input dictionary is not modified.
+    Scaling the attenuation by ``c / reference_sound_speed`` corrects it, which
+    is ``scale_relaxation_attenuation``. The relaxation
+    frequencies are left alone so that no mechanism moves through the evaluation
+    band. An array ``sound_speed`` transfers per voxel. The input dictionary is
+    not modified.
     """
     xp = _array_module(next(iter(relaxation_param_dict.values())))
     ratio = xp.asarray(sound_speed, dtype=xp.float64) / reference_sound_speed
-    if ratio.ndim == 0 and float(ratio) == 1.0:
-        return dict(relaxation_param_dict)
-
-    transferred = dict(relaxation_param_dict)
-    for direction in ("x1", "x2"):
-        stretching = f"kappa_{direction}"
-        transferred[stretching] = 1.0 + ratio * (relaxation_param_dict[stretching] - 1.0)
-        for i_relax in range(n_relaxation_mechanisms):
-            strength = f"d_{direction}_nu{i_relax + 1}"
-            transferred[strength] = ratio * relaxation_param_dict[strength]
-    return transferred
+    return scale_relaxation_attenuation(relaxation_param_dict, ratio, n_relaxation_mechanisms)
 
 
 def transfer_relaxation_params_to_band(
@@ -94,6 +234,71 @@ def band_scaled_alpha_coeff(
     if band_scale == 1.0:
         return alpha_coeff
     return alpha_coeff * band_scale ** (alpha_power - 1.0)
+
+
+def band_scaled_sound_speed(
+    sound_speed: NDArray[np.float64] | float,
+    alpha_coeff: NDArray[np.float64] | float,
+    alpha_power: NDArray[np.float64] | float,
+    band_scale: float,
+    reference_frequency_hz: float = 5.0e6,
+) -> NDArray[np.float64] | float:
+    """Return the sound speed a band-transferred entry must be built and used at.
+
+    A transferred entry quotes its sound speed at ``band_scale`` times
+    ``reference_frequency_hz`` rather than at ``reference_frequency_hz``, so its
+    whole phase velocity curve sits off by one constant in slowness. Building the
+    medium at the speed returned here puts the curve back.
+
+    Pass the same value to the medium and to the ``sound_speed`` argument of
+    ``generate_relaxation_params``, or the attenuation moves with the phase
+    velocity. ``Medium`` does both.
+
+    The constant belongs to the requested attenuation coefficient, so it is wrong
+    by the same factor wherever the lookup quantizes or clips that request.
+
+    Parameters
+    ----------
+    sound_speed : NDArray[np.float64] | float
+        Sound speed the medium is to carry at ``reference_frequency_hz`` [m/s].
+    alpha_coeff : NDArray[np.float64] | float
+        Attenuation coefficient [dB/cm/MHz^gamma].
+    alpha_power : NDArray[np.float64] | float
+        Attenuation power [unitless].
+    band_scale : float
+        Transfer the calibration to a frequency band scaled by this factor.
+    reference_frequency_hz : float, optional
+        Frequency the calibration quotes its sound speed at [Hz]. The shipped
+        table was fitted at 5 MHz over a 1 to 20 MHz band. The table file does
+        not record it, so it is carried here.
+
+    Returns
+    -------
+    NDArray[np.float64] | float
+        Sound speed to build the medium with [m/s]. A ``band_scale`` of 1.0
+        returns ``sound_speed`` unchanged.
+
+    """
+    if band_scale == 1.0:
+        return sound_speed
+
+    xp = np if np.isscalar(alpha_coeff) else _array_module(alpha_coeff)
+    coefficient = xp.asarray(alpha_coeff, dtype=xp.float64)
+    exponent = xp.asarray(alpha_power, dtype=xp.float64)
+
+    megahertz = reference_frequency_hz / 1.0e6
+    nepers_per_metre = coefficient * 100.0 * megahertz**exponent / (20.0 / np.log(10.0))
+    slope = nepers_per_metre / (2.0 * np.pi * reference_frequency_hz)
+
+    tangent_shift = xp.tan(exponent * np.pi / 2.0) * slope * (band_scale ** (exponent - 1.0) - 1.0)
+    logarithmic_shift = -(2.0 / np.pi) * slope * np.log(band_scale)
+    takes_the_logarithmic_branch = xp.mod(exponent, 2.0) == 1.0
+    shift = xp.where(takes_the_logarithmic_branch, logarithmic_shift, tangent_shift)
+
+    transferred = 1.0 / (1.0 / xp.asarray(sound_speed, dtype=xp.float64) + shift)
+    if np.isscalar(alpha_coeff) and np.isscalar(sound_speed):
+        return float(transferred)
+    return transferred
 
 
 @nb.njit(parallel=True, fastmath=True)
@@ -423,6 +628,7 @@ def generate_relaxation_params(
     *,
     band_scale: float = 1.0,
     sound_speed: NDArray[np.float64] | float | None = None,
+    scale_to_requested_alpha_coeff: bool = False,
 ) -> dict[str, NDArray[np.float64]]:
     """Generate relaxation parameters using a precomputed lookup table and input attenuation values.
 
@@ -445,6 +651,10 @@ def generate_relaxation_params(
     sound_speed : NDArray[np.float64] | float | None, optional
         Transfer the calibration to this sound speed. None, the default, is no
         transfer and reads the table as calibrated.
+    scale_to_requested_alpha_coeff : bool, optional
+        Give the requested attenuation coefficient rather than the calibrated
+        level the lookup serves. False, the default, reproduces every result
+        produced before this existed.
 
     Returns
     -------
@@ -461,6 +671,7 @@ def generate_relaxation_params(
         alpha_power,
         band_scale=band_scale,
         sound_speed=sound_speed,
+        scale_to_requested_alpha_coeff=scale_to_requested_alpha_coeff,
     )
 
 
@@ -542,6 +753,7 @@ class RelaxationParametersGenerator:
         *,
         band_scale: float = 1.0,
         sound_speed: NDArray[np.float64] | float | None = None,
+        scale_to_requested_alpha_coeff: bool = False,
     ) -> dict[str, NDArray[np.float64]]:
         """Generate relaxation parameters based on attenuation values.
 
@@ -563,6 +775,9 @@ class RelaxationParametersGenerator:
             Transfer the calibration to a frequency band scaled by this factor.
         sound_speed : NDArray[np.float64] | float | None, optional
             Transfer the calibration to this sound speed.
+        scale_to_requested_alpha_coeff : bool, optional
+            Give the requested attenuation coefficient rather than the
+            calibrated level the lookup serves.
 
         Returns
         -------
@@ -578,6 +793,14 @@ class RelaxationParametersGenerator:
         else:
             relaxation_param_dict = self._generate_cpu(alpha_coeff, alpha_power)
 
+        if scale_to_requested_alpha_coeff:
+            relaxation_param_dict = scale_relaxation_attenuation(
+                relaxation_param_dict,
+                self.alpha_coeff_shortfall(alpha_coeff),
+                self.n_relaxation_mechanisms,
+                exact=True,
+            )
+
         relaxation_param_dict = transfer_relaxation_params_to_band(
             relaxation_param_dict,
             band_scale,
@@ -590,6 +813,80 @@ class RelaxationParametersGenerator:
                 self.n_relaxation_mechanisms,
             )
         return relaxation_param_dict
+
+    def alpha_coeff_shortfall(
+        self,
+        alpha_coeff: NDArray[np.float64],
+    ) -> NDArray[np.float64]:
+        """Return the requested attenuation coefficient over the one the table serves.
+
+        The lookup takes the first calibrated level at or above the request, and
+        clips a request past either end of the axis. Pass the result to
+        ``scale_relaxation_attenuation`` to reach the request instead. A request
+        of zero returns zero, so a lossless voxel is served a bracket of one.
+
+        Parameters
+        ----------
+        alpha_coeff : NDArray[np.float64]
+            Attenuation coefficients as the lookup reads them, so already
+            through ``band_scaled_alpha_coeff`` where a band transfer applies.
+
+        Returns
+        -------
+        NDArray[np.float64]
+            The request divided by what the lookup serves, per voxel.
+
+        """
+        xp = np if isinstance(alpha_coeff, np.ndarray) else _array_module(alpha_coeff)
+        axis = xp.asarray(np.asarray(self.alpha_list).ravel().round(10))
+        return (
+            alpha_coeff / axis[self._axis_index(alpha_coeff, axis, self.alpha_min, self.alpha_max)]
+        )
+
+    def is_calibrated(
+        self,
+        alpha_coeff: NDArray[np.float64],
+        alpha_power: NDArray[np.float64],
+    ) -> NDArray[np.bool_]:
+        """Return whether the calibration produced a usable entry for each request.
+
+        The optimization did not converge at every cell of the grid, and the
+        table flags those rather than leaving them out. The lookup still serves a
+        flagged cell's parameters, so a caller that wants to exclude them has to
+        ask.
+
+        Parameters
+        ----------
+        alpha_coeff : NDArray[np.float64]
+            Attenuation coefficients as the lookup reads them, so already
+            through ``band_scaled_alpha_coeff`` where a band transfer applies.
+        alpha_power : NDArray[np.float64]
+            Attenuation power values.
+
+        Returns
+        -------
+        NDArray[np.bool_]
+            True where the calibration produced a usable entry, per voxel.
+
+        """
+        xp = np if isinstance(alpha_coeff, np.ndarray) else _array_module(alpha_coeff)
+        alpha_axis = xp.asarray(np.asarray(self.alpha_list).ravel().round(10))
+        power_axis = xp.asarray(np.asarray(self.power_list).ravel().round(10))
+        alpha_index = self._axis_index(alpha_coeff, alpha_axis, self.alpha_min, self.alpha_max)
+        power_index = self._axis_index(alpha_power, power_axis, self.power_min, self.power_max)
+        return ~xp.asarray(self.invalid_matrix).astype(bool)[alpha_index, power_index]
+
+    @staticmethod
+    def _axis_index(
+        value: NDArray[np.float64],
+        axis: NDArray[np.float64],
+        lowest: float,
+        highest: float,
+    ) -> NDArray[np.int64]:
+        """Return the axis index the lookup kernel selects, which clips at both ends."""
+        xp = np if isinstance(value, np.ndarray) else _array_module(value)
+        clipped = xp.clip(value, lowest, highest)
+        return xp.minimum(xp.searchsorted(axis, clipped, side="left"), axis.size - 1)
 
     def _generate_cpu(
         self,

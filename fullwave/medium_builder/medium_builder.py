@@ -37,6 +37,7 @@ class MediumBuilder:
         attenuation_builder: str = "lookup",
         sound_speed_transfer: bool = True,
         band_scale: float = 1.0,
+        scale_to_requested_alpha_coeff: bool = False,
         n_jobs: int = -1,
     ) -> None:
         """Initialize a DomainOrganizer.
@@ -86,6 +87,7 @@ class MediumBuilder:
         self.attenuation_builder = attenuation_builder
         self.sound_speed_transfer = sound_speed_transfer
         self.band_scale = band_scale
+        self.scale_to_requested_alpha_coeff = scale_to_requested_alpha_coeff
         self.n_jobs = n_jobs
 
     def register_domain(self, domain: Domain) -> None:
@@ -199,6 +201,7 @@ class MediumBuilder:
             attenuation_builder=self.attenuation_builder,
             sound_speed_transfer=self.sound_speed_transfer,
             band_scale=self.band_scale,
+            scale_to_requested_alpha_coeff=self.scale_to_requested_alpha_coeff,
             n_jobs=self.n_jobs,
         )
 
