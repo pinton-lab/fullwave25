@@ -279,8 +279,10 @@ class MediumRelaxationMaps:
         """
         check_functions.check_compatible_value(
             n_relaxation_mechanisms,
-            [2],
-            "Only n_relaxation_mechanisms=2 are supported currently.",
+            [1, 2, 3, 4, 5, 6],
+            "n_relaxation_mechanisms must be between 1 and 6. "
+            "A count other than 2 needs the n_relax solver kernel, "
+            "which reads the count from n_relax.dat.",
         )
         self.use_gpu = use_gpu
         self.xp: ModuleType = _get_array_module(use_gpu=use_gpu)
@@ -1231,8 +1233,10 @@ class Medium:
         """
         check_functions.check_compatible_value(
             n_relaxation_mechanisms,
-            [2],
-            "Only n_relaxation_mechanisms=2 are supported currently.",
+            [1, 2, 3, 4, 5, 6],
+            "n_relaxation_mechanisms must be between 1 and 6. "
+            "A count other than 2 needs the n_relax solver kernel, "
+            "which reads the count from n_relax.dat.",
         )
         check_functions.check_instance(grid, Grid)
         check_functions.check_path_exists(path_relaxation_parameters_database)

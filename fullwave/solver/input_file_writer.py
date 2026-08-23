@@ -1047,6 +1047,13 @@ class InputFileWriter:
                     rename_dict[f"a_pml_v{nu}"] = f"apmlv{nu}"
                     rename_dict[f"b_pml_v{nu}"] = f"bpmlv{nu}"
 
+        # the n_relax kernel reads the mechanism count from this file
+        self._queue_v_abs_write(
+            np.int32,
+            simulation_dir / "n_relax.dat",
+            self.medium.n_relaxation_mechanisms,
+        )
+
         # save relaxation params
         for var_name, var in relaxation_param_map_dict_for_fw2.items():
             if var_name in rename_dict:
