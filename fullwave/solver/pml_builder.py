@@ -180,6 +180,7 @@ class PMLBuilder:
         use_gpu: bool = False,
         pml_design: str = "decoupled",
         pml_alpha_entrance: float | None = None,
+        pml_unstretched: bool = True,
         # pml_alpha_target: float = 1.1,
         # pml_alpha_power_target: float = 1.6,
         # pml_strength_factor: float = 2.0,
@@ -206,6 +207,14 @@ class PMLBuilder:
             PML layer thickness (default is 40).
         n_transition_layer : int, optional
             Number of transition layers (default is 40).
+        pml_unstretched : bool, optional
+            Whether to carry the stretching factor of the medium to one across the
+            transition layer, before the absorbing layer starts (default is True).
+            The absorbing layer otherwise inherits the medium's own factor, and
+            its coefficients divide by the square of it, so a fitted factor far
+            from one mistunes the layer and it reflects. The interior keeps its
+            own factor either way, so a medium whose factor is already one is
+            unchanged.
         use_isotropic_relaxation : bool, optional
             Whether to use isotropic relaxation mechanisms for attenuation modeling
             to reduce memory usage while retaining accuracy.
@@ -277,6 +286,7 @@ class PMLBuilder:
             raise NotImplementedError(error_msg)
         self.pml_design = pml_design
         self.pml_alpha_entrance = pml_alpha_entrance
+        self.pml_unstretched = pml_unstretched
         logger.info("PMLBuilder: pml_design=%s", pml_design)
 
         self.m_spatial_order = m_spatial_order
@@ -1106,6 +1116,54 @@ class PMLBuilder:
         logger.info("zero-attenuation gate: %d voxels set lossless", count)
         return count
 
+    def _carry_stretching_to_one(
+        self,
+        relaxation_param_dict: dict[str, NDArray[np.float64]],
+        *,
+        is_3d: bool = False,
+    ) -> None:
+        """Carry every stretching factor map to one across the transition layer.
+
+        The absorbing layer builds its coefficients from the medium's stretching
+        factor, and the drive divides by the square of it. A fitted factor of
+        0.30 therefore multiplies that drive by 11 and the layer reflects.
+
+        The interior keeps its own factor. The factor reaches one before the
+        absorbing layer starts, so the layer is tuned to the speed the wave
+        actually arrives at.
+
+        ONLY `kappa_x1` MOVES. The impedance constraint holds `kappa_x2` at
+        exactly one, and a build that carries that constraint refuses a value
+        that is one part in a million away from it. A ramp toward one is not
+        exact at every cell, so `kappa_x2` is left alone.
+
+        Parameters
+        ----------
+        relaxation_param_dict : dict
+            The medium's relaxation maps, changed in place. The keys are the
+            python side names `kappa_x1` and `kappa_x2`, which the renaming to
+            the fullwave 2 names happens after.
+        is_3d : bool, optional
+            Whether the domain is three dimensional (default is False).
+        """
+        for key in ("kappa_x1",):
+            if key not in relaxation_param_dict:
+                continue
+            found = np.asarray(relaxation_param_dict[key], dtype=np.float64)
+            if found.ndim == 0 or np.allclose(found, 1.0):
+                continue
+            for axis in range(3 if is_3d else 2):
+                found = self._apply_transition_and_pml(
+                    found,
+                    value_target=1.0,
+                    array_shape=found.shape,
+                    axis=axis,
+                    transition_type="cosine",
+                    transit_within_transition_layer=True,
+                    is_3d=is_3d,
+                )
+            relaxation_param_dict[key] = found
+
     def _apply_pml_2d(
         self,
         extended_medium: fullwave.MediumRelaxationMaps,
@@ -1136,6 +1194,8 @@ class PMLBuilder:
             The extended medium relaxation parameters with PML applied.
 
         """
+        if self.pml_unstretched:
+            self._carry_stretching_to_one(extended_medium.relaxation_param_dict, is_3d=False)
         logger.debug("Applying 2D PML...")
         self._apply_zero_attenuation_gate(extended_medium.relaxation_param_dict)
         # alpha=0 and d=0 will make a and b in the PML be 0
@@ -1412,6 +1472,8 @@ class PMLBuilder:
             The extended medium relaxation parameters with PML applied.
 
         """
+        if self.pml_unstretched:
+            self._carry_stretching_to_one(extended_medium.relaxation_param_dict, is_3d=True)
         logger.debug("Applying 3D PML...")
         self._apply_zero_attenuation_gate(extended_medium.relaxation_param_dict)
         # alpha=0 and d=0 will make a and b in the PML be 0
