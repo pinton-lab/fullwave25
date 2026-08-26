@@ -9,6 +9,7 @@ import pytest
 from scipy.io import loadmat
 
 import fullwave
+from fullwave.solver.shipped_database import ShippedDatabase
 from fullwave.utils import relaxation_parameters
 from fullwave.utils.relaxation_parameters import (
     RelaxationParametersGenerator,
@@ -23,6 +24,13 @@ from fullwave.utils.relaxation_parameters import (
 
 @pytest.fixture(scope="module")
 def database_path() -> Path:
+    """Return the table the package ships as its default."""
+    return ShippedDatabase.table
+
+
+@pytest.fixture(scope="module")
+def two_mechanism_table() -> Path:
+    """Return the two mechanism table, which the package also ships."""
     return (
         Path(fullwave.__file__).parent
         / "solver"
@@ -50,6 +58,22 @@ def whole_table(whole_grid: tuple[np.ndarray, np.ndarray]) -> dict[str, np.ndarr
     return generate_relaxation_params(alpha_coeff=alpha_coeff, alpha_power=alpha_power)
 
 
+@pytest.fixture(scope="module")
+def calibrated_table(
+    whole_grid: tuple[np.ndarray, np.ndarray], whole_table: dict[str, np.ndarray]
+) -> dict[str, np.ndarray]:
+    """Return the cells the fit served, which is where a transfer rule has to hold.
+
+    A cell the fit refused carries zeros, so its stretching factor is zero and
+    every rule that divides by it is undefined there. The lookup still serves it
+    and warns, and no medium should ask for one.
+    """
+    alpha_coeff, alpha_power = whole_grid
+    generator = RelaxationParametersGenerator()
+    calibrated = np.asarray(generator.is_calibrated(alpha_coeff, alpha_power))
+    return {key: np.asarray(value)[calibrated] for key, value in whole_table.items()}
+
+
 @pytest.fixture
 def stretching_keys() -> tuple[str, ...]:
     return ("kappa_x1", "kappa_x2")
@@ -57,12 +81,20 @@ def stretching_keys() -> tuple[str, ...]:
 
 @pytest.fixture
 def strength_keys() -> tuple[str, ...]:
-    return ("d_x1_nu1", "d_x1_nu2", "d_x2_nu1", "d_x2_nu2")
+    return tuple(
+        f"d_{direction}_nu{order}"
+        for direction in ("x1", "x2")
+        for order in range(1, ShippedDatabase.mechanisms + 1)
+    )
 
 
 @pytest.fixture
 def rate_keys() -> tuple[str, ...]:
-    return ("alpha_x1_nu1", "alpha_x1_nu2", "alpha_x2_nu1", "alpha_x2_nu2")
+    return tuple(
+        f"alpha_{direction}_nu{order}"
+        for direction in ("x1", "x2")
+        for order in range(1, ShippedDatabase.mechanisms + 1)
+    )
 
 
 def test_default_database_path_exists(database_path: Path) -> None:
@@ -86,13 +118,13 @@ def test_sound_speed_transfer_is_bit_exact_identity_at_the_calibration_speed(
 
 
 def test_sound_speed_transfer_leaves_the_relaxation_frequencies_alone(
-    whole_table: dict[str, np.ndarray],
+    calibrated_table: dict[str, np.ndarray],
     rate_keys: tuple[str, ...],
 ) -> None:
     for sound_speed in (1350.0, 1412.0, 1566.0, 1800.0):
-        transferred = transfer_relaxation_params_to_sound_speed(whole_table, sound_speed)
+        transferred = transfer_relaxation_params_to_sound_speed(calibrated_table, sound_speed)
         for key in rate_keys:
-            np.testing.assert_array_equal(transferred[key], whole_table[key], err_msg=key)
+            np.testing.assert_array_equal(transferred[key], calibrated_table[key], err_msg=key)
 
 
 def test_sound_speed_transfer_moves_kappa_toward_one(
@@ -120,19 +152,34 @@ def test_kappa_of_one_is_a_fixed_point(
             np.testing.assert_array_equal(transferred[key], np.ones((3, 3)), err_msg=key)
 
 
-def test_transferred_kappa_stays_close_to_the_fitted_range(
-    whole_table: dict[str, np.ndarray],
+def test_transferred_kappa_stays_strictly_positive(
+    calibrated_table: dict[str, np.ndarray],
     stretching_keys: tuple[str, ...],
 ) -> None:
-    """The fitted range is [0.98, 1.00] and the excursion below it is one sided."""
+    """A stretching factor at or below zero makes the memory recursion unstable.
+
+    The shipped table was fitted over a wide range, so `kappa_x1` runs from
+    0.300000 to 1.006347 over the cells the fit served. The transfer moves it
+    away from one as the sound speed rises, and the lowest value it reaches over
+    1350 to 1800 m/s is 0.181818.
+    """
+    lowest = 1.0
     for sound_speed in (1350.0, 1412.0, 1540.0, 1566.0, 1800.0):
-        transferred = transfer_relaxation_params_to_sound_speed(whole_table, sound_speed)
+        transferred = transfer_relaxation_params_to_sound_speed(calibrated_table, sound_speed)
         for key in stretching_keys:
-            assert transferred[key].min() >= 0.9766
-            assert transferred[key].max() <= 1.0
-            assert np.abs(transferred[key] - whole_table[key]).max() <= 0.0034
-            if sound_speed <= 1540.0:
-                assert transferred[key].min() >= 0.98
+            assert transferred[key].min() > 0.0, key
+            lowest = min(lowest, float(transferred[key].min()))
+    assert lowest == pytest.approx(0.181818, abs=1e-6)
+
+
+def test_the_shipped_stretching_factors_hold_their_measured_range(
+    calibrated_table: dict[str, np.ndarray],
+) -> None:
+    """The momentum operator is pinned and the constitutive one carries the fit."""
+    assert calibrated_table["kappa_x2"].min() == pytest.approx(1.0)
+    assert calibrated_table["kappa_x2"].max() == pytest.approx(1.0)
+    assert calibrated_table["kappa_x1"].min() == pytest.approx(0.3, abs=1e-9)
+    assert calibrated_table["kappa_x1"].max() == pytest.approx(1.006347, abs=1e-6)
 
 
 def test_sound_speed_transfer_is_per_voxel(
@@ -419,13 +466,13 @@ def test_the_attenuation_scaling_is_a_bit_exact_identity_at_one(
 
 
 def test_the_sound_speed_transfer_is_the_attenuation_scaling(
-    whole_table: dict[str, np.ndarray],
+    calibrated_table: dict[str, np.ndarray],
 ) -> None:
     """One operation, two callers. Two implementations of one thing drift."""
     for sound_speed in (1350.0, 1412.0, 1566.0, 1800.0):
-        transferred = transfer_relaxation_params_to_sound_speed(whole_table, sound_speed)
-        scaled = scale_relaxation_attenuation(whole_table, sound_speed / 1540.0)
-        for key in whole_table:
+        transferred = transfer_relaxation_params_to_sound_speed(calibrated_table, sound_speed)
+        scaled = scale_relaxation_attenuation(calibrated_table, sound_speed / 1540.0)
+        for key in calibrated_table:
             np.testing.assert_array_equal(transferred[key], scaled[key], err_msg=key)
 
 
@@ -455,6 +502,9 @@ def test_scaling_to_the_request_leaves_a_calibrated_level_alone(
 ) -> None:
     """Every cell of the shipped grid is a calibrated level, so nothing may move."""
     alpha_coeff, alpha_power = whole_grid
+    generator = RelaxationParametersGenerator()
+    calibrated = np.asarray(generator.is_calibrated(alpha_coeff, alpha_power))
+    alpha_coeff, alpha_power = alpha_coeff[calibrated], alpha_power[calibrated]
     plain = generate_relaxation_params(alpha_coeff=alpha_coeff, alpha_power=alpha_power)
     scaled = generate_relaxation_params(
         alpha_coeff=alpha_coeff,
@@ -510,15 +560,23 @@ def test_the_first_order_rule_is_not_exactly_proportional(
     assert proportional > 0.01
 
 
-def test_the_exact_rule_keeps_every_rate_positive(whole_table: dict[str, np.ndarray]) -> None:
-    """A negative rate makes the solver recursion coefficient exceed one."""
+def test_the_exact_rule_keeps_every_rate_positive(
+    calibrated_table: dict[str, np.ndarray],
+    rate_keys: tuple[str, ...],
+    stretching_keys: tuple[str, ...],
+) -> None:
+    """A negative rate makes the solver recursion coefficient exceed one.
+
+    The stretching factor has no ceiling of one on the shipped table, because the
+    fit was given a wide range so it could raise the phase velocity at a high
+    exponent. It must stay strictly above zero, which is the stability limit.
+    """
     for factor in (0.1, 0.5, 2.0, 3.1623):
-        scaled = scale_relaxation_attenuation(whole_table, factor, exact=True)
-        for key in ("alpha_x1_nu1", "alpha_x1_nu2", "alpha_x2_nu1", "alpha_x2_nu2"):
+        scaled = scale_relaxation_attenuation(calibrated_table, factor, exact=True)
+        for key in rate_keys:
             assert scaled[key].min() >= 0.0, key
-        for key in ("kappa_x1", "kappa_x2"):
-            assert scaled[key].min() > 0.0
-            assert scaled[key].max() <= 1.0
+        for key in stretching_keys:
+            assert scaled[key].min() > 0.0, key
 
 
 def test_scaling_to_the_request_moves_a_quantized_request(
@@ -534,8 +592,8 @@ def test_scaling_to_the_request_moves_a_quantized_request(
     expected = scale_relaxation_attenuation(plain, 0.155 / 0.16, exact=True)
     for key in (*stretching_keys, "d_x1_nu1", "alpha_x1_nu1"):
         np.testing.assert_allclose(scaled[key], expected[key], rtol=1e-12, err_msg=key)
-    for key in stretching_keys:
-        assert not np.allclose(scaled[key], plain[key])
+    assert not np.allclose(scaled["kappa_x1"], plain["kappa_x1"])
+    np.testing.assert_allclose(scaled["kappa_x2"], plain["kappa_x2"], rtol=1e-12)
 
 
 def test_scaling_to_the_request_makes_a_lossless_voxel_exactly_lossless() -> None:
@@ -568,7 +626,8 @@ def test_scaling_to_the_request_recovers_a_band_transfer_that_clips(
     expected = scale_relaxation_attenuation(plain, ratio, exact=True)
     for key, value in expected.items():
         np.testing.assert_allclose(scaled[key], value, rtol=1e-12, err_msg=key)
-    assert scaled["d_x1_nu1"] / plain["d_x1_nu1"] == pytest.approx(ratio, rel=1e-9)
+    moved = (scaled["kappa_x1"] / plain["kappa_x1"]) ** 2
+    assert scaled["d_x1_nu1"] / plain["d_x1_nu1"] == pytest.approx(ratio * moved, rel=1e-9)
     del stretching_keys
 
 
@@ -586,7 +645,7 @@ def test_a_stretching_factor_of_one_is_a_fixed_point_of_the_exact_rule() -> None
         "d_x2_nu2": np.full((1, 1), 1.0e5),
         "alpha_x2_nu2": np.full((1, 1), 1.0e7),
     }
-    scaled = scale_relaxation_attenuation(one_cell, 3.0, exact=True)
+    scaled = scale_relaxation_attenuation(one_cell, 3.0, 2, exact=True)
     np.testing.assert_array_equal(scaled["kappa_x1"], np.ones((1, 1)))
     assert scaled["kappa_x2"] < one_cell["kappa_x2"]
     np.testing.assert_allclose(scaled["d_x1_nu1"], 3.0 * 1.0e5, rtol=1e-12)
@@ -615,45 +674,71 @@ def test_medium_carries_the_request_scaling_through_to_the_build() -> None:
     assert not np.allclose(scaled["kappa_x1"], plain["kappa_x1"])
 
 
-def test_the_shipped_table_flags_389_of_its_1717_cells(
-    database_path: Path, whole_grid: tuple[np.ndarray, np.ndarray]
+def test_the_shipped_table_flags_69_of_its_1717_cells(
+    whole_grid: tuple[np.ndarray, np.ndarray],
 ) -> None:
-    """1328 cells passed the calibration, which is the number the manuscript prints."""
+    """1648 cells passed the calibration of the four mechanism table."""
     alpha_coeff, alpha_power = whole_grid
-    generator = RelaxationParametersGenerator(path_database=database_path)
+    generator = RelaxationParametersGenerator()
+    calibrated = generator.is_calibrated(alpha_coeff, alpha_power)
+    assert calibrated.size == 1717
+    assert int(calibrated.sum()) == 1648
+    assert int((~calibrated).sum()) == 69
+
+
+def test_the_flagged_cells_gather_at_the_high_exponents(
+    whole_grid: tuple[np.ndarray, np.ndarray],
+) -> None:
+    """63 of the 69 flagged cells sit at an exponent of 1.5 or above."""
+    alpha_coeff, alpha_power = whole_grid
+    generator = RelaxationParametersGenerator()
+    flagged = ~generator.is_calibrated(alpha_coeff, alpha_power)
+    assert int(flagged[alpha_power >= 1.5].sum()) == 63
+    assert int(flagged[alpha_power < 1.5].sum()) == 6
+
+
+def test_the_two_mechanism_table_flags_389_of_its_1717_cells(
+    two_mechanism_table: Path,
+) -> None:
+    """1328 cells passed that calibration, which is the number the paper prints.
+
+    The package still ships that table, and the paper's count is checked against
+    it rather than against the table the package now defaults to.
+    """
+    generator = RelaxationParametersGenerator(
+        n_relaxation_mechanisms=2, path_database=two_mechanism_table
+    )
+    alpha_coeff, alpha_power = np.meshgrid(
+        np.asarray(generator.alpha_list).ravel(),
+        np.asarray(generator.power_list).ravel(),
+        indexing="ij",
+    )
     calibrated = generator.is_calibrated(alpha_coeff, alpha_power)
     assert calibrated.size == 1717
     assert int(calibrated.sum()) == 1328
     assert int((~calibrated).sum()) == 389
 
 
-def test_the_flagged_cells_gather_at_the_high_exponents(
-    database_path: Path, whole_grid: tuple[np.ndarray, np.ndarray]
+def test_the_coefficient_axis_is_full_except_at_two_exponents(
+    whole_grid: tuple[np.ndarray, np.ndarray],
 ) -> None:
-    """369 of the 389 flagged cells sit at an exponent of 1.5 or above."""
-    alpha_coeff, alpha_power = whole_grid
-    generator = RelaxationParametersGenerator(path_database=database_path)
-    flagged = ~generator.is_calibrated(alpha_coeff, alpha_power)
-    assert int(flagged[alpha_power >= 1.5].sum()) == 369
-    assert int(flagged[alpha_power < 1.5].sum()) == 20
+    """The four mechanism fit reaches the top of the axis at 15 of the 17 exponents.
 
-
-def test_the_largest_calibrated_coefficient_falls_as_the_exponent_rises(
-    database_path: Path, whole_grid: tuple[np.ndarray, np.ndarray]
-) -> None:
-    """Above 1.4 the usable part of the coefficient axis shrinks at every step."""
+    It stops at 0.94 at an exponent of 1.8 and at 0.7 at an exponent of 1.999.
+    """
     alpha_coeff, alpha_power = whole_grid
-    generator = RelaxationParametersGenerator(path_database=database_path)
+    generator = RelaxationParametersGenerator()
     calibrated = generator.is_calibrated(alpha_coeff, alpha_power)
     exponents = alpha_power[0, :]
-    largest = [
-        alpha_coeff[:, column][calibrated[:, column]].max()
+    largest = {
+        float(exponents[column]): float(alpha_coeff[:, column][calibrated[:, column]].max())
         for column in range(calibrated.shape[1])
-        if exponents[column] >= 1.4
-    ]
-    assert largest == sorted(largest, reverse=True)
-    assert largest[0] == pytest.approx(1.0)
-    assert largest[-1] == pytest.approx(0.1)
+    }
+    assert len(largest) == 17
+    assert largest[1.8] == pytest.approx(0.94)
+    assert largest[1.999] == pytest.approx(0.7)
+    full = [exponent for exponent, held in largest.items() if held == pytest.approx(1.0)]
+    assert len(full) == 15
 
 
 def test_a_request_off_the_axis_reports_the_flag_of_the_cell_it_clips_to(
@@ -675,7 +760,7 @@ def _memory_decay(relaxation_param_dict: dict[str, np.ndarray], time_step: float
     held = []
     for direction in ("x1", "x2"):
         kappa = relaxation_param_dict[f"kappa_{direction}"]
-        for i_relax in (1, 2):
+        for i_relax in range(1, ShippedDatabase.mechanisms + 1):
             strength = relaxation_param_dict[f"d_{direction}_nu{i_relax}"]
             rate = relaxation_param_dict[f"alpha_{direction}_nu{i_relax}"]
             held.append(np.exp(-(strength / kappa + rate) * time_step))
@@ -683,17 +768,17 @@ def _memory_decay(relaxation_param_dict: dict[str, np.ndarray], time_step: float
 
 
 def test_the_exact_rule_leaves_the_memory_decay_untouched(
-    whole_table: dict[str, np.ndarray],
+    calibrated_table: dict[str, np.ndarray],
 ) -> None:
     """It holds d / kappa + rate fixed, so the solver recursion does not move at all.
 
-    Measured on the shipped table, no cell refuses the exact rule at a factor of
-    0.5 or below, so the whole grid is comparable there.
+    No cell the fit served refuses the exact rule at a factor of 0.5 or below, so
+    the whole calibrated grid is comparable there.
     """
     time_step = 0.2 / (1.0e6 * 16)
-    before = _memory_decay(whole_table, time_step)
+    before = _memory_decay(calibrated_table, time_step)
     for factor in (0.1, 0.3162, 0.5):
-        scaled = scale_relaxation_attenuation(whole_table, factor, exact=True)
+        scaled = scale_relaxation_attenuation(calibrated_table, factor, exact=True)
         np.testing.assert_allclose(_memory_decay(scaled, time_step), before, rtol=1e-12)
 
 
@@ -710,24 +795,47 @@ def test_the_exact_rule_holds_the_memory_decay_up_to_a_large_factor(
 
 
 def test_the_memory_decay_stays_below_one_under_both_rules(
-    whole_table: dict[str, np.ndarray],
+    calibrated_table: dict[str, np.ndarray],
 ) -> None:
-    """A decay coefficient at or above one is an unstable recursion."""
+    """A decay coefficient at or above one is an unstable recursion.
+
+    A cell the fit refused carries zeros, so its decay is exactly one. It is read
+    over the cells the fit served, which is where a medium may sit. Both rules
+    are admissible at a factor of 0.5 or below.
+    """
     time_step = 0.2 / (1.0e6 * 16)
-    for factor in (0.1, 0.5, 2.0, 3.1623):
+    for factor in (0.1, 0.5):
         for exact in (False, True):
-            scaled = scale_relaxation_attenuation(whole_table, factor, exact=exact)
+            scaled = scale_relaxation_attenuation(calibrated_table, factor, exact=exact)
             decay = _memory_decay(scaled, time_step)
             assert decay.max() < 1.0
             assert decay.min() >= 0.0
 
 
-def test_the_first_order_rule_refuses_a_factor_that_kills_the_stretching_factor(
-    whole_table: dict[str, np.ndarray],
+def test_only_the_exact_rule_scales_the_shipped_table_up(
+    calibrated_table: dict[str, np.ndarray],
 ) -> None:
-    """The shipped table's smallest kappa is 0.98, so a factor of 50 reaches zero."""
+    """The smallest stretching factor the fit served is 0.3, so 1 - factor reaches zero.
+
+    The first order rule carries kappa to `1 - factor (1 - kappa)`, which is at or
+    below zero for a factor of 2 and above. The exact rule cannot reach zero, so
+    it is the only route that scales this table up.
+    """
+    time_step = 0.2 / (1.0e6 * 16)
+    for factor in (2.0, 2.5, 3.0, 3.1623):
+        with pytest.raises(ValueError, match="unstable"):
+            scale_relaxation_attenuation(calibrated_table, factor)
+        scaled = scale_relaxation_attenuation(calibrated_table, factor, exact=True)
+        assert scaled["kappa_x1"].min() > 0.0
+        assert _memory_decay(scaled, time_step).max() < 1.0
+
+
+def test_the_first_order_rule_refuses_a_factor_that_kills_the_stretching_factor(
+    calibrated_table: dict[str, np.ndarray],
+) -> None:
+    """The smallest kappa the fit served is 0.300000, so a large factor reaches zero."""
     with pytest.raises(ValueError, match="unstable"):
-        scale_relaxation_attenuation(whole_table, 60.0)
+        scale_relaxation_attenuation(calibrated_table, 60.0)
 
 
 def test_the_exact_rule_survives_where_the_first_order_rule_refuses(

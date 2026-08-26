@@ -14,6 +14,7 @@ import numexpr as ne
 import numpy as np
 
 from fullwave import Grid
+from fullwave.solver.shipped_database import ShippedDatabase
 from fullwave.solver.utils import initialize_relaxation_param_dict
 from fullwave.utils import check_functions, plot_utils
 from fullwave.utils.coordinates import coords_to_map, map_to_coords
@@ -213,7 +214,7 @@ class MediumRelaxationMaps:
         lossless_coords: NDArray[np.int64] | None = None,
         air_map: NDArray[np.int64] | None = None,
         air_coords: NDArray[np.int64] | None = None,
-        n_relaxation_mechanisms: int = 2,
+        n_relaxation_mechanisms: int = ShippedDatabase.mechanisms,
         use_isotropic_relaxation: bool = True,
         n_jobs: int = -1,
         dtype: type = np.float64,
@@ -471,7 +472,7 @@ class MediumRelaxationMaps:
         self,
         relaxation_param_dict: dict[str, NDArray[np.float64]],
         contents_shape: NDArray[np.int64] | tuple[int, ...],
-        n_relaxation_mechanisms: int = 2,
+        n_relaxation_mechanisms: int = ShippedDatabase.mechanisms,
     ) -> None:
         """Check if the relaxation parameter updates have valid keys and matching shapes.
 
@@ -1131,13 +1132,9 @@ class Medium:
         *,
         air_map: NDArray[np.int64] | None = None,
         air_coords: NDArray[np.int64] | None = None,
-        path_relaxation_parameters_database: Path = Path(__file__).parent
-        / "solver"
-        / "bins"
-        / "database"
-        / "relaxation_params_database_num_relax=2_20260113_0957.mat",
-        path_not_usable_matrix: Path | None = None,
-        n_relaxation_mechanisms: int = 2,
+        path_relaxation_parameters_database: Path = ShippedDatabase.table,
+        path_invalid_cells: Path | None = None,
+        n_relaxation_mechanisms: int = ShippedDatabase.mechanisms,
         attenuation_builder: str = "lookup",
         use_isotropic_relaxation: bool = True,
         sound_speed_transfer: bool = True,
@@ -1179,11 +1176,11 @@ class Medium:
             Mutually exclusive with air_map.
         path_relaxation_parameters_database : Path, optional
             Path to the relaxation parameters database.
-        path_not_usable_matrix : Path, optional
-            Path to a mask an evaluation wrote, which marks the cells a finished
-            evaluation found unusable. A request that lands on a marked cell is
-            warned about, and the lookup still serves it. Without it nothing is
-            marked and the behaviour is unchanged.
+        path_invalid_cells : Path, optional
+            Path to the JSON record an evaluation wrote, which names every
+            invalid cell of the table and why it is invalid. A request that lands
+            on one is warned about, and the lookup still serves it. Without it
+            nothing is marked and the behaviour is unchanged.
         n_relaxation_mechanisms : int, optional
             Number of relaxation mechanisms, by default 4
         attenuation_builder : str, optional
@@ -1293,7 +1290,7 @@ class Medium:
             self.air_coords = np.empty((0, ndim), dtype=np.int64)
 
         self.path_relaxation_parameters_database = path_relaxation_parameters_database
-        self.path_not_usable_matrix = path_not_usable_matrix
+        self.path_invalid_cells = path_invalid_cells
         self.n_relaxation_mechanisms = n_relaxation_mechanisms
         self.use_isotropic_relaxation = use_isotropic_relaxation
 
@@ -1523,7 +1520,7 @@ class Medium:
                 alpha_coeff=self.alpha_coeff,
                 alpha_power=self.alpha_power,
                 path_database=self.path_relaxation_parameters_database,
-                path_not_usable_matrix=self.path_not_usable_matrix,
+                path_invalid_cells=self.path_invalid_cells,
                 band_scale=self.band_scale,
                 sound_speed=sound_speed if self.sound_speed_transfer else None,
                 scale_to_requested_alpha_coeff=self.scale_to_requested_alpha_coeff,

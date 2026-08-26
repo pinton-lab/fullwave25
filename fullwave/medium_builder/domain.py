@@ -8,6 +8,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from fullwave import Grid, Medium
+from fullwave.solver.shipped_database import ShippedDatabase
 from fullwave.utils import check_functions
 
 
@@ -36,12 +37,8 @@ class Domain(ABC):
         name: str,
         grid: Grid,
         *,
-        path_relaxation_parameters_database: Path = Path(__file__).parent.parent
-        / "solver"
-        / "bins"
-        / "database"
-        / "relaxation_params_database_num_relax=2_20260113_0957.mat",
-        n_relaxation_mechanisms: int = 2,
+        path_relaxation_parameters_database: Path = ShippedDatabase.table,
+        n_relaxation_mechanisms: int = ShippedDatabase.mechanisms,
     ) -> None:
         """Initialize the Domain class.
 

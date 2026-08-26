@@ -12,6 +12,7 @@ import fullwave
 from fullwave.solver.input_file_writer import InputFileWriter
 from fullwave.solver.launcher import Launcher
 from fullwave.solver.pml_builder import PMLBuilder, PMLBuilderExponentialAttenuation
+from fullwave.solver.shipped_database import ShippedDatabase
 from fullwave.solver.source_type import (
     CLAMPED,
     SOURCE_TYPES,
@@ -207,7 +208,7 @@ def _retrieve_fullwave_simulation_path(
     is_3d: bool = False,
     use_exponential_attenuation: bool = False,
     use_isotropic_relaxation: bool = True,
-    n_relax_mechanisms: int = 2,
+    n_relax_mechanisms: int = ShippedDatabase.mechanisms,
 ) -> Path:
     arch_option = _make_cuda_arch_option(use_gpu=use_gpu)
     cuda_version_option, cuda_version = _make_cuda_version_option(use_gpu=use_gpu)

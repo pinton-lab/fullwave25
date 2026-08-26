@@ -10,6 +10,7 @@ from fullwave import Medium
 from fullwave.constants import MaterialProperties
 from fullwave.grid import Grid
 from fullwave.medium_builder.domain import Domain
+from fullwave.solver.shipped_database import ShippedDatabase
 from fullwave.utils import check_functions
 
 logger = logging.getLogger("__main__." + __name__)
@@ -28,12 +29,8 @@ class MediumBuilder:
         *,
         ignore_non_linearity: bool = False,
         material_properties: MaterialProperties | None = None,
-        path_relaxation_parameters_database: Path = Path(__file__).parent.parent
-        / "solver"
-        / "bins"
-        / "database"
-        / "relaxation_params_database_num_relax=2_20260113_0957.mat",
-        n_relaxation_mechanisms: int = 2,
+        path_relaxation_parameters_database: Path = ShippedDatabase.table,
+        n_relaxation_mechanisms: int = ShippedDatabase.mechanisms,
         attenuation_builder: str = "lookup",
         sound_speed_transfer: bool = True,
         band_scale: float = 1.0,

@@ -3,6 +3,7 @@
 using a precomputed lookup table and input attenuation values.
 """
 
+import json
 import logging
 import time
 from pathlib import Path
@@ -12,6 +13,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.io import loadmat
 
+from fullwave.solver.shipped_database import ShippedDatabase
 from fullwave.solver.utils import initialize_relaxation_param_dict
 
 logger = logging.getLogger("__main__." + __name__)
@@ -35,7 +37,7 @@ def _on_the_host(array: NDArray) -> NDArray:
 def scale_relaxation_attenuation(
     relaxation_param_dict: dict[str, NDArray[np.float64]],
     factor: NDArray[np.float64] | float,
-    n_relaxation_mechanisms: int = 2,
+    n_relaxation_mechanisms: int = ShippedDatabase.mechanisms,
     *,
     exact: bool = False,
 ) -> dict[str, NDArray[np.float64]]:
@@ -184,7 +186,7 @@ def _exact_attenuation(
 def transfer_relaxation_params_to_sound_speed(
     relaxation_param_dict: dict[str, NDArray[np.float64]],
     sound_speed: NDArray[np.float64] | float,
-    n_relaxation_mechanisms: int = 2,
+    n_relaxation_mechanisms: int = ShippedDatabase.mechanisms,
     reference_sound_speed: float = 1540.0,
 ) -> dict[str, NDArray[np.float64]]:
     """Hold a lookup entry's attenuation law fixed at another sound speed.
@@ -206,7 +208,7 @@ def transfer_relaxation_params_to_sound_speed(
 def transfer_relaxation_params_to_band(
     relaxation_param_dict: dict[str, NDArray[np.float64]],
     band_scale: float,
-    n_relaxation_mechanisms: int = 2,
+    n_relaxation_mechanisms: int = ShippedDatabase.mechanisms,
 ) -> dict[str, NDArray[np.float64]]:
     """Multiply every relaxation rate by ``band_scale``, the rate half of the band transfer.
 
@@ -626,14 +628,10 @@ def _map_parameters_search_gpu(
 def generate_relaxation_params(
     alpha_coeff: NDArray[np.float64],
     alpha_power: NDArray[np.float64],
-    n_relaxation_mechanisms: int = 2,
-    path_database: Path = Path(__file__).parent.parent
-    / "solver"
-    / "bins"
-    / "database"
-    / "relaxation_params_database_num_relax=2_20260113_0957.mat",
+    n_relaxation_mechanisms: int = ShippedDatabase.mechanisms,
+    path_database: Path = ShippedDatabase.table,
     *,
-    path_not_usable_matrix: Path | None = None,
+    path_invalid_cells: Path | None = None,
     band_scale: float = 1.0,
     sound_speed: NDArray[np.float64] | float | None = None,
     scale_to_requested_alpha_coeff: bool = False,
@@ -653,9 +651,10 @@ def generate_relaxation_params(
         Number of relaxation mechanisms (default is 4).
     path_database : Path, optional
         Path to the relaxation parameters database.
-    path_not_usable_matrix : Path, optional
-        Path to a mask an evaluation wrote. A request that lands on a marked
-        cell is warned about, and the lookup still serves it.
+    path_invalid_cells : Path, optional
+        Path to the JSON record an evaluation wrote, which names every invalid
+        cell of the table and why it is invalid. A request that lands on one is
+        warned about, and the lookup still serves it.
     band_scale : float, optional
         Transfer the calibration to a frequency band scaled by this factor.
         1.0, the default, is the identity and reads the table as calibrated.
@@ -676,7 +675,7 @@ def generate_relaxation_params(
     relaxation_parameters_generator = RelaxationParametersGenerator(
         n_relaxation_mechanisms=n_relaxation_mechanisms,
         path_database=path_database,
-        path_not_usable_matrix=path_not_usable_matrix,
+        path_invalid_cells=path_invalid_cells,
     )
     return relaxation_parameters_generator.generate(
         alpha_coeff,
@@ -693,13 +692,9 @@ class RelaxationParametersGenerator:
     def __init__(
         self,
         *,
-        n_relaxation_mechanisms: int = 2,
-        path_database: Path = Path(__file__).parent.parent
-        / "solver"
-        / "bins"
-        / "database"
-        / "relaxation_params_database_num_relax=2_20260113_0957.mat",
-        path_not_usable_matrix: Path | None = None,
+        n_relaxation_mechanisms: int = ShippedDatabase.mechanisms,
+        path_database: Path = ShippedDatabase.table,
+        path_invalid_cells: Path | None = None,
     ) -> None:
         """Initialize the relaxation parameters generator.
 
@@ -709,12 +704,12 @@ class RelaxationParametersGenerator:
             Number of relaxation mechanisms (default is 4).
         path_database : Path, optional
             Path to the relaxation parameters database.
-        path_not_usable_matrix : Path, optional
-            Path to a mask an evaluation wrote, holding ``not_usable_matrix``
-            beside the two axes of the table. A request that lands on a marked
-            cell is warned about. Without it nothing is marked and the behaviour
-            is unchanged. It is a separate file because the table is pinned by
-            hash and an evaluation must not change that hash.
+        path_invalid_cells : Path, optional
+            Path to the JSON record an evaluation wrote, which names every
+            invalid cell of the table and why it is invalid. A request that lands
+            on one is warned about. Without it nothing is marked and the
+            behaviour is unchanged. It is a separate file because the table is
+            pinned by hash and an evaluation must not change that hash.
 
         Raises
         ------
@@ -739,51 +734,126 @@ class RelaxationParametersGenerator:
         self.alpha_max = self.alpha_list.max()
         self.power_min = self.power_list.min()
         self.power_max = self.power_list.max().round(4)
-        self.not_usable_matrix = self._load_not_usable_matrix(path_not_usable_matrix)
+        self.invalid_cells = self._load_invalid_cells(
+            self._record_beside_the_table(path_database, path_invalid_cells)
+        )
+        self._invalid_mask = self._invalid_mask_of(self.invalid_cells)
 
         self._check_database()
 
-    def _load_not_usable_matrix(self, path: Path | None) -> NDArray[np.uint8] | None:
-        """Return the mask of cells an evaluation marked, checked against the table.
+    @staticmethod
+    def _record_beside_the_table(
+        path_database: Path, path_invalid_cells: Path | None
+    ) -> Path | None:
+        """Return the record to read, defaulting the shipped table to its own record.
+
+        The record describes one grid, so it pairs with one table. A caller that
+        names its own table and no record therefore gets no record, rather than
+        a refusal about a grid it never asked about.
+
+        Parameters
+        ----------
+        path_database : Path
+            The table the caller named.
+        path_invalid_cells : Path or None
+            The record the caller named, or None.
+
+        Returns
+        -------
+        Path or None
+            The record to read, or None where there is none.
+
+        """
+        if path_invalid_cells is not None:
+            return path_invalid_cells
+        if Path(path_database) == ShippedDatabase.table:
+            return ShippedDatabase.invalid_cells
+        return None
+
+    def _load_invalid_cells(self, path: Path | None) -> dict | None:
+        """Return the record of invalid cells an evaluation wrote, checked against the table.
+
+        The record is JSON rather than a matrix, because it carries the reason
+        each cell is invalid beside the cell itself.
 
         Parameters
         ----------
         path : Path or None
-            Where the mask is, or None where the caller named none.
+            Where the record is, or None where the caller named none.
 
         Returns
         -------
-        NDArray[np.uint8] or None
-            The mask, or None where the caller named none.
+        dict or None
+            The record, or None where the caller named none.
 
         Raises
         ------
         FileNotFoundError
             The caller named a file that is not there.
         ValueError
-            The mask does not lie on the same grid as the table.
+            The record does not lie on the same grid as the table.
 
         """
         if path is None:
             return None
         if not Path(path).exists():
-            error_msg = f"Not-usable matrix not found at {path}."
+            error_msg = f"Invalid-cell record not found at {path}."
             logger.error(error_msg)
             raise FileNotFoundError(error_msg)
-        stored = loadmat(path)
-        held = np.asarray(stored["not_usable_matrix"], dtype=np.uint8)
+        record = json.loads(Path(path).read_text(encoding="utf-8"))
+        grid = record.get("grid") or {}
         for key, mine in (
-            ("alpha_0_list", self.alpha_list),
-            ("power_list", self.power_list),
+            ("alpha_coeff", self.alpha_list),
+            ("alpha_power", self.power_list),
         ):
-            if not np.array_equal(np.asarray(stored[key]).ravel(), np.asarray(mine).ravel()):
+            held = np.asarray(grid.get(key, []), dtype=np.float64).ravel()
+            axis = np.asarray(mine, dtype=np.float64).ravel()
+            if held.shape != axis.shape or not np.allclose(held, axis):
                 error_msg = (
-                    f"The not-usable matrix at {path} carries a different {key} from the "
-                    f"table at {self.path_database}, so it describes a different grid."
+                    f"The invalid-cell record at {path} carries a different {key} axis from "
+                    f"the table at {self.path_database}, so it describes a different grid."
                 )
                 logger.error(error_msg)
                 raise ValueError(error_msg)
-        return held
+        return record
+
+    def _invalid_mask_of(self, record: dict | None) -> NDArray[np.uint8] | None:
+        """Return the record laid out over the grid, 1 where a cell is invalid.
+
+        Parameters
+        ----------
+        record : dict or None
+            The record, or None where the caller named none.
+
+        Returns
+        -------
+        NDArray[np.uint8] or None
+            The mask, or None where the caller named none.
+
+        """
+        if record is None:
+            return None
+        mask = np.zeros((self.alpha_list.size, self.power_list.size), dtype=np.uint8)
+        for cell in record.get("invalid", []):
+            mask[int(cell["row"]), int(cell["column"])] = 1
+        return mask
+
+    def invalid_reasons(self) -> dict[tuple[float, float], list[str]]:
+        """Return why each invalid cell is invalid, keyed by the cell.
+
+        Returns
+        -------
+        dict[tuple[float, float], list[str]]
+            The attenuation coefficient and power of each invalid cell, against
+            its reasons. It is empty where the caller named no record.
+
+        """
+        if self.invalid_cells is None:
+            return {}
+        return {
+            (float(cell["alpha_coeff"]), float(cell["alpha_power"])): list(cell["reasons"])
+            for cell in self.invalid_cells.get("invalid", [])
+        }
 
     def _check_database(self) -> None:
         """Check the integrity of the lookup table.
@@ -848,7 +918,7 @@ class RelaxationParametersGenerator:
 
         """
         alpha_coeff = band_scaled_alpha_coeff(alpha_coeff, alpha_power, band_scale)
-        self._warn_not_usable(alpha_coeff, alpha_power)
+        self._warn_invalid(alpha_coeff, alpha_power)
 
         use_gpu = not isinstance(alpha_coeff, np.ndarray)
         if use_gpu:
@@ -946,13 +1016,13 @@ class RelaxationParametersGenerator:
     ) -> NDArray[np.bool_]:
         """Return whether an evaluation found each request usable.
 
-        This reads the mask an evaluation wrote, which is a different thing from
-        ``is_calibrated``. ``is_calibrated`` says the optimization converged.
-        This says a finished simulation met the gates the evaluation applied,
-        which cover the absorbing layer reflection, the delivered attenuation,
-        the delivered phase velocity and the stability of the solver.
+        This reads the record an evaluation wrote, which carries every reason a
+        cell is invalid. The reasons are the optimization that did not converge,
+        the absorbing layer reflection, the delivered attenuation, the delivered
+        phase velocity and the stability of the solver. ``is_calibrated`` answers
+        the first of those from the table alone, without a record.
 
-        Every request is usable where the caller named no mask.
+        Every request is usable where the caller named no record.
 
         Parameters
         ----------
@@ -969,20 +1039,23 @@ class RelaxationParametersGenerator:
 
         """
         xp = np if isinstance(alpha_coeff, np.ndarray) else _array_module(alpha_coeff)
-        if self.not_usable_matrix is None:
+        if self._invalid_mask is None:
             return xp.ones_like(xp.asarray(alpha_coeff), dtype=bool)
         alpha_axis = xp.asarray(np.asarray(self.alpha_list).ravel().round(10))
         power_axis = xp.asarray(np.asarray(self.power_list).ravel().round(10))
         alpha_index = self._axis_index(alpha_coeff, alpha_axis, self.alpha_min, self.alpha_max)
         power_index = self._axis_index(alpha_power, power_axis, self.power_min, self.power_max)
-        return ~xp.asarray(self.not_usable_matrix).astype(bool)[alpha_index, power_index]
+        return ~xp.asarray(self._invalid_mask).astype(bool)[alpha_index, power_index]
 
-    def _warn_not_usable(
+    def _warn_invalid(
         self,
         alpha_coeff: NDArray[np.float64],
         alpha_power: NDArray[np.float64],
     ) -> None:
-        """Warn where a request lands on a cell an evaluation marked as not usable.
+        """Warn where a request lands on a cell an evaluation marked invalid.
+
+        The warning names each cell with the reasons the record gives, so the
+        caller sees which gate the cell failed.
 
         Parameters
         ----------
@@ -992,7 +1065,7 @@ class RelaxationParametersGenerator:
             Attenuation power values.
 
         """
-        if self.not_usable_matrix is None:
+        if self._invalid_mask is None:
             return
         usable = self.is_usable(alpha_coeff, alpha_power)
         marked = ~np.asarray(_on_the_host(usable))
@@ -1008,12 +1081,16 @@ class RelaxationParametersGenerator:
             ),
             axis=0,
         )
+        reasons = self.invalid_reasons()
         logger.warning(
-            "an evaluation marked %d voxels as not usable, over %d cells of the lookup "
-            "table. The lookup still serves them. The cells (alpha, power) are %s",
+            "an evaluation marked %d voxels invalid, over %d cells of the lookup table. "
+            "The lookup still serves them. The cells and their reasons are %s",
             int(marked.sum()),
             len(pairs),
-            [(float(one), float(other)) for one, other in pairs],
+            [
+                (float(one), float(other), reasons.get((float(one), float(other)), []))
+                for one, other in pairs
+            ],
         )
 
     @staticmethod

@@ -92,11 +92,16 @@ def test_drive_is_exactly_zero_where_gated(key: str, gated_and_plain) -> None:
     assert (gated[key][gated_voxels] == 0).all()
 
 
-@pytest.mark.parametrize("key", DRIVE_KEYS)
-def test_drive_was_nonzero_there_before_the_gate(key: str, gated_and_plain) -> None:
-    """A gate that did nothing at all would pass the test above."""
+def test_the_gate_removes_a_drive_that_was_there(gated_and_plain) -> None:
+    """A gate that did nothing at all would pass the test above.
+
+    On the shipped table the lowest coefficient carries a strength of exactly
+    zero in both `x` maps, so the gate has nothing to remove there. It removes
+    the `u` maps, which is what this holds.
+    """
     _, plain, _, gated_voxels = gated_and_plain
-    assert (plain[key][gated_voxels] != 0).any()
+    removed = [key for key in DRIVE_KEYS if (plain[key][gated_voxels] != 0).any()]
+    assert removed, DRIVE_KEYS
 
 
 @pytest.mark.parametrize("key", DRIVE_KEYS)
@@ -237,7 +242,7 @@ def test_maps_route_reaches_the_gate_when_it_carries_the_coefficient() -> None:
 
 
 def test_maps_route_without_a_coefficient_keeps_the_old_behaviour() -> None:
-    """Omitting the coefficient leaves the drive nonzero, as before 2026-08-17."""
+    """Omitting the coefficient leaves the drive nonzero, which is the old behaviour."""
     plain, builder = _build_from_maps(carry_alpha_coeff=False)
     voxels = _gated_voxels(plain[DRIVE_KEYS[0]].shape, builder.num_boundary_points)
     assert any((plain[key][voxels] != 0).any() for key in DRIVE_KEYS)

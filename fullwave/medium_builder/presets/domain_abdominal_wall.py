@@ -10,6 +10,7 @@ from scipy.io import loadmat
 from fullwave import Grid
 from fullwave.constants import MaterialProperties
 from fullwave.medium_builder.domain import Domain
+from fullwave.solver.shipped_database import ShippedDatabase
 from fullwave.utils import check_functions
 from fullwave.utils.numerical import matlab_interp2easy
 
@@ -170,12 +171,8 @@ class AbdominalWallDomain(Domain):
         apply_tissue_compression: bool = True,
         use_center_region: bool = True,
         skip_background_definition: bool = True,
-        path_relaxation_parameters_database: Path = Path(__file__).parent.parent.parent
-        / "solver"
-        / "bins"
-        / "database"
-        / "relaxation_params_database_num_relax=2_20260113_0957.mat",
-        n_relaxation_mechanisms: int = 2,
+        path_relaxation_parameters_database: Path = ShippedDatabase.table,
+        n_relaxation_mechanisms: int = ShippedDatabase.mechanisms,
         transducer_surface: NDArray[np.float64] | None = None,
     ) -> None:
         """Define AbdominalWallDomain instance.
@@ -219,10 +216,7 @@ class AbdominalWallDomain(Domain):
             Defaults to True.
         path_relaxation_parameters_database: Path, optional
             The path to the relaxation parameters database.
-            Defaults to
-            Path(__file__).parent.parent / "solver" / "bins"
-            / "database"
-            / "relaxation_params_database_num_relax=2_20260113_0957.mat",
+            Defaults to ``ShippedDatabase.table``.
         n_relaxation_mechanisms: int, optional
             The number of relaxation mechanisms.
             Defaults to 4.

@@ -183,6 +183,8 @@ def test_solver_rejects_an_unknown_source_type(tmp_path):
         beta=np.zeros(shape),
     )
     sensor = fullwave.Sensor(mask=np.ones(shape, dtype=bool))
+    stand_in = tmp_path / "solver"
+    stand_in.write_bytes(b"")
     with pytest.raises(ValueError, match="source_type"):
         fullwave.Solver(
             work_dir=tmp_path,
@@ -191,4 +193,5 @@ def test_solver_rejects_an_unknown_source_type(tmp_path):
             source=_source(shape, n_time=grid.nt),
             sensor=sensor,
             source_type="assign",
+            path_fullwave_simulation_bin=stand_in,
         )

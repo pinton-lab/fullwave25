@@ -1,0 +1,872 @@
+{
+  "schema": 2,
+  "run": "20260825_1939_evaluation_partial",
+  "grid": {
+    "alpha_coeff": [
+      0.0022,
+      0.01,
+      0.02,
+      0.03,
+      0.04,
+      0.05,
+      0.06,
+      0.07,
+      0.08,
+      0.09,
+      0.1,
+      0.11,
+      0.12,
+      0.13,
+      0.14,
+      0.15,
+      0.16,
+      0.17,
+      0.18,
+      0.19,
+      0.2,
+      0.21,
+      0.22,
+      0.23,
+      0.24,
+      0.25,
+      0.26,
+      0.27,
+      0.28,
+      0.29,
+      0.3,
+      0.31,
+      0.32,
+      0.33,
+      0.34,
+      0.35,
+      0.36,
+      0.37,
+      0.38,
+      0.39,
+      0.4,
+      0.41,
+      0.42,
+      0.43,
+      0.44,
+      0.45,
+      0.46,
+      0.47,
+      0.48,
+      0.49,
+      0.5,
+      0.51,
+      0.52,
+      0.53,
+      0.54,
+      0.55,
+      0.56,
+      0.57,
+      0.58,
+      0.59,
+      0.6,
+      0.61,
+      0.62,
+      0.63,
+      0.64,
+      0.65,
+      0.66,
+      0.67,
+      0.68,
+      0.69,
+      0.7,
+      0.71,
+      0.72,
+      0.73,
+      0.74,
+      0.75,
+      0.76,
+      0.77,
+      0.78,
+      0.79,
+      0.8,
+      0.81,
+      0.82,
+      0.83,
+      0.84,
+      0.85,
+      0.86,
+      0.87,
+      0.88,
+      0.89,
+      0.9,
+      0.91,
+      0.92,
+      0.93,
+      0.94,
+      0.95,
+      0.96,
+      0.97,
+      0.98,
+      0.99,
+      1.0
+    ],
+    "alpha_power": [
+      0.4,
+      0.5,
+      0.6,
+      0.7,
+      0.8,
+      0.9,
+      1.0001,
+      1.1,
+      1.2,
+      1.3,
+      1.4,
+      1.5,
+      1.6,
+      1.7,
+      1.8,
+      1.9,
+      1.999
+    ]
+  },
+  "reasons": [
+    "optimization",
+    "pml_reflection",
+    "attenuation",
+    "phase_velocity",
+    "diverged"
+  ],
+  "gates": {
+    "reflection_decibels": -50.0,
+    "attenuation_error": 0.1,
+    "phase_velocity_metres_per_second": 5.0
+  },
+  "accuracy": {
+    "read_at": "baseline",
+    "applied": true,
+    "rows_at_that_point": 80,
+    "rows_in_the_run": 1040,
+    "coverage": [
+      {
+        "alpha_coeff": 0.0022,
+        "alpha_power": 1.0001,
+        "rows": 8
+      },
+      {
+        "alpha_coeff": 0.0022,
+        "alpha_power": 1.5,
+        "rows": 8
+      },
+      {
+        "alpha_coeff": 0.0022,
+        "alpha_power": 1.999,
+        "rows": 8
+      },
+      {
+        "alpha_coeff": 0.5,
+        "alpha_power": 0.5,
+        "rows": 8
+      },
+      {
+        "alpha_coeff": 0.5,
+        "alpha_power": 1.0001,
+        "rows": 8
+      },
+      {
+        "alpha_coeff": 0.5,
+        "alpha_power": 1.5,
+        "rows": 8
+      },
+      {
+        "alpha_coeff": 0.5,
+        "alpha_power": 1.999,
+        "rows": 8
+      },
+      {
+        "alpha_coeff": 1.0,
+        "alpha_power": 0.5,
+        "rows": 8
+      },
+      {
+        "alpha_coeff": 1.0,
+        "alpha_power": 1.0001,
+        "rows": 8
+      },
+      {
+        "alpha_coeff": 1.0,
+        "alpha_power": 1.5,
+        "rows": 8
+      }
+    ]
+  },
+  "cells_read": {
+    "reflection": 1648,
+    "attenuation_dispersion": 10,
+    "refused_by_the_table": 2
+  },
+  "statistics": {
+    "reflection_decibels": {
+      "every_cell": {
+        "worst": -27.876122502726496,
+        "middle": -61.287180594570245,
+        "cells": 1648
+      },
+      "valid_cells": {
+        "worst": -50.149319802220276,
+        "middle": -61.28944039162785,
+        "cells": 1612
+      }
+    },
+    "attenuation_error": {
+      "every_cell": {
+        "worst": 1.2108242789901649,
+        "middle": 0.04170799572621742,
+        "cells": 10
+      },
+      "valid_cells": {
+        "worst": 0.07368543987168463,
+        "middle": 0.039890599360466794,
+        "cells": 7
+      }
+    },
+    "phase_velocity_error_metres_per_second": {
+      "every_cell": {
+        "worst": 4.842292715512713,
+        "middle": 0.7387057259343237,
+        "cells": 10
+      },
+      "valid_cells": {
+        "worst": 2.520067665634315,
+        "middle": 0.27490497548183157,
+        "cells": 7
+      }
+    }
+  },
+  "off_the_grid": [],
+  "invalid_count": 38,
+  "invalid": [
+    {
+      "alpha_coeff": 0.0022,
+      "alpha_power": 0.5,
+      "row": 0,
+      "column": 1,
+      "reasons": [
+        "optimization"
+      ],
+      "reflection_decibels": null,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.0022,
+      "alpha_power": 1.0001,
+      "row": 0,
+      "column": 6,
+      "reasons": [
+        "attenuation"
+      ],
+      "reflection_decibels": -61.10948680765631,
+      "attenuation_error": 1.2108242789901649,
+      "attenuation_error_hertz": 3057876.921606392,
+      "phase_velocity_error_metres_per_second": 4.842292715512713,
+      "phase_velocity_error_hertz": 250000.0,
+      "accuracy_rows_read": 8,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.0022,
+      "alpha_power": 1.5,
+      "row": 0,
+      "column": 11,
+      "reasons": [
+        "attenuation"
+      ],
+      "reflection_decibels": -61.18776313655709,
+      "attenuation_error": 0.6659477064609769,
+      "attenuation_error_hertz": 250000.0,
+      "phase_velocity_error_metres_per_second": 1.3113967205126755,
+      "phase_velocity_error_hertz": 5718603.679678213,
+      "accuracy_rows_read": 8,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.21,
+      "alpha_power": 1.999,
+      "row": 21,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -46.93340928351817,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.22,
+      "alpha_power": 1.999,
+      "row": 22,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -45.69407195345464,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.24,
+      "alpha_power": 1.999,
+      "row": 24,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -47.24996572974008,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.25,
+      "alpha_power": 1.999,
+      "row": 25,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -42.33409323643107,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.26,
+      "alpha_power": 1.999,
+      "row": 26,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -43.60548456484193,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.28,
+      "alpha_power": 1.999,
+      "row": 28,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -49.96769316546632,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.29,
+      "alpha_power": 1.999,
+      "row": 29,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -41.66259172323397,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.3,
+      "alpha_power": 1.999,
+      "row": 30,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -41.51145228577083,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.31,
+      "alpha_power": 1.999,
+      "row": 31,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -41.47832092729503,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.35,
+      "alpha_power": 1.999,
+      "row": 35,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -38.607580618532594,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.36,
+      "alpha_power": 1.999,
+      "row": 36,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -46.30815771674076,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.37,
+      "alpha_power": 1.999,
+      "row": 37,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -39.864334862041474,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.38,
+      "alpha_power": 1.999,
+      "row": 38,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -42.085180588904976,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.39,
+      "alpha_power": 1.999,
+      "row": 39,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -38.50084171062352,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.4,
+      "alpha_power": 1.999,
+      "row": 40,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -33.31252733927063,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.41,
+      "alpha_power": 1.999,
+      "row": 41,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -37.042403115990155,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.42,
+      "alpha_power": 1.999,
+      "row": 42,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -43.49746432031155,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.43,
+      "alpha_power": 1.999,
+      "row": 43,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -45.29018351970771,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.44,
+      "alpha_power": 1.999,
+      "row": 44,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -38.58599375029939,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.45,
+      "alpha_power": 1.999,
+      "row": 45,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -29.514941109059993,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.46,
+      "alpha_power": 1.999,
+      "row": 46,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -32.28381308169639,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.47,
+      "alpha_power": 1.999,
+      "row": 47,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -37.66717853018773,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.48,
+      "alpha_power": 1.999,
+      "row": 48,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -37.841608919534046,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.49,
+      "alpha_power": 1.999,
+      "row": 49,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -45.83887187122287,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.5,
+      "alpha_power": 1.999,
+      "row": 50,
+      "column": 16,
+      "reasons": [
+        "pml_reflection",
+        "attenuation",
+        "diverged"
+      ],
+      "reflection_decibels": -37.75854772617591,
+      "attenuation_error": 0.22641849643733591,
+      "attenuation_error_hertz": 250000.0,
+      "phase_velocity_error_metres_per_second": 1.008082363962103,
+      "phase_velocity_error_hertz": 20000000.0,
+      "accuracy_rows_read": 8,
+      "diverged_at": [
+        {
+          "setting": "cfl0.4",
+          "hertz": 3057876.921606392
+        },
+        {
+          "setting": "cfl0.4",
+          "hertz": 5718603.679678213
+        },
+        {
+          "setting": "cfl0.4",
+          "hertz": 10694488.000533931
+        },
+        {
+          "setting": "cfl0.4",
+          "hertz": 20000000.0
+        }
+      ]
+    },
+    {
+      "alpha_coeff": 0.51,
+      "alpha_power": 1.999,
+      "row": 51,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -49.93591226868317,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.52,
+      "alpha_power": 1.999,
+      "row": 52,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -27.876122502726496,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.54,
+      "alpha_power": 1.999,
+      "row": 54,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -28.336867529246362,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.55,
+      "alpha_power": 1.999,
+      "row": 55,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -48.2117266940282,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.56,
+      "alpha_power": 1.999,
+      "row": 56,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -46.9449780883222,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.57,
+      "alpha_power": 1.999,
+      "row": 57,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -40.54837151709844,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.58,
+      "alpha_power": 1.999,
+      "row": 58,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -46.28663277912682,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.63,
+      "alpha_power": 1.999,
+      "row": 63,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -29.72606665567688,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 0.65,
+      "alpha_power": 1.999,
+      "row": 65,
+      "column": 16,
+      "reasons": [
+        "pml_reflection"
+      ],
+      "reflection_decibels": -32.03730570842722,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    },
+    {
+      "alpha_coeff": 1.0,
+      "alpha_power": 1.999,
+      "row": 100,
+      "column": 16,
+      "reasons": [
+        "optimization"
+      ],
+      "reflection_decibels": null,
+      "attenuation_error": null,
+      "attenuation_error_hertz": null,
+      "phase_velocity_error_metres_per_second": null,
+      "phase_velocity_error_hertz": null,
+      "accuracy_rows_read": 0,
+      "diverged_at": []
+    }
+  ]
+}

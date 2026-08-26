@@ -1,9 +1,16 @@
+import logging
+
 import numpy as np
 import pytest
 
 import fullwave.medium as medium_module
 from fullwave.medium import Medium, MediumRelaxationMaps
+from fullwave.solver.shipped_database import ShippedDatabase
 from fullwave.solver.utils import initialize_relaxation_param_dict
+
+TWO_MECHANISM_TABLE = (
+    ShippedDatabase.root / "relaxation_params_database_num_relax=2_20260113_0957.mat"
+)
 
 
 class DummyGrid2D:
@@ -246,16 +253,53 @@ def test_n_air_with_provided_air_map(monkeypatch):
         alpha_power,
         beta,
         air_map=air_map_input,
+        n_relaxation_mechanisms=2,
+        path_relaxation_parameters_database=TWO_MECHANISM_TABLE,
     )
     # n_air should equal the number of nonzero elements in the provided air_map.
     expected_n_air = np.count_nonzero(air_map_input)
     assert medium.n_air == expected_n_air
 
 
+def test_air_is_dropped_where_the_mechanism_count_is_not_two(monkeypatch, caplog):
+    """Only a two mechanism medium carries an air region, and the drop is warned."""
+    grid_shape = (4, 4)
+    grid = DummyGrid2D(nx=grid_shape[0], ny=grid_shape[1], dt=1e-4)
+    dummy_check = type(
+        "dummy",
+        (),
+        {
+            "check_instance": lambda _, instance, cls: None,  # noqa: ARG005
+            "check_path_exists": lambda _, path: None,  # noqa: ARG005
+            "check_compatible_value": lambda _,
+            value,  # noqa: ARG005
+            compatible_values,  # noqa: ARG005
+            error_message_template: None,  # noqa: ARG005
+        },
+    )()
+    monkeypatch.setattr(medium_module, "check_functions", dummy_check)
+    air_map_input = np.zeros(grid_shape, dtype=np.int64)
+    air_map_input[1, 1] = 1
+    air_map_input[2, 2] = 1
+    with caplog.at_level(logging.WARNING):
+        medium = Medium(
+            grid,
+            np.ones(grid_shape) * 1500,
+            np.ones(grid_shape) * 1000,
+            np.ones(grid_shape) * 0.5,
+            np.ones(grid_shape) * 1.2,
+            np.ones(grid_shape) * 0.8,
+            air_map=air_map_input,
+            n_relaxation_mechanisms=4,
+        )
+    assert medium.n_air == 0
+    assert "only n_relaxation_mechanisms=2 supports air regions" in caplog.text
+
+
 # Tests for MediumRelaxationMaps
 
 
-def get_dummy_relaxation_dict(shape, n_relaxation_mechanisms=2):
+def get_dummy_relaxation_dict(shape, n_relaxation_mechanisms=ShippedDatabase.mechanisms):
     # Use the same keys as returned by initialize_relaxation_param_dict
     base = initialize_relaxation_param_dict(n_relaxation_mechanisms=n_relaxation_mechanisms)
     # Replace default zeros with ones for testing purposes.
@@ -283,7 +327,7 @@ def test_medium_relaxation_post_init_conversion(monkeypatch):
     sound_speed = np.array([1500])
     density = np.array([1000])
     beta = np.array([0.8])
-    relaxation_dict = get_dummy_relaxation_dict(grid_shape, n_relaxation_mechanisms=2)
+    relaxation_dict = get_dummy_relaxation_dict(grid_shape)
     medium_relax = MediumRelaxationMaps(grid, sound_speed, density, beta, relaxation_dict)
     # Check that arrays are at least 2D and have the correct shape.
     assert medium_relax.sound_speed.ndim >= 2
@@ -316,7 +360,7 @@ def test_medium_relaxation_check_fields_valid(monkeypatch):
     sound_speed = np.ones(grid_shape) * 1500
     density = np.ones(grid_shape) * 1000
     beta = np.ones(grid_shape) * 0.8
-    relaxation_dict = get_dummy_relaxation_dict(grid_shape, n_relaxation_mechanisms=2)
+    relaxation_dict = get_dummy_relaxation_dict(grid_shape)
     medium_relax = MediumRelaxationMaps(grid, sound_speed, density, beta, relaxation_dict)
     # Should pass without assertion errors.
     medium_relax.check_fields()
@@ -328,7 +372,7 @@ def test_medium_relaxation_check_fields_invalid():
     sound_speed = np.ones(grid_shape) * 1500
     density = np.ones(grid_shape) * 1000
     beta = np.ones(grid_shape) * 0.8
-    relaxation_dict = get_dummy_relaxation_dict(grid_shape, n_relaxation_mechanisms=2)
+    relaxation_dict = get_dummy_relaxation_dict(grid_shape)
     # Introduce invalid shape in one relaxation parameter
     relaxation_dict_key = next(iter(relaxation_dict.keys()))
     relaxation_dict[relaxation_dict_key] = np.ones((2, 3))
@@ -342,7 +386,7 @@ def test_medium_relaxation_plot_exports_file(tmp_path):
     sound_speed = np.ones(grid_shape) * 1500.0
     density = np.ones(grid_shape) * 1000.0
     beta = np.ones(grid_shape) * 0.8
-    relaxation_dict = get_dummy_relaxation_dict(grid_shape, n_relaxation_mechanisms=2)
+    relaxation_dict = get_dummy_relaxation_dict(grid_shape)
     medium_relax = MediumRelaxationMaps(grid, sound_speed, density, beta, relaxation_dict)
     export_file = tmp_path / "test_relax_plot.png"
     medium_relax.plot(export_path=str(export_file), show=False)
@@ -363,7 +407,7 @@ def test_medium_relaxation_plot_show(monkeypatch, tmp_path):
     sound_speed = np.ones(grid_shape) * 1500.0
     density = np.ones(grid_shape) * 1000.0
     beta = np.ones(grid_shape) * 0.8
-    relaxation_dict = get_dummy_relaxation_dict(grid_shape, n_relaxation_mechanisms=2)
+    relaxation_dict = get_dummy_relaxation_dict(grid_shape)
     medium_relax = MediumRelaxationMaps(grid, sound_speed, density, beta, relaxation_dict)
     export_file = tmp_path / "test_relax_plot.png"
     medium_relax.plot(export_path=str(export_file), show=True)
@@ -409,7 +453,7 @@ def test_build_creates_medium_relaxation_maps(monkeypatch, tmp_path):
         alpha_power,
         path_database,
         *,
-        path_not_usable_matrix=None,
+        path_invalid_cells=None,
         band_scale=1.0,
         sound_speed=None,
         scale_to_requested_alpha_coeff=False,
@@ -473,7 +517,7 @@ def test_medium_relaxation_maps_build_returns_self(monkeypatch):
     sound_speed = np.ones(grid_shape) * 1500
     density = np.ones(grid_shape) * 1000
     beta = np.ones(grid_shape) * 0.8
-    relaxation_dict = get_dummy_relaxation_dict(grid_shape, n_relaxation_mechanisms=2)
+    relaxation_dict = get_dummy_relaxation_dict(grid_shape)
     medium_relax = MediumRelaxationMaps(grid, sound_speed, density, beta, relaxation_dict)
 
     # Call build and verify it returns the same instance
@@ -508,7 +552,7 @@ def test_calc_relaxation_param_dict_for_fw2_isotropic_2d(monkeypatch):
     sound_speed = np.ones(grid_shape) * 1500
     density = np.ones(grid_shape) * 1000
     beta = np.ones(grid_shape) * 0.8
-    relaxation_dict = get_dummy_relaxation_dict(grid_shape, n_relaxation_mechanisms=2)
+    relaxation_dict = get_dummy_relaxation_dict(grid_shape)
 
     medium_relax = MediumRelaxationMaps(
         grid,
@@ -560,7 +604,7 @@ def test_calc_relaxation_param_dict_for_fw2_anisotropic_2d(monkeypatch):
     sound_speed = np.ones(grid_shape) * 1500
     density = np.ones(grid_shape) * 1000
     beta = np.ones(grid_shape) * 0.8
-    relaxation_dict = get_dummy_relaxation_dict(grid_shape, n_relaxation_mechanisms=2)
+    relaxation_dict = get_dummy_relaxation_dict(grid_shape)
 
     medium_relax = MediumRelaxationMaps(
         grid,
@@ -643,6 +687,7 @@ def test_calc_relaxation_param_dict_for_fw2_values(monkeypatch):
         density,
         beta,
         relaxation_dict,
+        n_relaxation_mechanisms=2,
         use_isotropic_relaxation=True,
     )
 
@@ -689,7 +734,7 @@ def test_calc_relaxation_param_dict_for_fw2_kappa_mapping(monkeypatch):
     kappa_x1_val = np.ones(grid_shape) * 5.0
     kappa_x2_val = np.ones(grid_shape) * 7.0
 
-    relaxation_dict = get_dummy_relaxation_dict(grid_shape, n_relaxation_mechanisms=2)
+    relaxation_dict = get_dummy_relaxation_dict(grid_shape)
     relaxation_dict["kappa_x1"] = kappa_x1_val
     relaxation_dict["kappa_x2"] = kappa_x2_val
 
@@ -746,7 +791,7 @@ def test_calc_relaxation_param_dict_for_fw2_multiple_nu(monkeypatch):
     sound_speed = np.ones(grid_shape) * 1500
     density = np.ones(grid_shape) * 1000
     beta = np.ones(grid_shape) * 0.8
-    relaxation_dict = get_dummy_relaxation_dict(grid_shape, n_relaxation_mechanisms=2)
+    relaxation_dict = get_dummy_relaxation_dict(grid_shape)
 
     medium_relax = MediumRelaxationMaps(
         grid,

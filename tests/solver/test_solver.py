@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 import fullwave
+from fullwave.solver.shipped_database import ShippedDatabase
 from fullwave.solver.solver import (
     _check_compatible_set,
     _make_cuda_arch_option,
@@ -197,8 +198,8 @@ def test_retrieve_fullwave_simulation_path_2d_gpu():
             / "bins"
             / "gpu"
             / "2d"
-            / "num_relax=2"
-            / "fullwave2_2d_2_relax_multi_gpu_cuda124"
+            / f"num_relax={ShippedDatabase.mechanisms}"
+            / f"fullwave2_2d_{ShippedDatabase.mechanisms}_relax_multi_gpu_cuda124"
         )
         assert result == expected_path
 
@@ -214,6 +215,7 @@ def test_retrieve_fullwave_simulation_path_3d_gpu():
             use_gpu=True,
             is_3d=True,
             use_isotropic_relaxation=True,
+            n_relax_mechanisms=2,
         )
         expected_path = (
             Path(__file__).parent.parent.parent
@@ -302,6 +304,7 @@ def test_retrieve_fullwave_simulation_path_different_arch_versions():
                 use_gpu=True,
                 is_3d=True,
                 use_isotropic_relaxation=True,
+                n_relax_mechanisms=2,
             )
             expected_path = (
                 Path(__file__).parent.parent.parent
@@ -410,8 +413,9 @@ def test_use_isotropic_relaxation(
         is_3d,  # noqa: ARG005# noqa: ARG005
         use_exponential_attenuation,  # noqa: ARG005
         use_isotropic_relaxation,  # noqa: ARG005
-        n_relax_mechanisms:  # noqa: ARG005
-        fullwave_binary_path,
+        n_relax_mechanisms: (  # noqa: ARG005
+            fullwave_binary_path
+        ),
     )
     monkeypatch.setattr(launcher_module.Launcher, "_verify_cuda_devices_exist", lambda x: "0")  # noqa: ARG005
 
@@ -432,3 +436,19 @@ def test_use_isotropic_relaxation(
                 use_isotropic_relaxation_solver=use_isotropic_relaxation_solver,
             )
             mock_logger.warning.assert_not_called()
+
+
+def test_three_dimensions_refuses_a_mechanism_count_other_than_two():
+    """No three dimensional kernel exists for a count other than two."""
+    with (
+        patch("fullwave.solver.solver._make_cuda_arch_option", return_value="sm_89"),
+        patch("fullwave.solver.solver._make_cuda_version_option", return_value=("cuda124", 12.4)),
+        patch("fullwave.solver.solver._check_compatible_set", return_value=True),
+        pytest.raises(NotImplementedError, match="only 2 relaxation mechanisms"),
+    ):
+        _retrieve_fullwave_simulation_path(
+            use_gpu=True,
+            is_3d=True,
+            use_isotropic_relaxation=True,
+            n_relax_mechanisms=ShippedDatabase.mechanisms,
+        )
