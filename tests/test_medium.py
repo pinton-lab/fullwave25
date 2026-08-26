@@ -409,8 +409,10 @@ def test_build_creates_medium_relaxation_maps(monkeypatch, tmp_path):
         alpha_power,
         path_database,
         *,
+        path_not_usable_matrix=None,
         band_scale=1.0,
         sound_speed=None,
+        scale_to_requested_alpha_coeff=False,
     ):
         keys = list(initialize_relaxation_param_dict(n_relaxation_mechanisms).keys())
         return {key: np.ones(grid_shape) for key in keys}

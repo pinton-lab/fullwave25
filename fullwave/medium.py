@@ -1136,6 +1136,7 @@ class Medium:
         / "bins"
         / "database"
         / "relaxation_params_database_num_relax=2_20260113_0957.mat",
+        path_not_usable_matrix: Path | None = None,
         n_relaxation_mechanisms: int = 2,
         attenuation_builder: str = "lookup",
         use_isotropic_relaxation: bool = True,
@@ -1178,6 +1179,11 @@ class Medium:
             Mutually exclusive with air_map.
         path_relaxation_parameters_database : Path, optional
             Path to the relaxation parameters database.
+        path_not_usable_matrix : Path, optional
+            Path to a mask an evaluation wrote, which marks the cells a finished
+            evaluation found unusable. A request that lands on a marked cell is
+            warned about, and the lookup still serves it. Without it nothing is
+            marked and the behaviour is unchanged.
         n_relaxation_mechanisms : int, optional
             Number of relaxation mechanisms, by default 4
         attenuation_builder : str, optional
@@ -1287,6 +1293,7 @@ class Medium:
             self.air_coords = np.empty((0, ndim), dtype=np.int64)
 
         self.path_relaxation_parameters_database = path_relaxation_parameters_database
+        self.path_not_usable_matrix = path_not_usable_matrix
         self.n_relaxation_mechanisms = n_relaxation_mechanisms
         self.use_isotropic_relaxation = use_isotropic_relaxation
 
@@ -1516,6 +1523,7 @@ class Medium:
                 alpha_coeff=self.alpha_coeff,
                 alpha_power=self.alpha_power,
                 path_database=self.path_relaxation_parameters_database,
+                path_not_usable_matrix=self.path_not_usable_matrix,
                 band_scale=self.band_scale,
                 sound_speed=sound_speed if self.sound_speed_transfer else None,
                 scale_to_requested_alpha_coeff=self.scale_to_requested_alpha_coeff,
