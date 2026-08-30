@@ -12,7 +12,6 @@ import fullwave
 from fullwave.solver.input_file_writer import InputFileWriter
 from fullwave.solver.launcher import Launcher
 from fullwave.solver.pml_builder import PMLBuilder, PMLBuilderExponentialAttenuation
-from fullwave.solver.shipped_database import ShippedDatabase
 from fullwave.solver.source_type import (
     CLAMPED,
     SOURCE_TYPES,
@@ -55,6 +54,7 @@ VERIFIED_CUDA_ARCHITECTURES = [
     "sm_75",  # Turing: RTX 20*0, T4
     "sm_90",  # Hopper: H100, H200
 ]
+
 
 COMPATIBLE_CUDA_VERSIONS = [
     11.8,
@@ -202,13 +202,42 @@ def _check_compatible_set(cuda_version: float, cuda_arch: str) -> bool:
     return (cuda_version, cuda_arch) in COMPATIBLE_CUDA_VERSIONS_ARCHITECTURES_set
 
 
+def _relaxation_binary_path(
+    *,
+    dimension: str,
+    cuda_version_option: str,
+    isotropic_str: str = "",
+) -> Path:
+    """Return where the relaxation solver binary sits.
+
+    One binary serves every mechanism count, because the kernel reads the count
+    from ``n_relax.dat`` at run time rather than from its own name.
+
+    Parameters
+    ----------
+    dimension : str
+        Either "2d" or "3d".
+    cuda_version_option : str
+        The CUDA tag the binary name ends with, such as "cuda124".
+    isotropic_str : str, optional
+        The anisotropy tag the name carries, empty for the isotropic solver.
+
+    Returns
+    -------
+    Path
+        The bundled path of the binary, which may not exist.
+
+    """
+    root = Path(__file__).parent / "bins" / "gpu" / dimension
+    return root / f"fullwave2_{dimension}_n_relax{isotropic_str}_multi_gpu_{cuda_version_option}"
+
+
 def _retrieve_fullwave_simulation_path(
     *,
     use_gpu: bool = True,
     is_3d: bool = False,
     use_exponential_attenuation: bool = False,
     use_isotropic_relaxation: bool = True,
-    n_relax_mechanisms: int = ShippedDatabase.mechanisms,
 ) -> Path:
     arch_option = _make_cuda_arch_option(use_gpu=use_gpu)
     cuda_version_option, cuda_version = _make_cuda_version_option(use_gpu=use_gpu)
@@ -254,24 +283,10 @@ def _retrieve_fullwave_simulation_path(
             raise NotImplementedError(error_msg)
     elif is_3d:
         if use_gpu:
-            if n_relax_mechanisms != 2:
-                error_msg = (
-                    "Currently, only 2 relaxation mechanisms are supported in 3D simulations. "
-                    "Please set n_relax_mechanisms to 2 for 3D simulations."
-                )
-                logger.error(error_msg)
-                raise NotImplementedError(error_msg)
-
-            path_fullwave_simulation_bin = (
-                Path(__file__).parent
-                / "bins"
-                / "gpu"
-                / "3d"
-                / f"num_relax={n_relax_mechanisms}"
-                / (
-                    f"fullwave2_3d_{n_relax_mechanisms}_relax{isotropic_str}"
-                    f"_multi_gpu_{cuda_version_option}"
-                )
+            path_fullwave_simulation_bin = _relaxation_binary_path(
+                dimension="3d",
+                cuda_version_option=cuda_version_option,
+                isotropic_str=isotropic_str,
             )
         else:
             path_fullwave_simulation_bin = (
@@ -285,16 +300,10 @@ def _retrieve_fullwave_simulation_path(
             raise NotImplementedError(error_msg)
     else:  # noqa: PLR5501
         if use_gpu:
-            path_fullwave_simulation_bin = (
-                Path(__file__).parent
-                / "bins"
-                / "gpu"
-                / "2d"
-                / f"num_relax={n_relax_mechanisms}"
-                / (
-                    f"fullwave2_2d_{n_relax_mechanisms}_relax{isotropic_str}"
-                    f"_multi_gpu_{cuda_version_option}"
-                )
+            path_fullwave_simulation_bin = _relaxation_binary_path(
+                dimension="2d",
+                cuda_version_option=cuda_version_option,
+                isotropic_str=isotropic_str,
             )
         else:
             path_fullwave_simulation_bin = (
@@ -340,7 +349,6 @@ class Solver:
         save_gpu_memory: bool = False,
         verify_gpu: bool = True,
         use_gpu_pml: bool = False,
-        pml_design: str = "decoupled",
         pml_alpha_entrance: float | None = None,
         source_type: str = CLAMPED,
     ) -> None:
@@ -505,7 +513,6 @@ class Solver:
                 is_3d=self.is_3d,
                 use_exponential_attenuation=self.use_exponential_attenuation,
                 use_isotropic_relaxation=use_isotropic_relaxation,
-                n_relax_mechanisms=self.n_relax_mechanisms,
             )
             path_fullwave_simulation_bin = ensure_binary(local_path)
         else:
@@ -591,14 +598,6 @@ class Solver:
             verify_gpu=verify_gpu,
         )
 
-        if use_exponential_attenuation and pml_design != "medium_matched":
-            error_msg = (
-                f"pml_design {pml_design!r} is not implemented for the "
-                "exponential attenuation PML. Pass pml_design='medium_matched'."
-            )
-            logger.error(error_msg)
-            raise NotImplementedError(error_msg)
-
         if use_exponential_attenuation:
             self.pml_builder = PMLBuilderExponentialAttenuation(
                 grid=self.grid,
@@ -620,7 +619,6 @@ class Solver:
                 n_transition_layer=n_transition_layer,
                 use_isotropic_relaxation=use_isotropic_relaxation,
                 use_gpu=use_gpu_pml,
-                pml_design=pml_design,
                 pml_alpha_entrance=pml_alpha_entrance,
             )
 

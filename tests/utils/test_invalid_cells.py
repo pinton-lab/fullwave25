@@ -138,7 +138,7 @@ class TestTheShippedTableCarriesItsOwnRecord:
         held = RelaxationParametersGenerator()
         assert held.path_database == ShippedDatabase.table
         assert held.invalid_cells is not None
-        assert held.invalid_cells["schema"] == 2
+        assert held.invalid_cells["schema"] == 4
         assert held.invalid_reasons()
 
     def test_every_reason_it_carries_is_one_of_the_five(self):

@@ -69,17 +69,9 @@ def patched_solver(tmp_path, monkeypatch):
     import fullwave.solver.solver as solver_module
     from fullwave.solver import launcher as launcher_module
 
-    # Create a fake binary path to satisfy _retrieve_fullwave_simulation_path.
-    fullwave_binary_path = (
-        Path(__file__).parent.parent.parent
-        / "fullwave"
-        / "solver"
-        / "bins"
-        / "gpu"
-        / "2d"
-        / "num_relax=2"
-        / "fullwave2_2d_2_relax_multi_gpu_cuda129"
-    )
+    # A real file, so the resolution never reaches the cache or the network.
+    fullwave_binary_path = tmp_path / "fullwave2_2d_n_relax_multi_gpu_cuda129"
+    fullwave_binary_path.touch()
 
     monkeypatch.setattr(
         solver_module,
@@ -87,9 +79,7 @@ def patched_solver(tmp_path, monkeypatch):
         lambda use_gpu,  # noqa: ARG005
         is_3d,  # noqa: ARG005
         use_exponential_attenuation,  # noqa: ARG005
-        use_isotropic_relaxation,  # noqa: ARG005
-        n_relax_mechanisms:  # noqa: ARG005
-        fullwave_binary_path,
+        use_isotropic_relaxation: fullwave_binary_path,  # noqa: ARG005
     )
     monkeypatch.setattr(
         launcher_module.Launcher,

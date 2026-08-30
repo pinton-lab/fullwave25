@@ -179,7 +179,7 @@ def test_the_shipped_stretching_factors_hold_their_measured_range(
     assert calibrated_table["kappa_x2"].min() == pytest.approx(1.0)
     assert calibrated_table["kappa_x2"].max() == pytest.approx(1.0)
     assert calibrated_table["kappa_x1"].min() == pytest.approx(0.3, abs=1e-9)
-    assert calibrated_table["kappa_x1"].max() == pytest.approx(1.006347, abs=1e-6)
+    assert calibrated_table["kappa_x1"].max() == pytest.approx(1.002289, abs=1e-6)
 
 
 def test_sound_speed_transfer_is_per_voxel(
@@ -674,27 +674,31 @@ def test_medium_carries_the_request_scaling_through_to_the_build() -> None:
     assert not np.allclose(scaled["kappa_x1"], plain["kappa_x1"])
 
 
-def test_the_shipped_table_flags_69_of_its_1717_cells(
+def test_the_shipped_table_flags_124_of_its_1717_cells(
     whole_grid: tuple[np.ndarray, np.ndarray],
 ) -> None:
-    """1648 cells passed the calibration of the four mechanism table."""
+    """1593 cells passed the calibration of the four mechanism table.
+
+    102 of the 124 come from the fit's own gate, 8 from the curve gate and 14
+    from the absorbing layer gate, which the shipped table now carries.
+    """
     alpha_coeff, alpha_power = whole_grid
     generator = RelaxationParametersGenerator()
     calibrated = generator.is_calibrated(alpha_coeff, alpha_power)
     assert calibrated.size == 1717
-    assert int(calibrated.sum()) == 1648
-    assert int((~calibrated).sum()) == 69
+    assert int(calibrated.sum()) == 1593
+    assert int((~calibrated).sum()) == 124
 
 
 def test_the_flagged_cells_gather_at_the_high_exponents(
     whole_grid: tuple[np.ndarray, np.ndarray],
 ) -> None:
-    """63 of the 69 flagged cells sit at an exponent of 1.5 or above."""
+    """110 of the 124 flagged cells sit at an exponent of 1.5 or above."""
     alpha_coeff, alpha_power = whole_grid
     generator = RelaxationParametersGenerator()
     flagged = ~generator.is_calibrated(alpha_coeff, alpha_power)
-    assert int(flagged[alpha_power >= 1.5].sum()) == 63
-    assert int(flagged[alpha_power < 1.5].sum()) == 6
+    assert int(flagged[alpha_power >= 1.5].sum()) == 110
+    assert int(flagged[alpha_power < 1.5].sum()) == 14
 
 
 def test_the_two_mechanism_table_flags_389_of_its_1717_cells(
@@ -719,12 +723,12 @@ def test_the_two_mechanism_table_flags_389_of_its_1717_cells(
     assert int((~calibrated).sum()) == 389
 
 
-def test_the_coefficient_axis_is_full_except_at_two_exponents(
+def test_the_coefficient_axis_is_full_except_at_three_exponents(
     whole_grid: tuple[np.ndarray, np.ndarray],
 ) -> None:
-    """The four mechanism fit reaches the top of the axis at 15 of the 17 exponents.
+    """The four mechanism fit reaches the top of the axis at 14 of the 17 exponents.
 
-    It stops at 0.94 at an exponent of 1.8 and at 0.7 at an exponent of 1.999.
+    It stops at 0.94 at an exponent of 1.7, at 0.71 at 1.8 and at 0.7 at 1.999.
     """
     alpha_coeff, alpha_power = whole_grid
     generator = RelaxationParametersGenerator()
@@ -735,10 +739,11 @@ def test_the_coefficient_axis_is_full_except_at_two_exponents(
         for column in range(calibrated.shape[1])
     }
     assert len(largest) == 17
-    assert largest[1.8] == pytest.approx(0.94)
+    assert largest[1.7] == pytest.approx(0.94)
+    assert largest[1.8] == pytest.approx(0.71)
     assert largest[1.999] == pytest.approx(0.7)
     full = [exponent for exponent, held in largest.items() if held == pytest.approx(1.0)]
-    assert len(full) == 15
+    assert len(full) == 14
 
 
 def test_a_request_off_the_axis_reports_the_flag_of_the_cell_it_clips_to(
