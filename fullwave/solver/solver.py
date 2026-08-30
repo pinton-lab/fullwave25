@@ -400,7 +400,7 @@ class Solver:
             argument is refused when ``use_exponential_attenuation`` is False.
             The relaxation model absorbs with its own two stage layer, which
             ``pml_layer_thickness_px`` sizes.
-            None, the default, gives 2 wavelengths.
+            None, the default, gives 3 wavelengths.
             0 turns the layer off and tapers ``alpha_exp`` in the margin instead,
             which is what every release before this one did.
         run_on_memory : bool, optional
@@ -1018,7 +1018,8 @@ class Solver:
         if record_whole_domain:
             mod_x = 1
             mod_y = 1
-            mod_z = 1 if self.is_3d else None
+            # Sensor reads mod_z as a count and treats 0 as two dimensions.
+            mod_z = 1 if self.is_3d else 0
 
             sensor = fullwave.Sensor(
                 mod_x=mod_x,

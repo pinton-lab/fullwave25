@@ -221,8 +221,8 @@ def _exponential_medium():
     return _pieces(alpha_coeff=0.5, alpha_power=1.0001)
 
 
-def test_the_layer_is_two_wavelengths_by_default() -> None:
-    """The C-PML layer is on by default and it is 2 wavelengths thick.
+def test_the_layer_is_three_wavelengths_by_default() -> None:
+    """The C-PML layer is on by default and it is 3 wavelengths thick.
 
     The margin holds the layer and nothing else, so it is the same width.
     """
@@ -233,8 +233,8 @@ def test_the_layer_is_two_wavelengths_by_default() -> None:
         source=source,
         sensor=sensor,
     )
-    assert builder.exponential_attenuation_pml_thickness_px == 2 * grid.ppw
-    assert builder.n_pml_layer == 2 * grid.ppw
+    assert builder.exponential_attenuation_pml_thickness_px == 3 * grid.ppw
+    assert builder.n_pml_layer == 3 * grid.ppw
 
 
 def test_the_margin_holds_the_taper_when_the_layer_is_off() -> None:
@@ -265,7 +265,7 @@ def test_a_stated_margin_is_kept() -> None:
         n_pml_layer=5 * grid.ppw,
     )
     assert builder.n_pml_layer == 5 * grid.ppw
-    assert builder.exponential_attenuation_pml_thickness_px == 2 * grid.ppw
+    assert builder.exponential_attenuation_pml_thickness_px == 3 * grid.ppw
 
 
 def test_a_layer_thicker_than_the_margin_is_refused() -> None:
