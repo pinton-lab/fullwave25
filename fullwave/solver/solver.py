@@ -400,7 +400,7 @@ class Solver:
             argument is refused when ``use_exponential_attenuation`` is False.
             The relaxation model absorbs with its own two stage layer, which
             ``pml_layer_thickness_px`` sizes.
-            None, the default, gives 3 wavelengths.
+            None, the default, gives 2 wavelengths.
             0 turns the layer off and tapers ``alpha_exp`` in the margin instead,
             which is what every release before this one did.
         run_on_memory : bool, optional
