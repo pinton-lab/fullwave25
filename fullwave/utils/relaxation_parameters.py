@@ -861,7 +861,8 @@ class RelaxationParametersGenerator:
         Raises
         ------
         ValueError: If the lookup table is not 3-dimensional.
-        ValueError: If the lookup table does not have (4 * n_relaxation_mechanisms + 2) columns.
+        ValueError: If the table's column count names a different mechanism count
+            from the one this run asked for.
         ValueError: If the lookup table contains NaN values.
 
         """
@@ -869,8 +870,18 @@ class RelaxationParametersGenerator:
             error_msg = "look_up_table must have 3 dimensions."
             logger.error(error_msg)
             raise ValueError(error_msg)
-        if self.look_up_table.shape[2] != 4 * self.n_relaxation_mechanisms + 2:
-            error_msg = "look_up_table must have 4 * n_relaxation_mechanisms + 2 columns."
+        columns = self.look_up_table.shape[2]
+        wanted = 4 * self.n_relaxation_mechanisms + 2
+        if columns != wanted:
+            held = (columns - 2) / 4
+            error_msg = (
+                f"The table at {self.path_database} holds {columns} columns, which is "
+                f"{held:g} relaxation mechanisms, and this run asked for "
+                f"{self.n_relaxation_mechanisms}, which needs {wanted}. A table serves one "
+                "mechanism count. Either ask for the count this table holds, or name the "
+                "table for the count you want with path_relaxation_parameters_database. "
+                f"The counts this package ships are {sorted(ShippedDatabase.stems)}."
+            )
             logger.error(error_msg)
             raise ValueError(error_msg)
         if np.isnan(self.look_up_table).any():
