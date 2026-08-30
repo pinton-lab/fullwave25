@@ -37,6 +37,8 @@ class InputFileWriter:
         use_isotropic_relaxation: bool = False,
         release_after_write: bool = False,
         pml_thickness: int = 0,
+        exponential_attenuation_pml_thickness_px: int = 0,
+        exponential_attenuation_pml_interior_offset_px: int = 0,
         use_gpu: bool = False,
     ) -> None:
         """Initialize the InputGeneratorBase instance.
@@ -80,6 +82,16 @@ class InputFileWriter:
             PML boundary thickness in grid points (n_pml_layer + n_transition_layer).
             Required by the solver binary when using sparse grid (mod_x/mod_y != 0) to determine
             the interior domain boundaries. Also written when mod_x == 0 for future use.
+        exponential_attenuation_pml_thickness_px : int, optional
+            Thickness of the C-PML absorbing layer in grid points.
+            0, the default, writes no file, and the solver then places no layer.
+        exponential_attenuation_pml_interior_offset_px : int, optional
+            Where the interior starts, counted from the last ghost cell.
+            The layer needs it to place its inner face, and it is written
+            only with the thickness above. It is a second value because
+            pml_thickness carries the sparse recording window, which is 0 for
+            a whole domain recording while the interior still starts where it
+            always did.
 
         """
         logger.debug("Initializing InputFileWriter instance.")
@@ -107,6 +119,10 @@ class InputFileWriter:
         self.use_exponential_attenuation = use_exponential_attenuation
         self.release_after_write = release_after_write
         self.pml_thickness = pml_thickness
+        self.exponential_attenuation_pml_thickness_px = exponential_attenuation_pml_thickness_px
+        self.exponential_attenuation_pml_interior_offset_px = (
+            exponential_attenuation_pml_interior_offset_px
+        )
 
         self._precomputed_bulk_modulus: NDArray[np.float32] | None = None
 
@@ -1109,6 +1125,8 @@ class InputFileWriter:
             "modX",
             "modY",
             "pml_thickness",
+            "exponential_attenuation_pml_thickness_px",
+            "exponential_attenuation_pml_interior_offset_px",
             "d",
             "dmap",
             "ndmap",
@@ -1270,20 +1288,41 @@ class InputFileWriter:
             self._queue_v_abs_write(np.int32, save_path, var)
 
     def _save_sparse_grid_params(self, simulation_dir: Path) -> None:
-        """Write sparse-grid parameters when the sensor is in sparse-grid mode.
+        """Write the sparse-grid strides, and where the interior starts.
 
-        modX / modY / modZ and pml_thickness are only written when the sensor
-        was constructed with mod_x/mod_y (i.e. sensor.is_sparse_grid is True).
-        In standard coordinate/mask mode these files are not produced, preserving
-        backward compatibility with older binaries that do not expect them.
+        modX / modY / modZ are written only when the sensor was constructed with
+        mod_x/mod_y, that is when ``sensor.is_sparse_grid`` is True. In standard
+        coordinate or mask mode those files are not produced, which keeps older
+        binaries working.
+
+        ``pml_thickness.dat`` is written either way. It says where the interior
+        starts, which is true of every run and not only of a sparse one, and a
+        solver that places an absorbing layer needs it. Every shipped binary
+        reads it behind a file-exists guard, and outside the sparse path no
+        binary uses the value, so writing it changes no existing result.
+
+        The C-PML absorbing layer carries its own two files, and both are
+        written only when the layer is on. A binary that finds no thickness
+        file places no layer, so an existing run is unchanged.
         """
+        self._queue_v_abs_write(np.int32, simulation_dir / "pml_thickness.dat", self.pml_thickness)
+        if self.exponential_attenuation_pml_thickness_px > 0:
+            self._queue_v_abs_write(
+                np.int32,
+                simulation_dir / "exponential_attenuation_pml_thickness.dat",
+                self.exponential_attenuation_pml_thickness_px,
+            )
+            self._queue_v_abs_write(
+                np.int32,
+                simulation_dir / "exponential_attenuation_pml_interior_offset.dat",
+                self.exponential_attenuation_pml_interior_offset_px,
+            )
         if not self.sensor.is_sparse_grid:
             return
         self._queue_v_abs_write(np.int32, simulation_dir / "modX.dat", self.sensor.mod_x)
         self._queue_v_abs_write(np.int32, simulation_dir / "modY.dat", self.sensor.mod_y)
         if self.is_3d:
             self._queue_v_abs_write(np.int32, simulation_dir / "modZ.dat", self.sensor.mod_z)
-        self._queue_v_abs_write(np.int32, simulation_dir / "pml_thickness.dat", self.pml_thickness)
 
     def _save_d_params(
         self,

@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 import fullwave
-from fullwave.solver.pml_builder import PMLBuilder
+from fullwave.solver.pml_builder import PMLBuilder, PMLBuilderExponentialAttenuation
 
 F0 = 1e6
 C0 = 1540.0
@@ -214,3 +214,97 @@ def test_the_build_produces_a_full_set_of_arrays(isotropic: bool) -> None:  # no
         for nu in mechanisms
     }
     assert set(built) == expected
+
+
+def _exponential_medium():
+    """Return the pieces the exponential attenuation builder takes."""
+    return _pieces(alpha_coeff=0.5, alpha_power=1.0001)
+
+
+def test_the_layer_is_two_wavelengths_by_default() -> None:
+    """The C-PML layer is on by default and it is 2 wavelengths thick.
+
+    The margin holds the layer and nothing else, so it is the same width.
+    """
+    grid, medium, source, sensor = _exponential_medium()
+    builder = PMLBuilderExponentialAttenuation(
+        grid=grid,
+        medium=medium,
+        source=source,
+        sensor=sensor,
+    )
+    assert builder.exponential_attenuation_pml_thickness_px == 2 * grid.ppw
+    assert builder.n_pml_layer == 2 * grid.ppw
+
+
+def test_the_margin_holds_the_taper_when_the_layer_is_off() -> None:
+    """With the layer off the taper is the absorber, so the margin is its depth.
+
+    The taper fills the whole margin, and it needs 4 wavelengths, which is what
+    every release before the layer used.
+    """
+    grid, medium, source, sensor = _exponential_medium()
+    builder = PMLBuilderExponentialAttenuation(
+        grid=grid,
+        medium=medium,
+        source=source,
+        sensor=sensor,
+        exponential_attenuation_pml_thickness_px=0,
+    )
+    assert builder.n_pml_layer == 4 * grid.ppw
+
+
+def test_a_stated_margin_is_kept() -> None:
+    """A caller who states a margin gets it, whichever absorber is in use."""
+    grid, medium, source, sensor = _exponential_medium()
+    builder = PMLBuilderExponentialAttenuation(
+        grid=grid,
+        medium=medium,
+        source=source,
+        sensor=sensor,
+        n_pml_layer=5 * grid.ppw,
+    )
+    assert builder.n_pml_layer == 5 * grid.ppw
+    assert builder.exponential_attenuation_pml_thickness_px == 2 * grid.ppw
+
+
+def test_a_layer_thicker_than_the_margin_is_refused() -> None:
+    """The layer sits between the interior and the grid edge, so it must fit."""
+    grid, medium, source, sensor = _exponential_medium()
+    with pytest.raises(ValueError, match="does not fit"):
+        PMLBuilderExponentialAttenuation(
+            grid=grid,
+            medium=medium,
+            source=source,
+            sensor=sensor,
+            n_pml_layer=N_PML_LAYER,
+            exponential_attenuation_pml_thickness_px=N_PML_LAYER + 1,
+        )
+
+
+def test_the_taper_stops_where_the_layer_is_on() -> None:
+    """The layer replaces the margin taper rather than adding to it.
+
+    With the layer off the attenuation falls toward the grid edge. With the
+    layer on every margin cell keeps the attenuation the medium asked for.
+    """
+    fields = {}
+    for name, thickness in (("off", 0), ("on", N_PML_LAYER)):
+        grid, medium, source, sensor = _exponential_medium()
+        builder = PMLBuilderExponentialAttenuation(
+            grid=grid,
+            medium=medium,
+            source=source,
+            sensor=sensor,
+            n_pml_layer=N_PML_LAYER,
+            exponential_attenuation_pml_thickness_px=thickness,
+        )
+        fields[name] = np.asarray(builder.run(use_pml=True).alpha_exp)
+
+    edge_off = fields["off"][0, fields["off"].shape[1] // 2]
+    edge_on = fields["on"][0, fields["on"].shape[1] // 2]
+    centre = fields["on"][fields["on"].shape[0] // 2, fields["on"].shape[1] // 2]
+
+    assert edge_off < centre, "with the layer off the taper must lower the edge"
+    assert edge_on == pytest.approx(centre), "with the layer on the edge must keep the attenuation"
+    np.testing.assert_allclose(fields["on"], fields["on"][0, 0], err_msg="the map must be uniform")

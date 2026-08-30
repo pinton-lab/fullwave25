@@ -104,6 +104,89 @@ def test_run_non_static_creates_simulation_files(tmp_path, work_and_bin, monkeyp
         assert file_path.exists(), f"Expected file {fname} does not exist."
 
 
+def test_the_interior_offset_is_written_without_a_sparse_sensor(
+    tmp_path, work_and_bin, monkeypatch
+):
+    """`pml_thickness.dat` says where the interior starts, on every path.
+
+    A solver that places an absorbing layer needs it, and the sensor mode has
+    nothing to do with where the interior is.
+    """
+    work_dir, bin_file = work_and_bin
+    grid, medium, source, sensor = create_dummy_objects()
+    assert sensor.is_sparse_grid is False
+
+    monkeypatch.setattr(check_functions, "check_path_exists", lambda x: None)  # noqa: ARG005
+    monkeypatch.setattr(check_functions, "check_instance", lambda inst, cls: None)  # noqa: ARG005
+
+    writer = InputFileWriter(
+        work_dir,
+        grid,
+        medium,
+        source,
+        sensor,
+        path_fullwave_simulation_bin=bin_file,
+        validate_input=False,
+        pml_thickness=37,
+    )
+    sim_path = Path(writer.run("sim_offset", is_static_map=False, recalculate_pml=True))
+
+    written = sim_path / "pml_thickness.dat"
+    assert written.exists(), "the interior offset must be written without a sparse sensor"
+    assert int(np.fromfile(written, dtype=np.int32)[0]) == 37
+
+    # The sparse strides stay behind the sensor mode, so an older binary that
+    # does not expect them still sees none.
+    for name in ("modX.dat", "modY.dat", "modZ.dat"):
+        assert not (sim_path / name).exists(), f"{name} must stay behind the sparse sensor"
+
+    # The layer's own files stay behind the layer, so a run that asks for no
+    # layer writes none and a binary that finds none places none.
+    for name in (
+        "exponential_attenuation_pml_thickness.dat",
+        "exponential_attenuation_pml_interior_offset.dat",
+    ):
+        assert not (sim_path / name).exists(), f"{name} must stay behind the absorbing layer"
+
+
+def test_the_absorbing_layer_carries_its_own_two_files(tmp_path, work_and_bin, monkeypatch):
+    """The C-PML layer states its thickness and where the interior starts.
+
+    Both are its own files. ``pml_thickness.dat`` cannot serve, because it
+    carries the sparse recording window and that is 0 for a whole domain
+    recording while the interior still starts where it always did.
+    """
+    work_dir, bin_file = work_and_bin
+    grid, medium, source, sensor = create_dummy_objects()
+
+    monkeypatch.setattr(check_functions, "check_path_exists", lambda x: None)  # noqa: ARG005
+    monkeypatch.setattr(check_functions, "check_instance", lambda inst, cls: None)  # noqa: ARG005
+
+    writer = InputFileWriter(
+        work_dir,
+        grid,
+        medium,
+        source,
+        sensor,
+        path_fullwave_simulation_bin=bin_file,
+        validate_input=False,
+        pml_thickness=0,
+        exponential_attenuation_pml_thickness_px=20,
+        exponential_attenuation_pml_interior_offset_px=48,
+    )
+    sim_path = Path(writer.run("sim_layer", is_static_map=False, recalculate_pml=True))
+
+    thickness = sim_path / "exponential_attenuation_pml_thickness.dat"
+    offset = sim_path / "exponential_attenuation_pml_interior_offset.dat"
+    assert thickness.exists(), "the layer must state its thickness"
+    assert offset.exists(), "the layer must state where the interior starts"
+    assert int(np.fromfile(thickness, dtype=np.int32)[0]) == 20
+    assert int(np.fromfile(offset, dtype=np.int32)[0]) == 48
+
+    # The recording window is a different fact and it keeps its own file.
+    assert int(np.fromfile(sim_path / "pml_thickness.dat", dtype=np.int32)[0]) == 0
+
+
 def test_run_static_creates_symbolic_links(tmp_path, work_and_bin, monkeypatch):
     work_dir, bin_file = work_and_bin
     grid, medium, source, sensor = create_dummy_objects()

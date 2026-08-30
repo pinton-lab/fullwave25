@@ -341,7 +341,8 @@ class Solver:
         m_spatial_order: int = 8,
         pml_layer_thickness_px: int | None = None,
         n_transition_layer: int | None = None,
-        run_on_memory: bool = False,
+        exponential_attenuation_pml_thickness_px: int | None = None,
+        run_on_memory: bool | None = None,
         use_gpu: bool = True,
         use_exponential_attenuation: bool = False,
         use_isotropic_relaxation: bool = True,
@@ -387,18 +388,37 @@ class Solver:
             Fullwave simulation has 2M th order spatial accuracy and fourth order accuracy in time.
             see Pinton, G. (2021) http://arxiv.org/abs/2106.11476 for more detail.
         pml_layer_thickness_px : int, optional
-            PML layer thickness (default is 3 ppw).
+            Width of the margin between the interior and the grid edge, in grid
+            points. For the relaxation model the default is 4 wavelengths.
+            For the exponential attenuation model the default is the depth of
+            whichever absorber is in use, so no cell of the margin is idle.
         n_transition_layer : int, optional
             Number of transition layers (default is 3 ppw).
+        exponential_attenuation_pml_thickness_px : int, optional
+            Thickness of the C-PML absorbing layer in grid points.
+            The C-PML belongs to the exponential attenuation model, so this
+            argument is refused when ``use_exponential_attenuation`` is False.
+            The relaxation model absorbs with its own two stage layer, which
+            ``pml_layer_thickness_px`` sizes.
+            None, the default, gives 2 wavelengths.
+            0 turns the layer off and tapers ``alpha_exp`` in the margin instead,
+            which is what every release before this one did.
         run_on_memory : bool, optional
             Flag indicating whether to run the simulation in memory.
+            Defaults to True, which keeps the input files and the recorded
+            field off the disk. A run writes several arrays of the whole grid
+            and reads back one array for each recorded step, and none of that
+            needs to survive the run, because ``run`` returns the field.
             If True, a temporary directory is created in memory.
             it uses the /run/user/{uid} directory if available.
             the maximum size depends on the system configuration.
             if needed, increase the size of /run/user/{uid} using the following website:
             https://wiki.archlinux.org/title/Profile-sync-daemon#Allocate_more_memory_to_accommodate_profiles_in_/run/user/xxxx
-            If False, a temporary directory is created on disk.
-            Defaults to False.
+            It falls back to the disk when no such directory is available.
+            None, the default, means memory, and it steps aside for a static
+            map, which needs the files on a disk. An explicit True refuses a
+            static map rather than stepping aside. Set it to False to keep the
+            simulation directory.
         use_gpu : bool, optional
             Whether to use GPU for the simulation.
             Currently, only GPU version is supported.
@@ -457,6 +477,15 @@ class Solver:
             and transducer) are defined simultaneously.
 
         """
+        if exponential_attenuation_pml_thickness_px is not None and not use_exponential_attenuation:
+            error_msg = (
+                "exponential_attenuation_pml_thickness_px belongs to the exponential "
+                "attenuation model, and this run uses the relaxation model. Set "
+                "use_exponential_attenuation=True, or size the relaxation PML with "
+                "pml_layer_thickness_px."
+            )
+            raise ValueError(error_msg)
+
         # type hints
         self.source: fullwave.Source
         self.sensor: fullwave.Sensor
@@ -465,6 +494,11 @@ class Solver:
         self.input_file_writer: InputFileWriter
         self.save_gpu_memory = save_gpu_memory
 
+        # None means memory, and it steps aside for a static map. An explicit
+        # True refuses one instead, because the caller asked for memory.
+        self.run_on_memory_is_stated = run_on_memory is not None
+        self.work_dir_on_disk = Path(work_dir)
+        run_on_memory = True if run_on_memory is None else run_on_memory
         self.run_on_memory = run_on_memory
         if run_on_memory:
             message = (
@@ -550,10 +584,22 @@ class Solver:
 
         self.use_pml = use_pml
         if not use_pml:
+            if exponential_attenuation_pml_thickness_px:
+                error_msg = (
+                    "use_pml=False asks for no PML, and "
+                    "exponential_attenuation_pml_thickness_px="
+                    f"{exponential_attenuation_pml_thickness_px} asks for one. Set use_pml=True, "
+                    "or drop the thickness."
+                )
+                raise ValueError(error_msg)
+            exponential_attenuation_pml_thickness_px = 0
             pml_layer_thickness_px = 0
             n_transition_layer = 0
 
-        if pml_layer_thickness_px is None:
+        # The exponential attenuation builder sizes its own margin, because the
+        # margin holds one absorber and nothing else, and only that builder
+        # knows which of its two absorbers is in use.
+        if pml_layer_thickness_px is None and not use_exponential_attenuation:
             pml_layer_thickness_px = self.grid.ppw * 4
         if n_transition_layer is None:
             n_transition_layer = self.grid.ppw * 2
@@ -606,6 +652,7 @@ class Solver:
                 sensor=self.sensor,
                 m_spatial_order=m_spatial_order,
                 n_pml_layer=pml_layer_thickness_px,
+                exponential_attenuation_pml_thickness_px=exponential_attenuation_pml_thickness_px,
                 use_gpu=use_gpu_pml,
             )
         else:
@@ -926,14 +973,25 @@ class Solver:
         logger.debug(message)
 
         if self.run_on_memory and is_static_map:
-            error_msg = (
-                "run_on_memory cannot be True when is_static_map is True. "
-                "Static map simulations require input files to be stored on a disk. run_on_memory, "
-                "on the other hand, removes the input files after the simulation is complete. "
-                "Please set run_on_memory to False when using static map."
+            if self.run_on_memory_is_stated:
+                error_msg = (
+                    "run_on_memory cannot be True when is_static_map is True. "
+                    "Static map simulations require input files to be stored on a disk. "
+                    "run_on_memory, on the other hand, removes the input files after the "
+                    "simulation is complete. Please set run_on_memory to False when using "
+                    "static map."
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            message = (
+                "A static map needs the input files on a disk, so this run uses work_dir "
+                f"{self.work_dir_on_disk} rather than memory. Pass run_on_memory=False to "
+                "say so, or run_on_memory=True to refuse a static map."
             )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
+            logger.warning(message)
+            self.run_on_memory = False
+            self.work_dir = self.work_dir_on_disk
+            self.work_dir.mkdir(exist_ok=True, parents=True)
 
         self._validate_filter_params(
             highpass_cutoff_mhz,
@@ -973,10 +1031,11 @@ class Solver:
 
         # pml_thickness = PML + transition layers on each side, excluding ghost cells.
         # Used by the binary to locate the interior domain when building a sparse sensor grid.
-        if record_whole_domain:
-            pml_thickness = 0
-        else:
-            pml_thickness = self.pml_builder.num_boundary_points - self.pml_builder.m_spatial_order
+        interior_offset = self.pml_builder.num_boundary_points - self.pml_builder.m_spatial_order
+        pml_thickness = 0 if record_whole_domain else interior_offset
+        exponential_attenuation_pml_thickness_px = (
+            self.pml_builder.exponential_attenuation_pml_thickness_px
+        )
 
         start_input_file_writer_time = time.time()
         input_file_writer = InputFileWriter(
@@ -990,6 +1049,8 @@ class Solver:
             use_isotropic_relaxation=self.use_isotropic_relaxation,
             release_after_write=release_after_write,
             pml_thickness=pml_thickness,
+            exponential_attenuation_pml_thickness_px=exponential_attenuation_pml_thickness_px,
+            exponential_attenuation_pml_interior_offset_px=interior_offset,
             use_gpu=self.use_gpu_pml,
         )
         simulation_dir = input_file_writer.run(

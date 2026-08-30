@@ -151,6 +151,10 @@ class PMLBuilder:
 
     three_dimensions = 3
 
+    # The C-PML absorbing layer belongs to the exponential attenuation builder.
+    # The relaxation builder absorbs with its own two stage layer instead.
+    exponential_attenuation_pml_thickness_px = 0
+
     medium_org: fullwave.Medium
     source_org: fullwave.Source
     sensor_org: fullwave.Sensor
@@ -1625,6 +1629,13 @@ class PMLBuilder:
 class PMLBuilderExponentialAttenuation(PMLBuilder):
     """A class to set up PML for exponential attenuation media."""
 
+    # The two absorbers this class can put at the grid edge, and how deep each
+    # one is when the caller states no depth, in wavelengths. The margin between
+    # the interior and the grid edge holds whichever one is in use, and it is no
+    # deeper than that one, because a cell outside the absorber does nothing.
+    default_pml_wavelengths = 2.0
+    default_taper_wavelengths = 4.0
+
     def __init__(
         self,
         grid: fullwave.Grid,
@@ -1633,7 +1644,8 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
         sensor: fullwave.Sensor,
         *,
         m_spatial_order: int = 8,
-        n_pml_layer: int = 40,
+        n_pml_layer: int | None = None,
+        exponential_attenuation_pml_thickness_px: int | None = None,
         use_gpu: bool = False,
         # n_transition_layer: int = 40,
         # pml_alpha_target: float = 1.1,
@@ -1659,7 +1671,18 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             Fullwave simulation has 2M th order spatial accuracy and fourth order accuracy in time.
             see Pinton, G. (2021) http://arxiv.org/abs/2106.11476 for more detail.
         n_pml_layer : int, optional
-            PML layer thickness (default is 40).
+            Width of the margin between the interior and the grid edge, in grid
+            points. None, the default, gives the depth of whichever absorber is
+            in use, so no cell of the margin is idle.
+        exponential_attenuation_pml_thickness_px : int, optional
+            Thickness of the C-PML absorbing layer in grid points.
+            The layer sits in the margin between the interior and the grid edge,
+            so it cannot be thicker than ``n_pml_layer``.
+            None, the default, gives 2 wavelengths, which is
+            ``default_pml_wavelengths`` times the points of one wavelength.
+            0 turns the layer off and keeps the ``alpha_exp`` taper instead.
+            While the layer is on the taper is not applied, because the layer
+            replaces it rather than adding to it.
         use_gpu : bool, optional
             If True, use CuPy for GPU-accelerated PML computation (default is False).
             Requires CuPy to be installed. Falls back to CPU if CuPy is unavailable.
@@ -1713,7 +1736,22 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             )
 
         self.m_spatial_order = m_spatial_order
+        self.exponential_attenuation_pml_thickness_px = (
+            round(self.default_pml_wavelengths * grid.ppw)
+            if exponential_attenuation_pml_thickness_px is None
+            else exponential_attenuation_pml_thickness_px
+        )
+        n_pml_layer = self._margin_of(grid, n_pml_layer)
         self.n_pml_layer = n_pml_layer
+        if not 0 <= self.exponential_attenuation_pml_thickness_px <= n_pml_layer:
+            error_msg = (
+                "exponential_attenuation_pml_thickness_px="
+                f"{self.exponential_attenuation_pml_thickness_px} does not fit in the "
+                f"{n_pml_layer} cell margin between the interior and the grid edge. "
+                f"The default layer is {self.default_pml_wavelengths} wavelengths "
+                f"of {grid.ppw} points."
+            )
+            raise ValueError(error_msg)
         # self.n_transition_layer = n_transition_layer
         # self.pml_alpha_target = pml_alpha_target
         # self.pml_alpha_power_target = pml_alpha_power_target
@@ -1844,6 +1882,33 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
 
         if self.n_pml_layer == 0:
             self.n_transition_layer = 0
+
+    def _margin_of(self, grid: fullwave.Grid, stated: int | None) -> int:
+        """Return the width of the margin between the interior and the grid edge.
+
+        The margin holds one absorber and nothing else. With the C-PML on it is
+        the layer, so the margin is the layer. With the C-PML off the absorber
+        is the ``alpha_exp`` taper, which fills the whole margin, so the margin
+        is the taper's own depth.
+
+        Parameters
+        ----------
+        grid : fullwave.Grid
+            The grid the caller passed, which states the points of a wavelength.
+        stated : int or None
+            The width the caller asked for, in grid points, or None.
+
+        Returns
+        -------
+        int
+            The width in grid points. A stated width is returned unchanged.
+
+        """
+        if stated is not None:
+            return stated
+        if self.exponential_attenuation_pml_thickness_px > 0:
+            return self.exponential_attenuation_pml_thickness_px
+        return round(self.default_taper_wavelengths * grid.ppw)
 
     @cached_property
     def num_boundary_points(self) -> int:
@@ -2021,6 +2086,23 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
         self,
         extended_medium: fullwave.MediumExponentialAttenuation,
     ) -> fullwave.MediumExponentialAttenuation:
+        """Taper the attenuation in the margin, unless the C-PML absorbs there instead.
+
+        Parameters
+        ----------
+        extended_medium : fullwave.MediumExponentialAttenuation
+            The medium of the extended grid, margin included.
+
+        Returns
+        -------
+        fullwave.MediumExponentialAttenuation
+            The same medium. Its ``alpha_exp`` falls toward the grid edge
+            while the layer thickness is 0, and it is unchanged while the
+            layer is on.
+
+        """
+        if self.exponential_attenuation_pml_thickness_px > 0:
+            return extended_medium
         a_mask = self._mask_body_3d(
             nx=extended_medium.alpha_exp.shape[0],
             ny=extended_medium.alpha_exp.shape[1],
@@ -2038,6 +2120,23 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
         self,
         extended_medium: fullwave.MediumExponentialAttenuation,
     ) -> fullwave.MediumExponentialAttenuation:
+        """Taper the attenuation in the margin, unless the C-PML absorbs there instead.
+
+        Parameters
+        ----------
+        extended_medium : fullwave.MediumExponentialAttenuation
+            The medium of the extended grid, margin included.
+
+        Returns
+        -------
+        fullwave.MediumExponentialAttenuation
+            The same medium. Its ``alpha_exp`` falls toward the grid edge
+            while the layer thickness is 0, and it is unchanged while the
+            layer is on.
+
+        """
+        if self.exponential_attenuation_pml_thickness_px > 0:
+            return extended_medium
         a_mask = self._mask_body_2d(
             nx=extended_medium.alpha_exp.shape[0],
             ny=extended_medium.alpha_exp.shape[1],
