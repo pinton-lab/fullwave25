@@ -341,7 +341,7 @@ def plot_wave_propagation_animation(
 
     """
     nt = propagation_map.shape[0]
-    skip_every_n_frame = int(nt / num_plot_image)
+    skip_every_n_frame = max(1, int(nt / num_plot_image))
     plt.close()
     plt.cla()
     plt.clf()
@@ -630,7 +630,7 @@ def plot_wave_propagation_with_map(
 
     """
     nt = propagation_map.shape[0]
-    skip_every_n_frame = int(nt / num_plot_image)
+    skip_every_n_frame = max(1, int(nt / num_plot_image))
     plt.close()
     plt.cla()
     plt.clf()

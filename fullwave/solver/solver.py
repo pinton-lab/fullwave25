@@ -617,7 +617,12 @@ class Solver:
             logger.error(error_msg)
             raise ValueError(error_msg)
         if is_additive(source_type):
-            self.source = as_additive_source(self.source, self.grid, self.medium)
+            self.source = as_additive_source(
+                self.source,
+                self.grid,
+                self.medium,
+                use_exponential_attenuation=use_exponential_attenuation,
+            )
             logger.info("source_type=%s, the source is driven by addition", source_type)
 
         if sensor is not None:

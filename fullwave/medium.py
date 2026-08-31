@@ -1491,6 +1491,91 @@ class Medium:
 
     # ---
 
+    def _relaxation_parameters_of(
+        self,
+        sound_speed: NDArray[np.float64],
+        alpha_coeff: NDArray[np.float64],
+        alpha_power: NDArray[np.float64],
+    ) -> dict[str, NDArray[np.float64]]:
+        """Look up the relaxation parameters of the given maps.
+
+        Parameters
+        ----------
+        sound_speed : NDArray[np.float64]
+            The band scaled sound speed the parameters are built at [m/s].
+        alpha_coeff : NDArray[np.float64]
+            Attenuation coefficient [dB/cm/MHz^y].
+        alpha_power : NDArray[np.float64]
+            Attenuation power [-].
+
+        Returns
+        -------
+        dict[str, NDArray[np.float64]]
+            One entry for each relaxation parameter, of the shape given.
+
+        Raises
+        ------
+        ValueError
+            If the attenuation builder is not the lookup.
+
+        """
+        if self.attenuation_builder != "lookup":
+            error_msg = (
+                f"Unknown attenuation_builder: {self.attenuation_builder}. "
+                'Only "lookup" is supported currently.'
+            )
+            raise ValueError(error_msg)
+        relaxation_param_dict = generate_relaxation_params(
+            n_relaxation_mechanisms=self.n_relaxation_mechanisms,
+            alpha_coeff=alpha_coeff,
+            alpha_power=alpha_power,
+            path_database=self.path_relaxation_parameters_database,
+            path_invalid_cells=self.path_invalid_cells,
+            band_scale=self.band_scale,
+            sound_speed=sound_speed if self.sound_speed_transfer else None,
+            scale_to_requested_alpha_coeff=self.scale_to_requested_alpha_coeff,
+        )
+        if self.dtype != np.float64:
+            relaxation_param_dict = {
+                key: value.astype(self.dtype, copy=False)
+                for key, value in relaxation_param_dict.items()
+            }
+        return relaxation_param_dict
+
+    def relaxation_parameters_at(
+        self,
+        coords: NDArray[np.int64],
+    ) -> tuple[dict[str, NDArray[np.float64]], NDArray[np.float64]]:
+        """Return the relaxation parameters and the sound speed at the given positions.
+
+        A caller that needs a few cells pays a lookup of those cells rather than
+        of the whole grid. `build` needs the whole grid and calls the same lookup
+        with the whole maps, so the two share one implementation.
+
+        Parameters
+        ----------
+        coords : NDArray[np.int64]
+            Positions, shape [n_positions, ndim].
+
+        Returns
+        -------
+        tuple[dict[str, NDArray[np.float64]], NDArray[np.float64]]
+            One value for each relaxation parameter at each position, and the
+            band scaled sound speed at each position [m/s].
+
+        """
+        index = tuple(np.asarray(coords).T)
+        alpha_coeff = self._to_numpy(self.alpha_coeff[index])
+        alpha_power = self._to_numpy(self.alpha_power[index])
+        sound_speed = band_scaled_sound_speed(
+            self._to_numpy(self.sound_speed[index]),
+            alpha_coeff,
+            alpha_power,
+            self.band_scale,
+        )
+        parameters = self._relaxation_parameters_of(sound_speed, alpha_coeff, alpha_power)
+        return parameters, sound_speed
+
     def build(self) -> MediumRelaxationMaps:
         """Retrieve the relaxation parameters from alpha and power maps.
 
@@ -1514,27 +1599,11 @@ class Medium:
             self.alpha_power,
             self.band_scale,
         )
-        if self.attenuation_builder == "lookup":
-            relaxation_param_dict = generate_relaxation_params(
-                n_relaxation_mechanisms=self.n_relaxation_mechanisms,
-                alpha_coeff=self.alpha_coeff,
-                alpha_power=self.alpha_power,
-                path_database=self.path_relaxation_parameters_database,
-                path_invalid_cells=self.path_invalid_cells,
-                band_scale=self.band_scale,
-                sound_speed=sound_speed if self.sound_speed_transfer else None,
-                scale_to_requested_alpha_coeff=self.scale_to_requested_alpha_coeff,
-            )
-        else:
-            error_msg = (
-                f"Unknown attenuation_builder: {self.attenuation_builder}. "
-                'Only "lookup" is supported currently.'
-            )
-            raise ValueError(error_msg)
-        if self.dtype != np.float64:
-            relaxation_param_dict = {
-                k: v.astype(self.dtype, copy=False) for k, v in relaxation_param_dict.items()
-            }
+        relaxation_param_dict = self._relaxation_parameters_of(
+            sound_speed,
+            self.alpha_coeff,
+            self.alpha_power,
+        )
         # Convert relaxation params to GPU if needed (MediumRelaxationMaps will
         # call xp.asarray on them in __init__)
         return MediumRelaxationMaps(

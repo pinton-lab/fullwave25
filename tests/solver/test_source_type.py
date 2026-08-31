@@ -23,9 +23,29 @@ class _Medium:
 
 
 class _Grid:
-    def __init__(self, dt, dx):
+    def __init__(self, dt, dx, f0=1e6):
         self.dt = dt
         self.dx = dx
+        self.f0 = f0
+
+
+class _OnTheDevice:
+    """A stand-in for a device array, which gives a host copy through `get`.
+
+    It records the size of every array that leaves the device, so a test can
+    show that the whole map never moves.
+    """
+
+    def __init__(self, array, moved=None):
+        self._array = array
+        self.moved = [] if moved is None else moved
+
+    def __getitem__(self, index):
+        return _OnTheDevice(self._array[index], self.moved)
+
+    def get(self):
+        self.moved.append(self._array.size)
+        return self._array
 
 
 def test_scale_is_twice_the_courant_number():
@@ -91,34 +111,25 @@ def test_node_sound_speeds_pass_a_per_position_array_through():
     assert source_type.node_sound_speeds(per_position, coords).tolist() == per_position.tolist()
 
 
-def test_relaxation_phase_speed_matches_the_stored_speed_without_relaxation():
-    shape = (4, 3)
-    coords = np.array([[0, column] for column in range(shape[1])], dtype=np.int64)
-    relaxation = {
-        "kappa_x1": np.ones(shape),
-        "kappa_x2": np.ones(shape),
-        "d_x1_nu1": np.zeros(shape),
-        "alpha_x1_nu1": np.zeros(shape),
-        "d_x2_nu1": np.zeros(shape),
-        "alpha_x2_nu1": np.zeros(shape),
+def _relaxation_at(positions, kappa=1.0):
+    return {
+        "kappa_x1": np.full(positions, kappa),
+        "kappa_x2": np.full(positions, kappa),
+        "d_x1_nu1": np.zeros(positions),
+        "alpha_x1_nu1": np.zeros(positions),
+        "d_x2_nu1": np.zeros(positions),
+        "alpha_x2_nu1": np.zeros(positions),
     }
-    speeds = source_type.relaxation_phase_speed(relaxation, 1540.0, coords, 1e6)
-    assert speeds == pytest.approx(np.full(shape[1], 1540.0))
+
+
+def test_relaxation_phase_speed_matches_the_stored_speed_without_relaxation():
+    speeds = source_type.relaxation_phase_speed(_relaxation_at(3), 1540.0, 1e6)
+    assert speeds == pytest.approx(np.full(3, 1540.0))
 
 
 def test_relaxation_phase_speed_follows_kappa():
-    shape = (4, 3)
-    coords = np.array([[0, column] for column in range(shape[1])], dtype=np.int64)
-    relaxation = {
-        "kappa_x1": np.full(shape, 1.01),
-        "kappa_x2": np.full(shape, 1.01),
-        "d_x1_nu1": np.zeros(shape),
-        "alpha_x1_nu1": np.zeros(shape),
-        "d_x2_nu1": np.zeros(shape),
-        "alpha_x2_nu1": np.zeros(shape),
-    }
-    speeds = source_type.relaxation_phase_speed(relaxation, 1540.0, coords, 1e6)
-    assert speeds == pytest.approx(np.full(shape[1], 1540.0 / 1.01))
+    speeds = source_type.relaxation_phase_speed(_relaxation_at(3, kappa=1.01), 1540.0, 1e6)
+    assert speeds == pytest.approx(np.full(3, 1540.0 / 1.01))
 
 
 def test_conversion_empties_the_assigned_positions():
@@ -169,6 +180,100 @@ def test_a_varying_row_scales_node_by_node():
     column = converted.incoords_add[:, 1].tolist().index(1)
     assert drives[column] == pytest.approx(1.0e5 * 2 * courant * 2)
     assert drives.max() == pytest.approx(1.0e5 * 2 * courant * 2)
+
+
+def test_a_device_sound_speed_map_reaches_the_host():
+    shape = (6, 4)
+    dx = 1e-4
+    courant = 0.2
+    grid = _Grid(dt=courant * dx / 1540.0, dx=dx)
+    speeds = np.full(shape, 1540.0)
+    on_the_host = source_type.as_additive_source(
+        _source(shape, amplitude=1.0e5), grid, _Medium(speeds)
+    )
+    on_the_device = source_type.as_additive_source(
+        _source(shape, amplitude=1.0e5), grid, _Medium(_OnTheDevice(speeds))
+    )
+    assert on_the_device.p0_additive == pytest.approx(on_the_host.p0_additive)
+
+
+def test_device_relaxation_parameters_reach_the_host():
+    shape = (6, 4)
+    dx = 1e-4
+    courant = 0.2
+    grid = _Grid(dt=courant * dx / 1540.0, dx=dx)
+    relaxation = _relaxation_at(shape, kappa=1.01)
+    medium = _Medium(np.full(shape, 1540.0))
+    medium.relaxation_param_dict = relaxation
+    on_the_host = source_type.as_additive_source(_source(shape, amplitude=1.0e5), grid, medium)
+
+    on_the_device_medium = _Medium(_OnTheDevice(np.full(shape, 1540.0)))
+    on_the_device_medium.relaxation_param_dict = {
+        name: _OnTheDevice(value) for name, value in relaxation.items()
+    }
+    on_the_device = source_type.as_additive_source(
+        _source(shape, amplitude=1.0e5), grid, on_the_device_medium
+    )
+    assert on_the_device.p0_additive == pytest.approx(on_the_host.p0_additive)
+    assert on_the_host.p0_additive.max() == pytest.approx(1.0e5 * 2 * courant / 1.01)
+
+
+def test_the_whole_map_never_leaves_the_device():
+    shape = (6, 4)
+    dx = 1e-4
+    courant = 0.2
+    moved = []
+    relaxation = {
+        name: _OnTheDevice(value, moved)
+        for name, value in _relaxation_at(shape, kappa=1.01).items()
+    }
+    medium = _Medium(_OnTheDevice(np.full(shape, 1540.0), moved))
+    medium.relaxation_param_dict = relaxation
+    source_type.as_additive_source(
+        _source(shape, amplitude=1.0e5), _Grid(dt=courant * dx / 1540.0, dx=dx), medium
+    )
+    assert moved
+    assert max(moved) == shape[1]
+
+
+class _MediumThatLooksUp:
+    """A stand-in for a Medium that builds its relaxation parameters on demand."""
+
+    def __init__(self, sound_speed, kappa):
+        self.sound_speed = sound_speed
+        self._kappa = kappa
+        self.asked_for = None
+
+    def relaxation_parameters_at(self, coords):
+        self.asked_for = len(coords)
+        return _relaxation_at(len(coords), self._kappa), np.full(len(coords), 1540.0)
+
+
+def test_a_medium_that_looks_up_is_asked_for_the_source_positions_alone():
+    shape = (6, 4)
+    dx = 1e-4
+    courant = 0.2
+    medium = _MediumThatLooksUp(np.full(shape, 1540.0), kappa=1.01)
+    converted = source_type.as_additive_source(
+        _source(shape, amplitude=1.0e5), _Grid(dt=courant * dx / 1540.0, dx=dx), medium
+    )
+    assert medium.asked_for == shape[1]
+    assert converted.p0_additive.max() == pytest.approx(1.0e5 * 2 * courant / 1.01)
+
+
+def test_the_exponential_model_keeps_the_stored_sound_speed():
+    shape = (6, 4)
+    dx = 1e-4
+    courant = 0.2
+    medium = _MediumThatLooksUp(np.full(shape, 1540.0), kappa=1.01)
+    converted = source_type.as_additive_source(
+        _source(shape, amplitude=1.0e5),
+        _Grid(dt=courant * dx / 1540.0, dx=dx),
+        medium,
+        use_exponential_attenuation=True,
+    )
+    assert medium.asked_for is None
+    assert converted.p0_additive.max() == pytest.approx(1.0e5 * 2 * courant)
 
 
 def test_solver_rejects_an_unknown_source_type(tmp_path):
