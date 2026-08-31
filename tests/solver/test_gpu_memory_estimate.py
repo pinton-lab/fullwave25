@@ -1,4 +1,3 @@
-from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -6,17 +5,6 @@ import pytest
 
 import fullwave
 from fullwave.solver import solver as solver_module
-
-_FAKE_BINARY = (
-    Path(__file__).parent.parent.parent
-    / "fullwave"
-    / "solver"
-    / "bins"
-    / "gpu"
-    / "2d"
-    / "num_relax=2"
-    / "fullwave2_2d_2_relax_multi_gpu_cuda129"
-)
 
 
 def _build_solver(
@@ -76,11 +64,13 @@ def _gpu_log_calls(mock_logger):
 
 
 @pytest.fixture(autouse=True)
-def _patch_binary(monkeypatch):
+def _patch_binary(monkeypatch, tmp_path_factory):
+    binary = tmp_path_factory.mktemp("bins") / "fullwave2_2d_n_relax_multi_gpu"
+    binary.touch()
     monkeypatch.setattr(
         solver_module,
         "_retrieve_fullwave_simulation_path",
-        lambda **kwargs: _FAKE_BINARY,  # noqa: ARG005
+        lambda **kwargs: binary,  # noqa: ARG005
     )
 
 
