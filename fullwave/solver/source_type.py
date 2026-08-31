@@ -1,17 +1,17 @@
 """Drive the source by addition rather than by assignment.
 
-An assigned source sets the pressure of one grid row on every step, while the
-staggered derivative spans `2 * m_spatial_order` pressure points. One clamped row
+A hard source sets the pressure of one grid row on every step, while the
+staggered derivative spans `2 * m_spatial_order` pressure points. One hard source row
 is therefore not a consistent plane-wave condition, and the plane launches a low
 amplitude. Measured in a uniform lossless medium, where the maximum intensity
-projection must equal the source pressure squared, an assigned source reads 0.989886
+projection must equal the source pressure squared, a hard source reads 0.989886
 at 16 points per wavelength, 0.954260 at 8 and 0.997504 at 32.
 
-An added source does not radiate the value it is given. Adding `s` to the
+An additive source does not radiate the value it is given. Adding `s` to the
 pressure of one plane of nodes on every step is a volume rate of `s / dt` over a
 thickness `dx`. A source of that rate radiates `s * dx / (2 * c * dt)` in
 each direction. A caller who wants to radiate `p` must inject `p * 2 * c * dt / dx`.
-With that scale an added source reads 0.999877 of the same reference.
+With that scale an additive source reads 0.999877 of the same reference.
 """
 
 from typing import TYPE_CHECKING
@@ -101,12 +101,12 @@ def source_row(coords: NDArray[np.int64], grid_shape: tuple[int, ...]) -> int:
     return int(rows[0])
 
 
-def additive_drive_scale(
+def additive_signal_scale(
     sound_speed: NDArray[np.float64] | float,
     dt: float,
     dx: float,
 ) -> NDArray[np.float64] | float:
-    """Return the factor that makes an added source radiate its nominal pressure."""
+    """Return the factor that makes an additive source radiate its nominal pressure."""
     return 2.0 * sound_speed * dt / dx
 
 
@@ -164,8 +164,8 @@ def relaxation_phase_speed(
     `omega / k.real`.
 
     The relaxation mechanisms move the wave off the stored sound speed, and an
-    added source radiates in proportion to the speed the wave actually travels
-    at. A drive scaled by the stored speed therefore radiates the wrong
+    additive source radiates in proportion to the speed the wave actually travels
+    at. A signal scaled by the stored speed therefore radiates the wrong
     amplitude by the ratio of the two speeds.
 
     Parameters
@@ -233,7 +233,7 @@ def additive_source(
     dt: float,
     dx: float,
 ) -> Source:
-    """Return an added source that radiates the pressure `p0` carries.
+    """Return an additive source that radiates the pressure `p0` carries.
 
     Parameters
     ----------
@@ -254,17 +254,19 @@ def additive_source(
     Returns
     -------
     Source
-        A source with no assigned positions and a scaled additive drive.
+        A source with no assigned positions and a scaled additive signal.
     """
     coords = np.asarray(coords, dtype=np.int64)
     source_row(coords, grid_shape)
-    scale = additive_drive_scale(node_sound_speeds(sound_speed, coords), dt, dx)
-    return Source(
+    scale = additive_signal_scale(node_sound_speeds(sound_speed, coords), dt, dx)
+    source = Source(
         coords=np.empty((0, len(grid_shape)), dtype=np.int64),
         grid_shape=grid_shape,
         p0_additive=np.asarray(p0, dtype=float) * scale[:, None],
         coords_additive=coords,
     )
+    source.additive_signal_is_scaled = True
+    return source
 
 
 def as_additive_source(
@@ -274,7 +276,7 @@ def as_additive_source(
     *,
     use_exponential_attenuation: bool = False,
 ) -> Source:
-    """Return an added copy of an assigned source, scaled to radiate the same wave.
+    """Return an additive copy of a hard source, scaled to radiate the same wave.
 
     Parameters
     ----------
@@ -287,14 +289,14 @@ def as_additive_source(
         position. A medium built with `use_gpu=True` holds its maps on the
         accelerator, and each map is read at the source positions where it lies.
     use_exponential_attenuation : bool, optional
-        True scales the drive by the stored sound speed, because the exponential
+        True scales the signal by the stored sound speed, because the exponential
         attenuation model does not carry the relaxation dispersion relation.
         False, the default, reads the phase speed of the relaxation model.
 
     Returns
     -------
     Source
-        A source with no assigned positions and a scaled additive drive.
+        A source with no assigned positions and a scaled additive signal.
     """
     coords = np.asarray(source.incoords, dtype=np.int64)
     if use_exponential_attenuation:

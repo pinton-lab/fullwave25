@@ -9,7 +9,8 @@ from .grid import Grid
 from .medium import Medium, MediumExponentialAttenuation, MediumRelaxationMaps
 from .sensor import Sensor
 from .source import Source
-from .transducer import Transducer, TransducerGeometry
+from .transducer import Transducer, TransducerGeometry, TransducerStack
+from .transmit import Pulse
 
 from .medium_builder import presets  # isort:skip
 
@@ -35,11 +36,13 @@ __all__ = [
     "MediumBuilder",
     "MediumExponentialAttenuation",
     "MediumRelaxationMaps",
+    "Pulse",
     "Sensor",
     "Solver",
     "Source",
     "Transducer",
     "TransducerGeometry",
+    "TransducerStack",
     "presets",
     "utils",
 ]

@@ -392,11 +392,12 @@ class TestPMLBuilderCupyEquivalence:
             cpu.extended_medium.alpha_coeff,
             rtol=1e-14,
         )
-        np.testing.assert_allclose(
-            _to_np(gpu.extended_medium.alpha_power),
-            cpu.extended_medium.alpha_power,
-            rtol=1e-14,
-        )
+        for name in sorted(cpu.extended_medium.relaxation_param_dict):
+            np.testing.assert_allclose(
+                _to_np(gpu.extended_medium.relaxation_param_dict[name]),
+                cpu.extended_medium.relaxation_param_dict[name],
+                rtol=1e-14,
+            )
         np.testing.assert_allclose(
             _to_np(gpu.extended_medium.beta),
             cpu.extended_medium.beta,

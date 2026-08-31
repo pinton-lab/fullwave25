@@ -107,12 +107,15 @@ def test_negative_position():
 
 # Dummy grid class with nt attribute for GeneralTransducer tests
 class DummyGridWithTime:
-    def __init__(self, nx, ny, dx, dy, nt):
+    def __init__(self, nx, ny, dx, dy, nt, c0=1540.0, cfl=0.4):
         self.nx = nx
         self.ny = ny
         self.dx = dx
         self.dy = dy
         self.nt = nt
+        self.c0 = c0
+        self.cfl = cfl
+        self.dt = cfl * dx / c0
         self.is_3d = False
 
 

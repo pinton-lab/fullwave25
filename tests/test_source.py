@@ -235,7 +235,7 @@ def test_incoords_add_additive_only_with_explicit_coords():
 
 
 def test_hard_and_additive_together_keep_their_own_nodes():
-    """A model may drive a clamped source and an added source at once."""
+    """A model may drive a clamped source and an additive source at once."""
     hard = np.zeros((6, 4), dtype=bool)
     hard[0] = True
     additive = np.zeros((6, 4), dtype=bool)

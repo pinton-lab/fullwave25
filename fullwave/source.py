@@ -3,6 +3,7 @@
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -10,6 +11,9 @@ from numpy.typing import NDArray
 
 from fullwave.utils import plot_utils
 from fullwave.utils.coordinates import coords_to_map, map_to_coords
+
+if TYPE_CHECKING:
+    from fullwave.grid import Grid
 
 logger = logging.getLogger("__main__." + __name__)
 
@@ -23,6 +27,7 @@ class Source:
     grid_shape: tuple[int, ...]
     p0_additive: NDArray[np.float64] | None = None
     incoords_add: NDArray[np.int64] | None = None
+    additive_signal_is_scaled: bool = False
     u0: NDArray[np.float64] | None = None
     incoords_u: NDArray[np.int64] | None = None
     v0: NDArray[np.float64] | None = None
@@ -214,6 +219,7 @@ class Source:
             self.p0_additive = None
 
         # --- Set incoords_add for writer/binary ---
+        self.additive_signal_is_scaled = False
         if self.p0_additive is not None:
             self.incoords_add = _coords_add if _coords_add is not None else self.incoords
         else:
@@ -228,6 +234,58 @@ class Source:
         super().__init__()
         self.__post_init__()
         logger.debug("Source instance created.")
+
+    @classmethod
+    def additive(
+        cls,
+        p0: NDArray[np.float64],
+        coords: NDArray[np.int64],
+        grid_shape: tuple[int, ...],
+        grid: "Grid",
+        sound_speed: NDArray[np.float64] | float | None = None,
+    ) -> "Source":
+        """Return a source whose additive signal radiates the pressure `p0` carries.
+
+        An additive source adds a value to the pressure of its own nodes on every
+        step, so what it radiates depends on the time step. This scales the signal
+        by `2 c dt / dx` for you. Building one by hand with `p0_additive` does
+        not, and an unscaled signal radiates an amplitude that follows the Courant
+        number.
+
+        Parameters
+        ----------
+        p0 : NDArray[np.float64]
+            The pressure each position is to radiate, of shape [n_sources, nt].
+        coords : NDArray[np.int64]
+            The positions, of shape [n_sources, ndim].
+        grid_shape : tuple[int, ...]
+            The shape of the grid the coordinates index.
+        grid : Grid
+            The grid, read for the time step and the spacing.
+        sound_speed : NDArray[np.float64] | float | None
+            The sound speed at the positions [m/s]. None takes the grid's
+            reference speed.
+
+        Returns
+        -------
+        Source
+            A source with no assigned positions and a scaled additive signal.
+
+        """
+        from fullwave.solver.source_type import additive_signal_scale  # noqa: PLC0415
+
+        speed = float(grid.c0) if sound_speed is None else sound_speed
+        scale = additive_signal_scale(speed, float(grid.dt), float(grid.dx))
+        scale = np.atleast_1d(np.asarray(scale, dtype=float))
+        signal = np.asarray(p0, dtype=float) * (scale[:, None] if scale.size > 1 else scale[0])
+        source = cls(
+            coords=np.empty((0, len(grid_shape)), dtype=np.int64),
+            grid_shape=grid_shape,
+            p0_additive=signal,
+            coords_additive=np.asarray(coords, dtype=np.int64),
+        )
+        source.additive_signal_is_scaled = True
+        return source
 
     def __post_init__(self) -> None:
         """Post-initialization processing for Source.
@@ -323,12 +381,17 @@ class Source:
         """Returns the source mask.
 
         it calculates the source mask from the source coordinates to reduce the memory usage.
+        An additive source holds its positions separately, and both are marked.
         """
-        return coords_to_map(
-            self.incoords,
-            grid_shape=self.grid_shape,
-            is_3d=self.is_3d,
-        )
+        marked = np.zeros(self.grid_shape, dtype=np.int64)
+        for coords in (self.incoords, self.incoords_add):
+            if coords is None or len(coords) == 0:
+                continue
+            marked = np.maximum(
+                marked,
+                coords_to_map(coords, grid_shape=self.grid_shape, is_3d=self.is_3d),
+            )
+        return marked
 
     @property
     def ncoords(self) -> int:

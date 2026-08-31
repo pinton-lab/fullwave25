@@ -1118,6 +1118,10 @@ class InputFileWriter:
             "nX",
             "nT",
             "ncoords",
+            "ncoords_add",
+            "ncoords_u",
+            "ncoords_v",
+            "ncoords_w",
             "ncoordsout",
             "ncoordszero",
             "nTic",
@@ -1125,62 +1129,29 @@ class InputFileWriter:
             "modX",
             "modY",
             "pml_thickness",
-            "exponential_attenuation_pml_thickness_px",
-            "exponential_attenuation_pml_interior_offset_px",
+            "exponential_attenuation_pml_thickness",
+            "exponential_attenuation_pml_interior_offset",
+            "n_relax",
             "d",
             "dmap",
             "ndmap",
             "dcmap",
             "kappax",
             "kappau",
-            "apmlu1",
-            "bpmlu1",
-            "apmlx1",
-            "bpmlx1",
-            "apmlu2",
-            "bpmlu2",
-            "apmlx2",
-            "bpmlx2",
         ]
+        mechanisms = range(1, self.medium.n_relaxation_mechanisms + 1)
+        for nu in mechanisms:
+            var_name_list.extend([f"apmlu{nu}", f"bpmlu{nu}", f"apmlx{nu}", f"bpmlx{nu}"])
         if not self.use_isotropic_relaxation:
-            var_name_list.extend(
-                [
-                    "kappay",
-                    "kappaw",
-                    # --
-                    "apmlw1",
-                    "apmly1",
-                    "bpmlw1",
-                    "bpmly1",
-                    # --
-                    "apmlw2",
-                    "apmly2",
-                    "bpmlw2",
-                    "bpmly2",
-                ],
-            )
+            var_name_list.extend(["kappay", "kappaw"])
+            for nu in mechanisms:
+                var_name_list.extend([f"apmlw{nu}", f"apmly{nu}", f"bpmlw{nu}", f"bpmly{nu}"])
         if self.is_3d:
             var_name_list.append("modZ")
         if self.is_3d and not self.use_isotropic_relaxation:
-            var_name_list.extend(
-                [
-                    "nZ",
-                    "dZ",
-                    # --
-                    "kappaz",
-                    "kappav",
-                    # --
-                    "apmlz1",
-                    "apmlv1",
-                    "bpmlz1",
-                    "bpmlv1",
-                    # --
-                    "apmlz2",
-                    "apmlv2",
-                    "bpmlz2",
-                    "bpmlv2",
-                ],
-            )
+            var_name_list.extend(["nZ", "dZ", "kappaz", "kappav"])
+            for nu in mechanisms:
+                var_name_list.extend([f"apmlz{nu}", f"apmlv{nu}", f"bpmlz{nu}", f"bpmlv{nu}"])
         for var_name in var_name_list:
             src_data = src_dir / f"{var_name}.dat"
             dst_data = dst_dir / f"{var_name}.dat"

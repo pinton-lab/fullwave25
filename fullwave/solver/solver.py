@@ -616,6 +616,17 @@ class Solver:
             error_msg = f"source_type {source_type!r} is not one of {SOURCE_TYPES}"
             logger.error(error_msg)
             raise ValueError(error_msg)
+        if is_additive(source_type) and self.source.p0_additive is not None:
+            error_msg = (
+                "this source already carries an additive signal. source_type='additive' "
+                "converts a hard source into an additive one, and this source holds no "
+                "hard source positions, so its signal would be lost. Set the source type "
+                "in one place, either on the Transducer or on the Solver."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        if not is_additive(source_type) and self.source.p0_additive is not None:
+            self._warn_if_the_additive_signal_was_not_scaled()
         if is_additive(source_type):
             self.source = as_additive_source(
                 self.source,
@@ -673,6 +684,26 @@ class Solver:
                 use_gpu=use_gpu_pml,
                 pml_alpha_entrance=pml_alpha_entrance,
             )
+
+    def _warn_if_the_additive_signal_was_not_scaled(self) -> None:
+        """Say so when an additive signal was built by hand and may carry no scale.
+
+        An additive source adds a value to the pressure of its own nodes on every
+        step, so it radiates the signal times `dx / (2 c dt)`. A signal built by
+        hand and not scaled therefore radiates an amplitude that follows the
+        Courant number.
+        """
+        if getattr(self.source, "additive_signal_is_scaled", False):
+            return
+        message = (
+            "this source carries an additive signal that was built by hand, and the solver "
+            "uses it exactly as given. An additive signal radiates p0_additive * dx / (2 c dt), "
+            "so it must already carry the 2 c dt / dx scale. Build it with "
+            "fullwave.Source.additive(...), or pass a hard source with "
+            "Solver(source_type='additive'), or set the source type on a Transducer, "
+            "and the scale is applied for you."
+        )
+        logger.warning(message)
 
     @staticmethod
     def _release_gpu_memory_pools() -> None:

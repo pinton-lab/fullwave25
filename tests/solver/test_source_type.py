@@ -1,4 +1,4 @@
-"""Tests for the added source conversion."""
+"""Tests for the additive source conversion."""
 
 import numpy as np
 import pytest
@@ -52,14 +52,14 @@ def test_scale_is_twice_the_courant_number():
     dx = 9.625e-5
     for courant in (0.2, 0.1, 0.05):
         dt = courant * dx / 1540.0
-        assert source_type.additive_drive_scale(1540.0, dt, dx) == pytest.approx(2 * courant)
+        assert source_type.additive_signal_scale(1540.0, dt, dx) == pytest.approx(2 * courant)
 
 
 def test_scale_follows_the_sound_speed():
     dx = 1e-4
     dt = 1e-8
-    slow = source_type.additive_drive_scale(1000.0, dt, dx)
-    fast = source_type.additive_drive_scale(2000.0, dt, dx)
+    slow = source_type.additive_signal_scale(1000.0, dt, dx)
+    fast = source_type.additive_signal_scale(2000.0, dt, dx)
     assert fast == pytest.approx(2 * slow)
 
 
