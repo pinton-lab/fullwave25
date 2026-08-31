@@ -397,6 +397,8 @@ class MediumRelaxationMaps:
                     di, dj = d_arrays[i], d_arrays[j]
                     ai, aj = a_arrays[i], a_arrays[j]
                     swap = ne.evaluate("di / kappa + ai > dj / kappa + aj")
+                    if not swap.any():
+                        continue
                     d_arrays[i] = np.where(swap, dj, di)
                     d_arrays[j] = np.where(swap, di, dj)
                     a_arrays[i] = np.where(swap, aj, ai)
@@ -556,11 +558,18 @@ class MediumRelaxationMaps:
         dt = xp.asarray(dt, dtype=xp.float64)
 
         eps = xp.finfo(xp.float64).eps
-
-        rate = dx / kappa_x + alpha_x
         two_over_dt = 2.0 / dt
-        b = (two_over_dt - rate) / (two_over_dt + rate)
-        a = -(dx / (kappa_x**2 + eps)) / (rate + two_over_dt)
+
+        if xp is np:
+            rate = ne.evaluate("dx / kappa_x + alpha_x")
+            total = ne.evaluate("two_over_dt + rate")
+            b = ne.evaluate("(two_over_dt - rate) / total")
+            a = ne.evaluate("-(dx / (kappa_x ** 2 + eps)) / total")
+        else:
+            rate = dx / kappa_x + alpha_x
+            total = two_over_dt + rate
+            b = (two_over_dt - rate) / total
+            a = -(dx / (kappa_x**2 + eps)) / total
 
         if output_dtype is not None and output_dtype != xp.float64:
             a = a.astype(output_dtype, copy=False)
@@ -1548,10 +1557,6 @@ class Medium:
     ) -> tuple[dict[str, NDArray[np.float64]], NDArray[np.float64]]:
         """Return the relaxation parameters and the sound speed at the given positions.
 
-        A caller that needs a few cells pays a lookup of those cells rather than
-        of the whole grid. `build` needs the whole grid and calls the same lookup
-        with the whole maps, so the two share one implementation.
-
         Parameters
         ----------
         coords : NDArray[np.int64]
@@ -1612,6 +1617,7 @@ class Medium:
             density=self.density,
             beta=self.beta,
             relaxation_param_dict=relaxation_param_dict,
+            alpha_coeff=self.alpha_coeff,
             air_coords=self.air_coords,
             n_relaxation_mechanisms=self.n_relaxation_mechanisms,
             use_isotropic_relaxation=self.use_isotropic_relaxation,

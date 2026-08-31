@@ -155,7 +155,9 @@ class PMLBuilder:
     # The relaxation builder absorbs with its own two stage layer instead.
     exponential_attenuation_pml_thickness_px = 0
 
-    medium_org: fullwave.Medium
+    medium_map_names = ["sound_speed", "density", "beta", "alpha_coeff", "alpha_power"]
+
+    medium_org: fullwave.Medium | fullwave.MediumRelaxationMaps
     source_org: fullwave.Source
     sensor_org: fullwave.Sensor
 
@@ -308,87 +310,63 @@ class PMLBuilder:
         logger.debug("building extended grid for pml...done")
 
         logger.debug("building extended medium for pml...")
-        if isinstance(self.medium_org, fullwave.MediumRelaxationMaps):
-            base_attrs = ["sound_speed", "density", "beta"]
-            original_alpha_coeff = getattr(self.medium_org, "alpha_coeff", None)
-            if original_alpha_coeff is not None and np.ndim(original_alpha_coeff) != 0:
-                base_attrs.append("alpha_coeff")
-            relax_attrs = list(self.medium_org.relaxation_param_dict.keys())
+        medium_as_given = self.medium_org
+        if not isinstance(self.medium_org, fullwave.MediumRelaxationMaps):
+            self.medium_org = self.medium_org.build()
+        base_attrs = ["sound_speed", "density", "beta"]
+        original_alpha_coeff = getattr(self.medium_org, "alpha_coeff", None)
+        if original_alpha_coeff is not None and np.ndim(original_alpha_coeff) != 0:
+            base_attrs.append("alpha_coeff")
+        relax_attrs = list(self.medium_org.relaxation_param_dict.keys())
 
-            if self.xp is not np:
-                # Pass CuPy arrays directly — multi-GPU extension uses D2D copy (NVLink)
-                named_arrays = [(name, getattr(self.medium_org, name)) for name in base_attrs]
-                named_arrays += [
-                    (key, self.medium_org.relaxation_param_dict[key]) for key in relax_attrs
-                ]
-                extended = self._extend_arrays_gpu(named_arrays)
-                # Free original GPU arrays to reclaim memory
-                self._ensure_numpy_medium_arrays(base_attrs)
-                for key in relax_attrs:
-                    import cupy as cp  # noqa: PLC0415
+        if self.xp is not np:
+            # Pass CuPy arrays directly — multi-GPU extension uses D2D copy (NVLink)
+            named_arrays = [(name, getattr(self.medium_org, name)) for name in base_attrs]
+            named_arrays += [
+                (key, self.medium_org.relaxation_param_dict[key]) for key in relax_attrs
+            ]
+            extended = self._extend_arrays_gpu(named_arrays)
+            # Free original GPU arrays to reclaim memory
+            self._ensure_numpy_medium_arrays(self.medium_org, base_attrs)
+            self._ensure_numpy_medium_arrays(medium_as_given, self.medium_map_names)
+            for key in relax_attrs:
+                import cupy as cp  # noqa: PLC0415
 
-                    val = self.medium_org.relaxation_param_dict[key]
-                    if not isinstance(val, np.ndarray):
-                        self.medium_org.relaxation_param_dict[key] = cp.asnumpy(val)
-                cp.get_default_memory_pool().free_all_blocks()
-            else:
-                named_arrays = [(name, getattr(self.medium_org, name)) for name in base_attrs] + [
-                    (key, self.medium_org.relaxation_param_dict[key]) for key in relax_attrs
-                ]
-                extended = self._extend_arrays_cpu(named_arrays)
-
-            extended_relaxation_param_dict = {key: extended[key] for key in relax_attrs}
-            # Extended arrays are numpy — skip re-upload to GPU to avoid
-            # wasting PCIe bandwidth. CPU numexpr handles subsequent computation.
-            self.extended_medium = fullwave.MediumRelaxationMaps(
-                grid=self.extended_grid,
-                sound_speed=extended["sound_speed"],
-                density=extended["density"],
-                beta=extended["beta"],
-                relaxation_param_dict=extended_relaxation_param_dict,
-                alpha_coeff=(
-                    original_alpha_coeff
-                    if np.ndim(original_alpha_coeff) == 0
-                    else extended.get("alpha_coeff")
-                ),
-                lossless_coords=(
-                    None
-                    if getattr(self.medium_org, "lossless_coords", None) is None
-                    else self.medium_org.lossless_coords + self.num_boundary_points
-                ),
-                air_coords=self.medium_org.air_coords + self.num_boundary_points,
-                n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
-                n_jobs=self.medium_org.n_jobs,
-                dtype=getattr(self.medium_org, "dtype", np.float64),
-                use_gpu=False,
-            )
+                val = self.medium_org.relaxation_param_dict[key]
+                if not isinstance(val, np.ndarray):
+                    self.medium_org.relaxation_param_dict[key] = cp.asnumpy(val)
+            cp.get_default_memory_pool().free_all_blocks()
         else:
-            attr_names = ["sound_speed", "density", "beta", "alpha_coeff", "alpha_power"]
-            if self.xp is not np:
-                named_arrays = [(name, getattr(self.medium_org, name)) for name in attr_names]
-                extended = self._extend_arrays_gpu(named_arrays)
-                self._ensure_numpy_medium_arrays(attr_names)
-            else:
-                named_arrays = [(name, getattr(self.medium_org, name)) for name in attr_names]
-                extended = self._extend_arrays_cpu(named_arrays)
+            named_arrays = [(name, getattr(self.medium_org, name)) for name in base_attrs] + [
+                (key, self.medium_org.relaxation_param_dict[key]) for key in relax_attrs
+            ]
+            extended = self._extend_arrays_cpu(named_arrays)
 
-            # Extended arrays are numpy — skip re-upload to GPU to avoid
-            # wasting PCIe bandwidth. CPU numexpr handles subsequent computation.
-            self.extended_medium = fullwave.Medium(
-                grid=self.extended_grid,
-                sound_speed=extended["sound_speed"],
-                density=extended["density"],
-                beta=extended["beta"],
-                alpha_coeff=extended["alpha_coeff"],
-                alpha_power=extended["alpha_power"],
-                air_coords=self.medium_org.air_coords + self.num_boundary_points,
-                n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
-                path_relaxation_parameters_database=self.medium_org.path_relaxation_parameters_database,
-                attenuation_builder=self.medium_org.attenuation_builder,
-                n_jobs=self.medium_org.n_jobs,
-                dtype=getattr(self.medium_org, "dtype", np.float64),
-                use_gpu=False,
-            )
+        extended_relaxation_param_dict = {key: extended[key] for key in relax_attrs}
+        # Extended arrays are numpy — skip re-upload to GPU to avoid
+        # wasting PCIe bandwidth. CPU numexpr handles subsequent computation.
+        self.extended_medium = fullwave.MediumRelaxationMaps(
+            grid=self.extended_grid,
+            sound_speed=extended["sound_speed"],
+            density=extended["density"],
+            beta=extended["beta"],
+            relaxation_param_dict=extended_relaxation_param_dict,
+            alpha_coeff=(
+                original_alpha_coeff
+                if np.ndim(original_alpha_coeff) == 0
+                else extended.get("alpha_coeff")
+            ),
+            lossless_coords=(
+                None
+                if getattr(self.medium_org, "lossless_coords", None) is None
+                else self.medium_org.lossless_coords + self.num_boundary_points
+            ),
+            air_coords=self.medium_org.air_coords + self.num_boundary_points,
+            n_relaxation_mechanisms=self.medium_org.n_relaxation_mechanisms,
+            n_jobs=self.medium_org.n_jobs,
+            dtype=getattr(self.medium_org, "dtype", np.float64),
+            use_gpu=False,
+        )
         logger.debug("building extended medium for pml...done")
 
         logger.debug("building extended source for pml...")
@@ -757,20 +735,35 @@ class PMLBuilder:
 
     def _ensure_numpy_medium_arrays(
         self,
+        medium: fullwave.Medium | fullwave.MediumRelaxationMaps,
         attr_names: list[str],
     ) -> list[tuple[str, NDArray]]:
-        """Convert medium arrays to numpy and free GPU memory.
+        """Convert the medium's arrays to numpy and free GPU memory.
 
-        Returns list of (name, numpy_array) pairs.
+        Parameters
+        ----------
+        medium : fullwave.Medium | fullwave.MediumRelaxationMaps
+            The medium whose arrays move to the host. An attribute the medium
+            does not carry is skipped.
+        attr_names : list[str]
+            The attributes to move.
+
+        Returns
+        -------
+        list[tuple[str, NDArray]]
+            One (name, numpy array) pair for each attribute that was present.
+
         """
         import cupy as cp  # noqa: PLC0415
 
         named_arrays = []
         for name in attr_names:
-            arr = getattr(self.medium_org, name)
+            arr = getattr(medium, name, None)
+            if arr is None:
+                continue
             if not isinstance(arr, np.ndarray):
                 arr_np = cp.asnumpy(arr)
-                setattr(self.medium_org, name, arr_np)
+                setattr(medium, name, arr_np)
             else:
                 arr_np = arr
             named_arrays.append((name, arr_np))
@@ -1793,7 +1786,7 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             named_arrays = [(name, getattr(self.medium_org, name)) for name in attr_names]
             extended = self._extend_arrays_gpu(named_arrays)
             # Free original GPU arrays and replace with numpy to reclaim GPU memory
-            self._ensure_numpy_medium_arrays(attr_names)
+            self._ensure_numpy_medium_arrays(self.medium_org, attr_names)
         else:
             named_arrays = [(name, getattr(self.medium_org, name)) for name in attr_names]
             extended = self._extend_arrays_cpu(named_arrays)

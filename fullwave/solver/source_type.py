@@ -37,10 +37,8 @@ def _is_on_the_device(array: object) -> bool:
 def _at_the_source(array: NDArray, index: tuple[NDArray, ...]) -> NDArray:
     """Return the values at the source positions, as a host array.
 
-    The array is indexed where it lives, so a map held on an accelerator moves
-    one value for each source position and never the whole map. A Medium built
-    with `use_gpu=True` holds maps of the whole grid, and one of them is larger
-    than the sample by the ratio of the grid to one row.
+    The array is indexed where it lives, so a map on an accelerator never moves
+    whole.
 
     Parameters
     ----------
@@ -201,10 +199,7 @@ def _relaxation_at_the_source(
 ) -> tuple[dict | None, NDArray[np.float64]]:
     """Return the relaxation parameters and the sound speed at the source positions.
 
-    A medium that already carries its relaxation parameters is read at those
-    positions. A medium that builds them on demand is asked for those positions
-    alone, which costs a lookup of one row rather than of the whole grid. A
-    medium that has neither gives its sound speed and no parameters.
+    A medium with no relaxation model returns no parameters.
 
     Parameters
     ----------
