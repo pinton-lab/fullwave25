@@ -1303,15 +1303,6 @@ class Medium:
         self.n_relaxation_mechanisms = n_relaxation_mechanisms
         self.use_isotropic_relaxation = use_isotropic_relaxation
 
-        if self.n_relaxation_mechanisms != 2 and self.n_air > 0:
-            warning_msg = (
-                "Warning: Currently, only n_relaxation_mechanisms=2 supports air regions. "
-                "Setting air regions to zero for other n_relaxation_mechanisms."
-            )
-            logger.warning(warning_msg)
-            ndim = 3 if self.is_3d else 2
-            self.air_coords = np.empty((0, ndim), dtype=np.int64)
-
         self.attenuation_builder = attenuation_builder
         self.sound_speed_transfer = sound_speed_transfer
         self.band_scale = band_scale

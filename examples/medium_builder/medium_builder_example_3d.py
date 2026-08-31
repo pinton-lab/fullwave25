@@ -1,4 +1,8 @@
-"""Simple plane wave transmit example."""
+"""Build a three dimensional medium out of registered domains and transmit through it.
+
+Run it with:
+    uv run python examples/medium_builder/medium_builder_example_3d.py
+"""
 
 import logging
 from pathlib import Path
@@ -11,7 +15,7 @@ from fullwave.solver.utils import load_dat_and_reshape
 from fullwave.utils import plot_utils, signal_process
 
 
-def main() -> None:  # noqa: PLR0915
+def main() -> None:
     """3D Medium builder abdominal example."""
     # overwrite the logging level, DEBUG, INFO, WARNING, ERROR
     logging.getLogger("__main__").setLevel(logging.INFO)
@@ -109,7 +113,6 @@ def main() -> None:  # noqa: PLR0915
     # register the domains to MediumBuilder
     mb = MediumBuilder(
         grid=grid,
-        n_relaxation_mechanisms=2,
     )
     mb.register_domain(background)
     mb.register_domain(simple_domain_1)

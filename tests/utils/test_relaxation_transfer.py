@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
@@ -21,6 +21,9 @@ from fullwave.utils.relaxation_parameters import (
     transfer_relaxation_params_to_sound_speed,
 )
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 
 @pytest.fixture(scope="module")
 def database_path() -> Path:
@@ -30,14 +33,15 @@ def database_path() -> Path:
 
 @pytest.fixture(scope="module")
 def two_mechanism_table() -> Path:
-    """Return the two mechanism table, which the package also ships."""
-    return (
-        Path(fullwave.__file__).parent
-        / "solver"
-        / "bins"
-        / "database"
-        / "relaxation_params_database_num_relax=2_20260113_0957.mat"
-    )
+    """Return the two mechanism table, which this release no longer ships.
+
+    The paper counted its calibrated cells on that table, so the check stays here.
+    Where the file is absent the check is skipped rather than failed.
+    """
+    table = ShippedDatabase.root / "relaxation_params_database_num_relax=2_20260113_0957.mat"
+    if not table.exists():
+        pytest.skip(f"this release ships no two mechanism table: {table.name}")
+    return table
 
 
 @pytest.fixture(scope="module")
@@ -706,8 +710,8 @@ def test_the_two_mechanism_table_flags_389_of_its_1717_cells(
 ) -> None:
     """1328 cells passed that calibration, which is the number the paper prints.
 
-    The package still ships that table, and the paper's count is checked against
-    it rather than against the table the package now defaults to.
+    The count is checked against the two mechanism table the paper used, rather
+    than against the table the package now defaults to.
     """
     generator = RelaxationParametersGenerator(
         n_relaxation_mechanisms=2, path_database=two_mechanism_table

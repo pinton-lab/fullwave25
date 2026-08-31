@@ -1,4 +1,10 @@
-"""Simple plane wave transmit example."""
+"""Focus a P4-1C phased array from the middle half of its aperture.
+
+The sensor covers the whole domain, so the run writes a movie of the field.
+
+Run it with:
+    uv run python examples/linear_transducer/linear_transducer_focused_animation.py
+"""
 
 from pathlib import Path
 
@@ -13,7 +19,7 @@ def main() -> None:
     #
     # define the working directory
     #
-    work_dir = Path("./outputs/") / "linear_transducer"
+    work_dir = Path("./outputs/") / "linear_transducer_focused_animation"
     work_dir.mkdir(parents=True, exist_ok=True)
 
     #

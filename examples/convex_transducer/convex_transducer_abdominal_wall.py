@@ -1,4 +1,11 @@
-"""Simple plane wave transmit example."""
+"""Focus a C5-2V curved array through an abdominal wall.
+
+The face of the arc is made reflective with air, so the movie shows the
+reverberation between the probe and the wall.
+
+Run it with:
+    uv run python examples/convex_transducer/convex_transducer_abdominal_wall.py
+"""
 
 import logging
 from pathlib import Path
@@ -18,7 +25,7 @@ def main() -> None:
     #
     # define the working directory
     #
-    work_dir = Path("./outputs/") / "convex_transducer"
+    work_dir = Path("./outputs/") / "convex_transducer_abdominal_wall"
     work_dir.mkdir(parents=True, exist_ok=True)
 
     #

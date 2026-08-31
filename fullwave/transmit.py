@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
+from scipy.signal.windows import tukey
 
 from fullwave.utils import pulse as pulse_utils
 
@@ -195,8 +196,6 @@ def tukey_weights(elements: int, alpha: float) -> NDArray[np.float64]:
     """
     if alpha <= 0.0:
         return np.ones(elements)
-    from scipy.signal.windows import tukey  # noqa: PLC0415
-
     return np.asarray(tukey(elements, min(alpha, 1.0)), dtype=float)
 
 
@@ -238,6 +237,7 @@ def signal_of(
     pulse: Pulse,
     delays_s: NDArray[np.float64],
     weights: NDArray[np.float64],
+    pixel_delays_s: NDArray[np.float64] | None = None,
 ) -> NDArray[np.float64]:
     """Return the excitation of every source pixel.
 
@@ -259,6 +259,8 @@ def signal_of(
         The delay of each element [s].
     weights : NDArray[np.float64]
         The weight of each element [-].
+    pixel_delays_s : NDArray[np.float64] | None
+        A further delay for each source pixel [s], which an elevation lens uses.
 
     Returns
     -------
@@ -285,6 +287,7 @@ def signal_of(
             i_layer=int(layers[index]),
             dt_for_layer_delay=grid.dt,
             cfl_for_layer_delay=grid.cfl,
-            delay_sec=float(delays_s[element - 1]),
+            delay_sec=float(delays_s[element - 1])
+            + (0.0 if pixel_delays_s is None else float(pixel_delays_s[index])),
         )
     return signal

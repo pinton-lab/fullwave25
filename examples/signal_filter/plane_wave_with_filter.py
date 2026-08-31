@@ -1,16 +1,10 @@
-"""Demonstrate the built-in high-pass filter inside solver.run().
+"""Show what `highpass_cutoff_mhz` does to the traces `Solver.run` returns.
 
-Based on examples/linear_transducer/plane_wave_compounding.py.
+The run sends one plane wave at 0 degrees through a medium holding echoic targets.
+The figure holds the raw traces, the traces after a high pass filter at 0.5 MHz,
+and the amplitude spectrum of one element before and after the filter.
 
-This script runs a single 0-degree plane wave transmission through a medium
-with echoic targets, then shows the effect of passing
-``highpass_cutoff_mhz=0.5`` to ``solver.run()``:
-
-  * Left panel   - raw sensor traces (PML low-frequency drift visible)
-  * Right panel  - high-pass filtered traces (drift removed)
-  * Bottom panel - amplitude spectra of a single element before/after
-
-Run with:
+Run it with:
     uv run python examples/signal_filter/plane_wave_with_filter.py
 """
 
@@ -74,32 +68,6 @@ def _make_echoic_targets(
     return scatterer
 
 
-def _make_input_signal(
-    grid: fullwave.Grid,
-    transducer: fullwave.Transducer,
-    element_layer_px: int,
-    p_max: float = 1e5,
-) -> np.ndarray:
-    """Build a 0-degree plane wave input signal (no steering delay)."""
-    input_signal = np.zeros((transducer.n_sources, grid.nt))
-    for i in range(len(input_signal)):
-        n_y = input_signal.shape[0] // element_layer_px
-        i_layer = i // n_y
-        input_signal[i] = fullwave.utils.pulse.gaussian_modulated_sinusoidal_signal(
-            nt=grid.nt,
-            f0=grid.f0,
-            duration=grid.duration,
-            ncycles=2,
-            drop_off=2,
-            p0=p_max,
-            i_layer=i_layer,
-            dt_for_layer_delay=grid.dt,
-            cfl_for_layer_delay=grid.cfl,
-            delay_sec=0.0,
-        )
-    return input_signal
-
-
 # ---------------------------------------------------------------------------
 # Simulation sub-steps
 # ---------------------------------------------------------------------------
@@ -136,29 +104,11 @@ def _build_medium(
     )
 
 
-def _build_transducer(
-    grid: fullwave.Grid,
-    domain_size: tuple[float, float],
-) -> tuple[fullwave.Transducer, int]:
-    """Build the 128-element linear transducer and return it with element_layer_px."""
-    element_layer_px = 4
-    transducer_width_m = 38e-3
-    transducer_geometry = fullwave.TransducerGeometry(
-        grid,
-        number_elements=128,
-        element_width_m=0.298e-3 - 0.048e-3,
-        element_spacing_m=0.048e-3,
-        element_layer_px=element_layer_px,
-        position_m=(0, (domain_size[1] - transducer_width_m) / 2),
-        radius=float("inf"),
-    )
-    transducer = fullwave.Transducer(
-        transducer_geometry=transducer_geometry,
-        grid=grid,
-        sampling_modulus_time=7,
-    )
-    transducer.set_signal(_make_input_signal(grid, transducer, element_layer_px))
-    return transducer, element_layer_px
+def _build_transducer(grid: fullwave.Grid) -> fullwave.Transducer:
+    """Build an L7-4 linear array that sends one plane wave straight ahead."""
+    transducer = fullwave.Transducer.l7_4(grid, element_layer_px=4, sampling_modulus_time=7)
+    transducer.plane_wave(angle_deg=0.0)
+    return transducer
 
 
 def _run_simulation(
@@ -270,7 +220,7 @@ def main() -> None:
 
     grid = fullwave.Grid(domain_size, f0, domain_size[0] / c0 * 2.3, c0=c0, ppw=12, cfl=0.4)
     medium = _build_medium(grid, c0)
-    transducer, _ = _build_transducer(grid, domain_size)
+    transducer = _build_transducer(grid)
     raw_output, filtered_output = _run_simulation(work_dir, grid, medium, transducer)
     _plot_results(work_dir, grid, transducer, raw_output, filtered_output, f0)
     _print_summary(raw_output, filtered_output)

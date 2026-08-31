@@ -1,4 +1,10 @@
-"""Simple plane wave transmit example."""
+"""Focus a linear array through an abdominal wall onto a region holding air.
+
+Air reflects almost everything, so the movie shows the shadow behind the region.
+
+Run it with:
+    uv run python examples/linear_transducer/linear_transducer_abdominal_wall_with_air.py
+"""
 
 import logging
 from pathlib import Path
@@ -11,15 +17,15 @@ from fullwave.constants import MaterialProperties
 from fullwave.utils import plot_utils, signal_process
 
 
-def main() -> None:  # noqa: PLR0915
-    """Run linear transducer abdominal wall with air example."""
+def main() -> None:
+    """Run one focused transmit through an abdominal wall and a region of air."""
     # overwrite the logging level, DEBUG, INFO, WARNING, ERROR
     logging.getLogger("__main__").setLevel(logging.INFO)
 
     #
     # define the working directory
     #
-    work_dir = Path("./outputs/") / "linear_transducer"
+    work_dir = Path("./outputs/") / "linear_transducer_abdominal_wall_with_air"
     work_dir.mkdir(parents=True, exist_ok=True)
 
     #
@@ -36,97 +42,15 @@ def main() -> None:  # noqa: PLR0915
     # --- define the linear transducer ---
     #
 
-    element_layer_px = 3
-    transducer_geometry = fullwave.TransducerGeometry(
-        grid,
-        number_elements=128,
-        # -
-        element_width_m=0.146484375e-3,
-        # -
-        element_spacing_m=0.146484375e-3,
-        # -
-        element_layer_px=element_layer_px,
-        # -
-        # [axial, lateral]
-        position_m=(
-            0,
-            (60 - 37.4) / 2 * 1e-3,
-        ),
-        # -
-        radius=float("inf"),
-    )
-    transducer = fullwave.Transducer(
-        transducer_geometry=transducer_geometry,
-        grid=grid,
-    )
-    p_max = 1e5
+    # A named array places itself, so only the transmit has to be stated.
+    transducer = fullwave.Transducer.l7_4(grid)
 
-    angle = 0
-    # length = 1000000
-    length = int(grid.nx * (9 / 10))
-    target_location_px = np.array(
-        [
-            # focus transmit
-            # int(grid.nx * (9 / 10)),
-            # grid.ny // 2,
-            #
-            # plane wave
-            # 1000000,
-            # grid.ny // 2,
-            # plane wave with angle
-            length * np.cos(np.deg2rad(angle)),
-            length * np.sin(np.deg2rad(angle)) + grid.ny // 2,
-        ],
-        dtype=int,
-    )
+    #
+    # --- define the transmit ---
+    #
 
-    active_source_elements = np.zeros(transducer_geometry.number_elements, dtype=bool)
-    active_sensor_elements = np.zeros(transducer_geometry.number_elements, dtype=bool)
-    active_source_elements[:] = True
-    # active_source_elements[32:96] = True
-    active_sensor_elements[:] = True
-
-    input_signal = np.zeros((transducer.n_sources, grid.nt))
-    dict_source_index_to_location = transducer.dict_source_index_to_location
-    element_id_to_element_center = transducer.element_id_to_element_center
-
-    delay_list = []
-    for i_source_index in range(len(input_signal)):
-        source_location = dict_source_index_to_location[i_source_index + 1]
-        element_id = transducer.transducer_geometry.indexed_element_mask_input[*source_location]
-        source_location = element_id_to_element_center[element_id]
-
-        delay_sec = np.sqrt(np.sum((target_location_px - source_location) ** 2)) * grid.dx / c0
-        delay_list.append(delay_sec)
-    delay_list = np.array(delay_list)
-    delay_list = delay_list.max() - delay_list
-    delay_list = delay_list - delay_list.min()
-
-    for i_source_index in range(len(input_signal)):
-        delay_sec = delay_list[i_source_index]
-        source_location = dict_source_index_to_location[i_source_index + 1]
-
-        n_y = input_signal.shape[0] // element_layer_px
-        i_layer = i_source_index // n_y
-        element_id = transducer.transducer_geometry.indexed_element_mask_input[*source_location]
-        if not active_source_elements[element_id - 1]:
-            p0_vec = np.zeros(grid.nt)
-        else:
-            p0_vec = fullwave.utils.pulse.gaussian_modulated_sinusoidal_signal(
-                nt=grid.nt,
-                f0=f0,
-                duration=duration,
-                ncycles=2,
-                drop_off=2,
-                p0=p_max,
-                i_layer=i_layer,
-                dt_for_layer_delay=grid.dt,
-                cfl_for_layer_delay=grid.cfl,
-                delay_sec=delay_sec,
-            )
-        input_signal[i_source_index, :] = p0_vec.copy()
-
-    transducer.set_signal(input_signal)
+    # focus nine tenths of the way down the domain, on the axis
+    transducer.focus(focus_m=(domain_size[0] * 9 / 10, domain_size[1] / 2))
 
     # make a sensor for whole domain to make an animation
     sensor_mask = np.zeros((grid.nx, grid.ny), dtype=bool)
@@ -168,7 +92,7 @@ def main() -> None:  # noqa: PLR0915
     beta = getattr(material_properties, background_property_name)["beta"]
     air_map = np.zeros((grid.nx, grid.ny), dtype=bool)
 
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(seed=42)
     random_location = rng.random((1000, 2))
     for loc in random_location:
         # x_idx = int(grid.nx // 2 - grid.nx * 0.1) + int(loc[0] * grid.nx * 0.4)
@@ -244,7 +168,8 @@ def main() -> None:  # noqa: PLR0915
         sensor_output,
         grid,
     )
-    propagation_map = np.nan_to_num(propagation_map, 0, posinf=p_max, neginf=-p_max)
+    pressure = transducer.pulse.pressure
+    propagation_map = np.nan_to_num(propagation_map, 0, posinf=pressure, neginf=-pressure)
 
     p_max_plot = np.abs(propagation_map).max().item()
 

@@ -1,4 +1,8 @@
-"""Simple plane wave transmit example."""
+"""Send one plane wave through an abdominal wall, then beamform the traces.
+
+Run it with:
+    uv run python examples/linear_transducer/linear_transducer_abdominal_wall_with_beamformer.py
+"""
 
 import logging
 from pathlib import Path
@@ -19,7 +23,7 @@ def main() -> None:
     #
     # define the working directory
     #
-    work_dir = Path("./outputs/") / "linear_transducer"
+    work_dir = Path("./outputs/") / "linear_transducer_abdominal_wall_with_beamformer"
     work_dir.mkdir(parents=True, exist_ok=True)
 
     #
@@ -161,6 +165,7 @@ def main() -> None:
         xlabel="Lateral position (mm)",
         ylabel="Axial position (mm)",
         colorbar=True,
+        export_path=work_dir / "beamformed_image.png",
     )
     print()
 

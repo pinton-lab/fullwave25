@@ -1,4 +1,11 @@
-"""Simple plane wave transmit example."""
+"""Focus an L7-4 linear array through an abdominal wall.
+
+The sensor covers the whole domain, so the run writes a movie and a maximum
+intensity projection of the field.
+
+Run it with:
+    uv run python examples/linear_transducer/linear_transducer_abdominal_wall.py
+"""
 
 import logging
 from pathlib import Path
@@ -18,7 +25,7 @@ def main() -> None:
     #
     # define the working directory
     #
-    work_dir = Path("./outputs/") / "linear_transducer"
+    work_dir = Path("./outputs/") / "linear_transducer_abdominal_wall"
     work_dir.mkdir(parents=True, exist_ok=True)
 
     #

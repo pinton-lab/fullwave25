@@ -1,4 +1,11 @@
-"""Plane wave compounding example."""
+"""Send several steered plane waves and compound them into one image.
+
+Compounding recovers the contrast a single plane wave loses, at the cost of one
+transmit for each angle.
+
+Run it with:
+    uv run python examples/linear_transducer/plane_wave_compounding.py
+"""
 
 import logging
 import shutil
@@ -157,7 +164,7 @@ def main() -> None:
     #
     # define the working directory
     #
-    work_dir = Path("./outputs/") / "linear_transducer_plane_wave_compounding"
+    work_dir = Path("./outputs/") / "plane_wave_compounding"
     work_dir.mkdir(parents=True, exist_ok=True)
 
     #
@@ -206,7 +213,7 @@ def main() -> None:
         n_targets_lateral=3,
         centered=True,
     )
-    plot_utils.plot_array(scatterer)
+    plot_utils.plot_array(scatterer, export_path=work_dir / "scatterer.png")
     # scatterer modulates the density map.
     # scatterer values are centered around 1.0 with small variations.
     density_map *= scatterer
@@ -235,23 +242,6 @@ def main() -> None:
     sampling_interval = 7
     transducer = fullwave.Transducer.l7_4(grid, sampling_modulus_time=sampling_interval)
     transducer_width_m = transducer.transducer_geometry.transducer_width_m
-
-    # from matplotlib import pyplot as plt
-
-    # fig, ax = plt.subplots(1, 1, figsize=(9, 1.9))
-    # ax.imshow(transducer.source_mask[:100], aspect=1, cmap="grey")
-    # ax.set_xlabel("Lateral position\n[px]")
-    # ax.set_ylabel("Axial position\n(first 100 pixels)\n[px]")
-    # ax.cbar = fig.colorbar(ax.images[0], ax=ax, orientation="vertical", pad=0.02)
-    # ax.cbar.set_label("Source mask value")
-    # # binary
-    # ax.cbar.set_ticks([0, 1])
-    # # remove white border
-    # plt.subplots_adjust(left=0.1, right=1.08, top=0.95, bottom=0.28)
-    # # plt.tight_layout()
-    # plt.savefig("./temp/temp.png", dpi=300)
-
-    # plot_utils.plot_array(transducer.source_mask[:50], aspect=1)
 
     #
     # --- run simulation ---
@@ -316,23 +306,13 @@ def main() -> None:
 
     grid_points = scan_grid(b_mode_x, b_mode_y, b_mode_z)
 
-    wavefront_arrivals_s = [
-        wavefront.plane(
-            origin_m=np.array([0, 0, 0]),  # Wave originates at array face
-            points_m=grid_points,  # All grid points
-            direction=np.array(
-                [
-                    np.sin(np.radians(angle)),
-                    0,
-                    np.cos(np.radians(angle)),
-                ],
-            ),  # Angle direction
-        )
-        / params["c"]
-        for angle in angles
-    ]
-    for i in range(len(wavefront_arrivals_s)):
-        wavefront_arrivals_s[i] -= wavefront_arrivals_s[i].min()
+    origin_m = np.array([0, 0, 0])
+    wavefront_arrivals_s = []
+    for angle in angles:
+        direction = np.array([np.sin(np.radians(angle)), 0, np.cos(np.radians(angle))])
+        at_scan_points_s = wavefront.plane(origin_m, grid_points, direction) / params["c"]
+        at_aperture_s = wavefront.plane(origin_m, element_positions, direction) / params["c"]
+        wavefront_arrivals_s.append(at_scan_points_s - at_aperture_s.min())
     wavefront_arrivals_s = np.stack(wavefront_arrivals_s, axis=0)
 
     # -- beamforming ---
@@ -385,44 +365,8 @@ def main() -> None:
     ax.set_ylabel("Time samples")
     cbar = fig.colorbar(im, ax=ax, orientation="vertical", pad=0.02)
     cbar.set_label("Amplitude [dB]")
-    # plt.subplots_adjust(left=0.05, right=1.08, top=0.95, bottom=0.15)
     plt.tight_layout()
-    # plt.savefig(work_dir / "iq_data.svg", dpi=300)
-    plt.savefig("./temp/iq_data.png", dpi=300)
-
-    # import matplotlib.pyplot as plt
-
-    # # plot convert_to_db(iq_data[0, :, :, 0]).T,
-    # plt.close("all")
-    # fig, ax = plt.subplots(1, 1, figsize=(6, 6))
-    # im = ax.imshow(
-    #     # convert_to_db(iq_data[0, :, :, 0]).T,
-    #     np.sin(np.angle(iq_data[0, :, :, 0].T)),
-    #     aspect=0.3,
-    #     cmap="gray",
-    # )
-    # ax.set_xlabel("Element index")
-    # ax.set_ylabel("Time samples")
-    # cbar = fig.colorbar(im, ax=ax, orientation="vertical", pad=0.02)
-    # cbar.set_label("Phase")
-    # # plt.subplots_adjust(left=0.05, right=1.08, top=0.95, bottom=0.15)
-    # plt.tight_layout()
-    # # plt.savefig(work_dir / "iq_data.svg", dpi=300)
-    # # plt.savefig("./temp/iq_data_phase.png", dpi=300)
-    # plt.savefig("./temp/temp.png", dpi=300)
-
-    # plot_utils.plot_array(
-    #     convert_to_db(iq_data[0, :, :, 0]).T,
-    #     vmin=-30,
-    #     vmax=0,
-    #     aspect=1,
-    #     cmap="gray",
-    #     xlabel="Element index",
-    #     ylabel="Time samples",
-    #     colorbar=True,
-    #     # export_path=work_dir / "iq_data.svg",
-    #     export_path="./temp/temp.png",
-    # )
+    plt.savefig(work_dir / "iq_data.png", dpi=300)
 
     plot_utils.plot_array(
         convert_to_db(b_mode).T,
@@ -456,7 +400,7 @@ def main() -> None:
         xlabel="Lateral position (mm)",
         ylabel="Axial position (mm)",
         colorbar=True,
-        export_path="./temp/temp.png",
+        export_path=work_dir / "b_mode.png",
     )
     np.savez(
         work_dir / "simulation_data.npz",

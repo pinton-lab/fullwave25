@@ -41,7 +41,7 @@ def _download_binary(url: str, dest: Path) -> None:
     tmp = dest.with_suffix(".download_tmp")
     try:
         try:
-            from tqdm import tqdm
+            from tqdm import tqdm  # noqa: PLC0415
 
             class _Hook:
                 def __init__(self) -> None:

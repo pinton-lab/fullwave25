@@ -181,16 +181,16 @@ def test_the_transducer_refuses_an_unknown_source_type():
 def test_the_additive_signal_is_scaled_so_the_aperture_radiates_its_pressure():
     grid = _grid()
     hard = fullwave.Transducer.p4_1c(grid, source_type="clamped")
-    added = fullwave.Transducer.p4_1c(grid)
+    additive = fullwave.Transducer.p4_1c(grid)
     hard.plane_wave()
-    added.plane_wave()
+    additive.plane_wave()
     scale = 2.0 * grid.c0 * grid.dt / grid.dx
-    assert np.abs(added.source.p0_additive).max() == pytest.approx(
+    assert np.abs(additive.source.p0_additive).max() == pytest.approx(
         scale * np.abs(hard.source.p0).max()
     )
 
 
-def test_the_added_signal_carries_the_scale_at_every_courant_number():
+def test_the_additive_signal_carries_the_scale_at_every_courant_number():
     for courant in (0.45, 0.4, 0.3, 0.2):
         grid = fullwave.Grid(
             domain_size=(2.0e-2, 5.0e-2),
@@ -201,14 +201,14 @@ def test_the_added_signal_carries_the_scale_at_every_courant_number():
             cfl=courant,
         )
         hard = fullwave.Transducer.p4_1c(grid, source_type="clamped")
-        added = fullwave.Transducer.p4_1c(grid)
+        additive = fullwave.Transducer.p4_1c(grid)
         hard.plane_wave()
-        added.plane_wave()
-        ratio = np.abs(added.source.p0_additive).max() / np.abs(hard.source.p0).max()
+        additive.plane_wave()
+        ratio = np.abs(additive.source.p0_additive).max() / np.abs(hard.source.p0).max()
         assert ratio == pytest.approx(2.0 * courant)
 
 
-def test_an_additive_transducer_builds_an_added_source():
+def test_an_additive_transducer_builds_an_additive_source():
     grid = _grid()
     transducer = fullwave.Transducer.p4_1c(grid)
     transducer.plane_wave()
@@ -326,3 +326,86 @@ def test_a_curved_array_refuses_the_stack_because_it_is_its_own_backing():
     }
     with pytest.raises(ValueError, match="own backing"):
         transducer.apply_transducer_stack(**maps)
+
+
+def test_a_named_array_centers_on_the_width_the_grid_gives_it():
+    grid = fullwave.Grid(
+        domain_size=(2.0e-2, 42.5e-3),
+        f0=2.0e6,
+        duration=2.0e-6,
+        c0=1540.0,
+        ppw=12,
+        cfl=0.4,
+    )
+    geometry = fullwave.Transducer.l7_4(grid).transducer_geometry
+    left = int(geometry.position_px[1])
+    right = grid.ny - left - geometry.transducer_width_px
+    assert left >= 0
+    assert abs(left - right) <= 1
+
+
+def test_a_named_array_sits_at_the_face_depth_it_is_given():
+    grid = _stack_grid()
+    depth_m = fullwave.TransducerStack.backing_thickness_m
+    geometry = fullwave.Transducer.l7_4(grid, face_depth_m=depth_m).transducer_geometry
+    assert int(geometry._source_coords[:, 0].min()) == round(depth_m / grid.dx)
+
+
+def test_the_face_depth_leaves_the_lateral_centering_alone():
+    grid = _stack_grid()
+    depth_m = fullwave.TransducerStack.backing_thickness_m
+    shallow = fullwave.Transducer.l7_4(grid).transducer_geometry
+    deep = fullwave.Transducer.l7_4(grid, face_depth_m=depth_m).transducer_geometry
+    assert int(deep.position_px[1]) == int(shallow.position_px[1])
+    assert deep.transducer_width_px == shallow.transducer_width_px
+
+
+def test_the_stack_accepts_a_face_placed_by_the_face_depth():
+    grid = _stack_grid()
+    maps = _stack_maps(grid)
+    transducer = fullwave.Transducer.l7_4(
+        grid,
+        face_depth_m=fullwave.TransducerStack.backing_thickness_m,
+    )
+    transducer.apply_transducer_stack(**maps, rng=np.random.default_rng(0))
+    face = int(np.asarray(transducer.transducer_geometry._source_coords)[:, 0].min())
+    rough = round(fullwave.TransducerStack.backing_face_roughness_m / grid.dx)
+    assert np.unique(maps["density"][: face - rough - 1]) == pytest.approx([1700.0])
+
+
+def test_the_aperture_width_matches_the_pixels_the_geometry_built():
+    for hertz in (1.0e6, 2.0e6, 3.7e6, 5.208e6):
+        grid = fullwave.Grid(
+            domain_size=(2.0e-2, 42.5e-3),
+            f0=hertz,
+            duration=2.0e-6,
+            c0=1540.0,
+            ppw=12,
+            cfl=0.4,
+        )
+        geometry = fullwave.Transducer.l7_4(grid).transducer_geometry
+        lateral = geometry._source_coords[:, 1]
+        assert geometry.transducer_width_px == int(lateral.max() - lateral.min()) + 1
+
+
+def test_a_curved_array_that_misses_the_grid_says_so():
+    grid = fullwave.Grid(
+        domain_size=(3.0e-2, 1.8e-2, 0.8e-2),
+        f0=2.0e6,
+        duration=2.0e-6,
+        c0=1540.0,
+        ppw=6,
+        cfl=0.4,
+    )
+    with pytest.raises(ValueError, match="no pixel on the grid"):
+        fullwave.TransducerGeometry(
+            grid,
+            number_elements=32,
+            element_width_m=0.0,
+            element_spacing_m=0.5e-3,
+            element_height_m=4.0e-3,
+            element_layer_px=18,
+            position_m=(0.0, 0.0, 2.0e-3),
+            radius=4.0e-2,
+            zero_offset=2.0e-3,
+        )

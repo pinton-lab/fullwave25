@@ -1,4 +1,11 @@
-"""Simple plane wave transmit example."""
+"""Send one plane wave on a three dimensional grid.
+
+The source is one plane of nodes at the top, so the field stays a plane wave until
+it reaches the object.
+
+Run it with:
+    uv run python examples/wave_3d/simple_plane_wave_3d.py
+"""
 
 import logging
 from pathlib import Path

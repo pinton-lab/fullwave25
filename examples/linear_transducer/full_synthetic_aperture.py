@@ -1,4 +1,11 @@
-"""Full synthetic aperture example."""
+"""Acquire a full synthetic aperture with an L7-4 linear array and beamform it.
+
+One element transmits and every element records, once for each of the 128
+transmits.
+
+Run it with:
+    uv run python examples/linear_transducer/full_synthetic_aperture.py
+"""
 
 import logging
 from pathlib import Path
@@ -156,7 +163,7 @@ def main() -> None:
     #
     # define the working directory
     #
-    work_dir = Path("./outputs/") / "linear_transducer_fsa_1"
+    work_dir = Path("./outputs/") / "full_synthetic_aperture"
     work_dir.mkdir(parents=True, exist_ok=True)
 
     #
@@ -204,7 +211,7 @@ def main() -> None:
         n_targets_lateral=3,
         centered=True,
     )
-    plot_utils.plot_array(scatterer)
+    plot_utils.plot_array(scatterer, export_path=work_dir / "scatterer.png")
     # scatterer modulates the density map.
     # scatterer values are centered around 1.0 with small variations.
     density_map *= scatterer
@@ -304,8 +311,6 @@ def main() -> None:
         / params["c"]
         for i_elem in active_source_element_id_list
     ]
-    for i in range(len(wavefront_arrivals_s)):
-        wavefront_arrivals_s[i] -= wavefront_arrivals_s[i].min()
     wavefront_arrivals_s = np.stack(wavefront_arrivals_s, axis=0)
 
     # --- post-process and beamform ---
@@ -362,11 +367,8 @@ def main() -> None:
     ax.set_ylabel("Time samples")
     cbar = fig.colorbar(im, ax=ax, orientation="vertical", pad=0.02)
     cbar.set_label("Amplitude [dB]")
-    # plt.subplots_adjust(left=0.05, right=1.08, top=0.95, bottom=0.15)
     plt.tight_layout()
-    # plt.savefig(work_dir / "iq_data.svg", dpi=300)
-    # plt.savefig("./temp/temp.png", dpi=300)
-    plt.savefig("./temp/iq_fsa.png", dpi=300)
+    plt.savefig(work_dir / "iq_data.png", dpi=300)
 
     #
     # --- visualization ---

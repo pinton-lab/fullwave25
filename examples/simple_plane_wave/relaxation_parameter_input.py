@@ -1,10 +1,11 @@
-"""Send one plane wave from a source built by hand, and record the whole field.
+"""Give the solver relaxation parameters directly, rather than an attenuation map.
 
-This is the shortest complete example. It builds the grid, the medium, the source,
-the sensor and the solver in view.
+`Medium` looks the relaxation parameters up from the attenuation a caller asks for.
+`MediumRelaxationMaps` takes the parameters themselves, which is what a caller
+needs after fitting a table of their own.
 
 Run it with:
-    uv run python examples/simple_plane_wave/simple_plane_wave.py
+    uv run python examples/simple_plane_wave/relaxation_parameter_input.py
 """
 
 import logging
@@ -13,19 +14,21 @@ from pathlib import Path
 import numpy as np
 
 import fullwave
+from fullwave.solver.shipped_database import ShippedDatabase
 from fullwave.utils import plot_utils, signal_process
 from fullwave.utils.coordinates import map_to_coords
+from fullwave.utils.relaxation_parameters import generate_relaxation_params
 
 
 def main() -> None:
-    """Run Simple plane wave transmit example."""
-    # overwrite the logging level, DEBUG, INFO, WARNING, ERROR
+    """Run one plane wave transmit on a medium built from relaxation parameters."""
+    # overwrite the logging level, DEBGUG, INFO, WARNING, ERROR
     logging.getLogger("__main__").setLevel(logging.INFO)
 
     #
     # define the working directory
     #
-    work_dir = Path("./outputs/") / "simple_plane_wave"
+    work_dir = Path("./outputs/") / "relaxation_parameter_input"
     work_dir.mkdir(parents=True, exist_ok=True)
 
     #
@@ -64,40 +67,47 @@ def main() -> None:
     alpha_power_map[obj_x_start:obj_x_end, obj_y_start:obj_y_end] = 1.1  # power law exponent
     beta_map[obj_x_start:obj_x_end, obj_y_start:obj_y_end] = 0.0  # nonlinearity parameter
 
+    # ShippedDatabase names every table this release holds, so an example never
+    # writes a file name of its own.
+    n_relaxation_mechanisms = ShippedDatabase.default_mechanisms
+    path_relaxation_parameters_database = ShippedDatabase.table_of(n_relaxation_mechanisms)
+    alpha_coeff = np.ones_like(sound_speed_map) * 0.5  # dB/(MHz^y cm)
+    alpha_power = np.ones_like(sound_speed_map) * 1.0  # power law exponent
+
+    relaxation_param_dict = generate_relaxation_params(
+        n_relaxation_mechanisms=n_relaxation_mechanisms,
+        alpha_coeff=alpha_coeff,
+        alpha_power=alpha_power,
+        path_database=path_relaxation_parameters_database,
+    )
+
     # setup the Medium instance
-    medium = fullwave.Medium(
+    medium = fullwave.MediumRelaxationMaps(
         grid=grid,
         sound_speed=sound_speed_map,
         density=density_map,
-        alpha_coeff=alpha_coeff_map,
-        alpha_power=alpha_power_map,
         beta=beta_map,
-        use_gpu=True,
-        # use_gpu=False,
+        relaxation_param_dict=relaxation_param_dict,
+        n_relaxation_mechanisms=n_relaxation_mechanisms,
     )
-    medium.plot(export_path=Path(work_dir / "medium.png"))
+    medium.plot(export_path=Path(work_dir / "medium.png"), plot_fw2_params=True)
 
     #
     # --- define the acoustic source ---
     #
 
-    ncycles = 2
-    drop_off = 2
-
     # initialize the pressure source mask
     p_mask = np.zeros((grid.nx, grid.ny), dtype=bool)
 
-    # set the source location at the top rows of the grid with specified thickness.
-    # source_type="additive" needs exactly one row. A thicker source needs the
-    # hard source, source_type="clamped", and each row takes its own delay below.
-    element_thickness_px = 1
+    # set the source location at the top rows of the grid with specified thickness
+    element_thickness_px = 3
     p_mask[0:element_thickness_px, :] = True
+
+    # define the pressure source [n_sources, nt]d
+    p0 = np.zeros((p_mask.sum(), grid.nt))  # [n_sources, nt]
 
     # The order of p_coordinates corresponds to the order of sources in p0
     p_coordinates = map_to_coords(p_mask)
-
-    # define the pressure source [n_sources, nt]
-    p0 = np.zeros((p_coordinates.shape[0], grid.nt))
 
     for i_thickness in range(element_thickness_px):
         # create a gaussian-modulated sinusoidal pulse as the source signal with layer delay
@@ -105,8 +115,8 @@ def main() -> None:
             nt=grid.nt,  # number of time steps
             f0=f0,  # center frequency [Hz]
             duration=duration,  # duration [s]
-            ncycles=ncycles,  # number of cycles
-            drop_off=drop_off,  # drop off factor
+            ncycles=2,  # number of cycles
+            drop_off=2,  # drop off factor
             p0=1e5,  # maximum amplitude [Pa]
             i_layer=i_thickness,
             dt_for_layer_delay=grid.dt,
@@ -115,14 +125,10 @@ def main() -> None:
 
         # assign the source signal to the corresponding layer
         n_y = p_coordinates.shape[0] // element_thickness_px
-        p0[n_y * i_thickness : n_y * (i_thickness + 1), :] = p0_vec
+        p0[n_y * i_thickness : n_y * (i_thickness + 1), :] = p0_vec.copy()
 
     # setup the Source instance
-    source = fullwave.Source(
-        p0=p0,
-        coords=p_coordinates,
-        grid_shape=grid.shape,
-    )
+    source = fullwave.Source(p0, p_mask)
 
     #
     # --- define the sensor ---
@@ -131,8 +137,7 @@ def main() -> None:
     sensor_mask[:, :] = True
 
     # setup the Sensor instance
-    # sensor = fullwave.Sensor(mask=sensor_mask, sampling_modulus_time=7)
-    sensor = fullwave.Sensor(mod_x=1, mod_y=1, sampling_modulus_time=7)
+    sensor = fullwave.Sensor(mask=sensor_mask, sampling_modulus_time=7)
 
     #
     # --- run simulation ---
@@ -144,17 +149,12 @@ def main() -> None:
         medium=medium,
         source=source,
         sensor=sensor,
-        run_on_memory=True,
-        use_exponential_attenuation=False,
-        # use_exponential_attenuation=True,
-        save_gpu_memory=True,
-        use_gpu_pml=True,
-        source_type="additive",  # the signal is added to the field, not assigned
+        run_on_memory=False,
+        cuda_device_id=[0],
     )
     # fw_solver.summary()
     # execute the solver
-    # sensor_output = fw_solver.run(generate_input_only=True)
-    sensor_output = fw_solver.run(gpu_memory_estimate=True)
+    sensor_output = fw_solver.run()
 
     #
     # --- visualization ---

@@ -1,4 +1,10 @@
-"""Simple plane wave transmit example."""
+"""Send one plane wave on a three dimensional grid holding air.
+
+Air reflects almost everything, so the air region casts a shadow behind it.
+
+Run it with:
+    uv run python examples/wave_3d/simple_plane_wave_3d_with_air.py
+"""
 
 import logging
 from pathlib import Path
@@ -9,7 +15,7 @@ import fullwave
 from fullwave.utils import plot_utils
 
 
-def main() -> None:  # noqa: PLR0915
+def main() -> None:
     """Run 3D Simple plane wave transmit example."""
     # overwrite the logging level, DEBUG, INFO, WARNING, ERROR
     logging.getLogger("__main__").setLevel(logging.INFO)
@@ -18,7 +24,7 @@ def main() -> None:  # noqa: PLR0915
     # define the working directory
     #
 
-    work_dir = Path("./outputs/") / "simple_plane_wave_3d"
+    work_dir = Path("./outputs/") / "simple_plane_wave_3d_with_air"
     work_dir.mkdir(parents=True, exist_ok=True)
 
     #
@@ -74,7 +80,7 @@ def main() -> None:  # noqa: PLR0915
     )
 
     air_map = np.zeros((grid.nx, grid.ny, grid.nz), dtype=bool)
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(seed=42)
     random_location = rng.random((2000, 3))
     for loc in random_location:
         x_idx = obj_x_start + int(loc[0] * (obj_x_end - obj_x_start))

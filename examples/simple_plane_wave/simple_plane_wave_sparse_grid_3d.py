@@ -1,9 +1,10 @@
-"""Simple 3D plane wave example using sparse-grid sensor output.
+"""Record every fourth grid point of a three dimensional grid.
 
-Instead of recording every grid point, the sensor is configured with
-mod_x=4, mod_y=4, mod_z=4 so the binary records only every 4th point in each
-spatial dimension.  This reduces output data size by a factor of 64
-compared to a full-domain sensor.
+`Sensor(mod_x=4, mod_y=4, mod_z=4)` keeps one point in each direction out of four,
+which makes the output 64 times smaller than a sensor over the whole domain.
+
+Run it with:
+    uv run python examples/simple_plane_wave/simple_plane_wave_sparse_grid_3d.py
 """
 
 import logging
@@ -16,7 +17,7 @@ from fullwave.utils import plot_utils
 from fullwave.utils.coordinates import map_to_coords
 
 
-def main() -> None:  # noqa: PLR0915
+def main() -> None:
     """Run 3D simple plane wave example with sparse-grid sensor."""
     logging.getLogger("__main__").setLevel(logging.INFO)
 
@@ -115,7 +116,6 @@ def main() -> None:  # noqa: PLR0915
         medium=medium,
         source=source,
         sensor=sensor,
-        use_exponential_attenuation=True,
     )
     fw_solver.summary()
 

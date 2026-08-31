@@ -1,5 +1,3 @@
-import logging
-
 import numpy as np
 import pytest
 
@@ -261,8 +259,12 @@ def test_n_air_with_provided_air_map(monkeypatch):
     assert medium.n_air == expected_n_air
 
 
-def test_air_is_dropped_where_the_mechanism_count_is_not_two(monkeypatch, caplog):
-    """Only a two mechanism medium carries an air region, and the drop is warned."""
+def test_air_survives_every_mechanism_count(monkeypatch):
+    """Every mechanism count carries its air region.
+
+    The solver zeroes the pressure at each air coordinate and reads nothing else
+    from that list, so the count does not reach it.
+    """
     grid_shape = (4, 4)
     grid = DummyGrid2D(nx=grid_shape[0], ny=grid_shape[1], dt=1e-4)
     dummy_check = type(
@@ -281,7 +283,7 @@ def test_air_is_dropped_where_the_mechanism_count_is_not_two(monkeypatch, caplog
     air_map_input = np.zeros(grid_shape, dtype=np.int64)
     air_map_input[1, 1] = 1
     air_map_input[2, 2] = 1
-    with caplog.at_level(logging.WARNING):
+    for mechanisms in (2, 3, 4):
         medium = Medium(
             grid,
             np.ones(grid_shape) * 1500,
@@ -290,10 +292,9 @@ def test_air_is_dropped_where_the_mechanism_count_is_not_two(monkeypatch, caplog
             np.ones(grid_shape) * 1.2,
             np.ones(grid_shape) * 0.8,
             air_map=air_map_input,
-            n_relaxation_mechanisms=4,
+            n_relaxation_mechanisms=mechanisms,
         )
-    assert medium.n_air == 0
-    assert "only n_relaxation_mechanisms=2 supports air regions" in caplog.text
+        assert medium.n_air == 2
 
 
 # Tests for MediumRelaxationMaps

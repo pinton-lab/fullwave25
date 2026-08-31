@@ -1,4 +1,10 @@
-"""Simple plane wave transmit example."""
+"""Acquire a full synthetic aperture with a C5-2V curved array.
+
+One element transmits and every element records, once for each transmit.
+
+Run it with:
+    uv run python examples/convex_transducer/convex_transducer_fsa.py
+"""
 
 import logging
 from pathlib import Path
@@ -191,54 +197,6 @@ def main() -> None:
             vmin=-80,
             export_path=work_dir / f"sensor_output_amplitude_{active_source_element_id}.png",
         )
-
-        #
-        # --- visualization ---
-        #
-
-        # propagation_map = signal_process.reshape_whole_sensor_to_nt_nx_ny(
-        #     sensor_output,
-        #     grid,
-        # )
-        # propagation_map = np.nan_to_num(propagation_map, 0, posinf=p_max, neginf=-p_max)
-
-        # p_max_plot = np.abs(propagation_map).max().item() / 15
-
-        # power = 1 / 6
-        # p_max_power_plot = p_max_plot ** (power)
-
-        # # time_step = propagation_map.shape[0] // 3 * 2
-
-        # time_step = 300
-        # plot_utils.plot_wave_propagation_snapshot(
-        #     propagation_map=signal_process.signed_power_compression(
-        #         propagation_map[time_step],
-        #         power,
-        #     ),
-        #     c_map=medium.sound_speed,
-        #     rho_map=medium.density,
-        #     export_name="./temp/temp.png",
-        #     vmin=-p_max_power_plot,
-        #     vmax=p_max_power_plot,
-        #     turn_off_axes=True,
-        # )
-        # plot_utils.plot_wave_propagation_with_map(
-        #     # propagation_map=db_scale(propagation_map),
-        #     propagation_map=signal_process.signed_power_compression(
-        #         propagation_map,
-        #         power,
-        #     ),
-        #     c_map=medium.sound_speed,
-        #     rho_map=medium.density,
-        #     export_name=work_dir / "wave_propagation.mp4",
-        #     vmin=-p_max_power_plot,
-        #     vmax=p_max_power_plot,
-        #     figsize=(4, 3.5),
-        #     extent=(-domain_size[1] * 1e3 / 2, domain_size[1] * 1e3 / 2, domain_size[0] * 1e3, 0),
-        #     ylabel="Depth (mm)",
-        #     xlabel="Lateral position (mm)",
-        # )
-        # print()
 
 
 if __name__ == "__main__":
