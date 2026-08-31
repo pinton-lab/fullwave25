@@ -229,6 +229,27 @@ def main() -> None:
     # scatterer values are centered around 1.0 with small variations.
     density_map *= scatterer
 
+    #
+    # --- define the linear transducer and its probe stack ---
+    #
+
+    sampling_interval = 7
+    transducer = fullwave.Transducer.l7_4(
+        grid,
+        element_layer_px=8,
+        face_depth_m=fullwave.TransducerStack.backing_thickness_m,
+        sampling_modulus_time=sampling_interval,
+    )
+    transducer.apply_transducer_stack(
+        sound_speed_map,
+        density_map,
+        alpha_coeff_map,
+        alpha_power_map,
+        beta_map,
+        scatterer=scatterer,
+        rng=rng,
+    )
+
     medium = fullwave.Medium(
         grid,
         sound_speed=sound_speed_map,
@@ -247,13 +268,6 @@ def main() -> None:
     active_source_element_id_list = list(range(128))
     active_source_element_id_list = active_source_element_id_list[32::32]  # for faster demo
     # active_source_element_id_list = [63]
-
-    sampling_interval = 7
-    transducer = fullwave.Transducer.l7_4(
-        grid,
-        element_layer_px=8,
-        sampling_modulus_time=sampling_interval,
-    )
 
     #
     # --- run simulation ---

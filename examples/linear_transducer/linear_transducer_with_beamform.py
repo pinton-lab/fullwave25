@@ -75,6 +75,24 @@ def main() -> None:
 
     density_map *= scatterer
 
+    #
+    # --- define the linear transducer and its probe stack ---
+    #
+
+    transducer = fullwave.Transducer.l7_4(
+        grid,
+        face_depth_m=fullwave.TransducerStack.backing_thickness_m,
+    )
+    transducer.apply_transducer_stack(
+        sound_speed_map,
+        density_map,
+        alpha_coeff_map,
+        alpha_power_map,
+        beta_map,
+        scatterer=scatterer,
+        rng=rng,
+    )
+
     medium = fullwave.Medium(
         grid=grid,
         sound_speed=sound_speed_map,
@@ -84,13 +102,6 @@ def main() -> None:
         beta=beta_map,
     )
     medium.plot(export_path=Path(work_dir / "medium.png"))
-
-    #
-    # --- define the linear transducer ---
-    #
-
-    # A named array places itself, so only the transmit has to be stated.
-    transducer = fullwave.Transducer.l7_4(grid)
 
     #
     # --- define the transmit ---

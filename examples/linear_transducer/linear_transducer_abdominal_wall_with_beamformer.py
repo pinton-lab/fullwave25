@@ -40,8 +40,10 @@ def main() -> None:
     # --- define the linear transducer ---
     #
 
-    # A named array places itself, so only the transmit has to be stated.
-    transducer = fullwave.Transducer.l7_4(grid)
+    transducer = fullwave.Transducer.l7_4(
+        grid,
+        face_depth_m=fullwave.TransducerStack.backing_thickness_m,
+    )
 
     transducer.plane_wave()
 
@@ -85,6 +87,17 @@ def main() -> None:
     abdominal_wall.density *= scatterer
     background.beta = np.zeros_like(background.beta)
     abdominal_wall.beta = np.zeros_like(abdominal_wall.beta)
+
+    for domain in (background, abdominal_wall):
+        transducer.apply_transducer_stack(
+            domain.sound_speed,
+            domain.density,
+            domain.alpha_coeff,
+            domain.alpha_power,
+            domain.beta,
+            scatterer=scatterer,
+            rng=np.random.default_rng(seed=42),
+        )
 
     # register the domains to MediumBuilder
     mb = MediumBuilder(
