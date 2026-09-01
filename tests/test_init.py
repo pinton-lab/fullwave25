@@ -20,6 +20,8 @@ def test_imports():
     assert hasattr(fullwave, "Source")
     assert hasattr(fullwave, "Transducer")
     assert hasattr(fullwave, "TransducerGeometry")
+    assert hasattr(fullwave, "TransducerStack")
+    assert hasattr(fullwave, "Pulse")
     assert hasattr(fullwave, "presets")
     assert hasattr(fullwave, "utils")
 
@@ -33,11 +35,13 @@ def test_all_exports():
         "MediumBuilder",
         "MediumExponentialAttenuation",
         "MediumRelaxationMaps",
+        "Pulse",
         "Sensor",
         "Solver",
         "Source",
         "Transducer",
         "TransducerGeometry",
+        "TransducerStack",
         "presets",
         "utils",
     ]

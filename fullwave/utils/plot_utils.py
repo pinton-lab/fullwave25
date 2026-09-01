@@ -13,7 +13,7 @@ from numpy.typing import NDArray
 from tqdm import tqdm
 
 
-def plot_array(  # noqa: C901, D417, PLR0912
+def plot_array(  # noqa: PLR0912
     x: NDArray[np.float64 | np.int64 | np.bool],
     aspect: float | None = None,
     vmin: float | None = None,
@@ -341,7 +341,7 @@ def plot_wave_propagation_animation(
 
     """
     nt = propagation_map.shape[0]
-    skip_every_n_frame = int(nt / num_plot_image)
+    skip_every_n_frame = max(1, int(nt / num_plot_image))
     plt.close()
     plt.cla()
     plt.clf()
@@ -553,7 +553,7 @@ def plot_wave_propagation_animation(
     animation_data.save(export_name, writer="ffmpeg", dpi=dpi)
 
 
-def plot_wave_propagation_with_map(  # noqa: PLR0915, C901
+def plot_wave_propagation_with_map(
     propagation_map: NDArray[np.float64],
     c_map: NDArray[np.float64],
     rho_map: NDArray[np.float64],
@@ -630,7 +630,7 @@ def plot_wave_propagation_with_map(  # noqa: PLR0915, C901
 
     """
     nt = propagation_map.shape[0]
-    skip_every_n_frame = int(nt / num_plot_image)
+    skip_every_n_frame = max(1, int(nt / num_plot_image))
     plt.close()
     plt.cla()
     plt.clf()
@@ -868,7 +868,7 @@ def plot_wave_propagation_with_map(  # noqa: PLR0915, C901
     plt.close("all")
 
 
-def plot_wave_propagation_snapshot(  # noqa: PLR0915
+def plot_wave_propagation_snapshot(
     propagation_map: NDArray[np.float64],
     c_map: NDArray[np.float64],
     rho_map: NDArray[np.float64],
@@ -1118,3 +1118,63 @@ def plot_wave_propagation_snapshot(  # noqa: PLR0915
         axes.set_title("")
     plt.tight_layout()
     plt.savefig(export_name, dpi=dpi)
+
+
+def plot_maximum_intensity_projection(
+    volume: NDArray[np.float64],
+    export_path: str | Path,
+    title: str = "",
+    cmap: str = "viridis",
+    colorbar_label: str = "maximum intensity pressure [Pa]",
+    figsize: tuple[float, float] = (13.5, 4.4),
+    dpi: int = 150,
+) -> None:
+    """Plot the maximum of a volume along each axis, as three panels.
+
+    A three dimensional field cannot be read as one picture. The projection takes
+    the maximum along one axis at a time, which keeps the beam visible in each of
+    the three planes.
+
+    Parameters
+    ----------
+    volume : NDArray[np.float64]
+        The value of each voxel, of shape [axial, lateral, elevation].
+    export_path : str | Path
+        Where the figure is written.
+    title : str
+        What is plotted and under which condition.
+    cmap : str
+        The colour map each panel uses.
+    colorbar_label : str
+        What the colour bar carries, with its unit.
+    figsize : tuple[float, float]
+        The size of the whole figure [inches].
+    dpi : int
+        The resolution [dots per inch].
+
+    Raises
+    ------
+    ValueError
+        If the volume is not three dimensional.
+
+    """
+    if volume.ndim != 3:
+        error_msg = f"the volume has {volume.ndim} axes and a projection needs 3"
+        raise ValueError(error_msg)
+
+    panels = (
+        ("x-y, over elevation", volume.max(axis=2), "lateral [cells]", "axial [cells]"),
+        ("x-z, over lateral", volume.max(axis=1), "elevation [cells]", "axial [cells]"),
+        ("y-z, over axial", volume.max(axis=0), "elevation [cells]", "lateral [cells]"),
+    )
+    plt.close("all")
+    figure, axes = plt.subplots(1, 3, figsize=figsize, constrained_layout=True)
+    for panel, (name, plane, xlabel, ylabel) in zip(axes, panels, strict=True):
+        picture = panel.imshow(plane, aspect="auto", cmap=cmap)
+        panel.set_title(name)
+        panel.set_xlabel(xlabel)
+        panel.set_ylabel(ylabel)
+        figure.colorbar(picture, ax=panel, label=colorbar_label)
+    figure.suptitle(title)
+    figure.savefig(export_path, dpi=dpi)
+    plt.close(figure)

@@ -1,6 +1,6 @@
 """misc utils for fullwave package."""
 
-from . import pulse, relaxation_parameters, signal_process
+from . import pulse, relaxation_parameters, signal_filter, signal_process
 from .memory_tempfile import MemoryTempfile
 from .scatterer import (
     generate_resolution_based_scatterer,
@@ -14,5 +14,6 @@ __all__ = [
     "generate_scatterer",
     "pulse",
     "relaxation_parameters",
+    "signal_filter",
     "signal_process",
 ]

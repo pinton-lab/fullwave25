@@ -8,6 +8,7 @@ from numpy.typing import NDArray
 from fullwave import Grid
 
 from fullwave.medium_builder.domain import Domain  # isort:skip
+from fullwave.solver.shipped_database import ShippedDatabase
 
 
 class SimpleDomain(Domain):
@@ -20,13 +21,8 @@ class SimpleDomain(Domain):
         geometry: NDArray[np.float64],
         maps: dict[str, NDArray[np.float64] | NDArray[np.int64]],
         *,
-        path_relaxation_parameters_database: Path = Path(__file__).parent.parent
-        / "solver"
-        / "bins"
-        / "database"
-        / "database"
-        / "relaxation_params_database_num_relax=2_20260113_0957.mat",
-        n_relaxation_mechanisms: int = 2,
+        path_relaxation_parameters_database: Path = ShippedDatabase.table,
+        n_relaxation_mechanisms: int = ShippedDatabase.mechanisms,
     ) -> None:
         """Initialize a SimpleDomain.
 

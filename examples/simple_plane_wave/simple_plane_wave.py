@@ -1,4 +1,11 @@
-"""Simple plane wave transmit example."""
+"""Send one plane wave from a source built by hand, and record the whole field.
+
+This is the shortest complete example. It builds the grid, the medium, the source,
+the sensor and the solver in view.
+
+Run it with:
+    uv run python examples/simple_plane_wave/simple_plane_wave.py
+"""
 
 import logging
 from pathlib import Path
@@ -65,6 +72,8 @@ def main() -> None:
         alpha_coeff=alpha_coeff_map,
         alpha_power=alpha_power_map,
         beta=beta_map,
+        use_gpu=True,
+        # use_gpu=False,
     )
     medium.plot(export_path=Path(work_dir / "medium.png"))
 
@@ -74,22 +83,21 @@ def main() -> None:
 
     ncycles = 2
     drop_off = 2
-    delay_max_steps = 0
 
     # initialize the pressure source mask
     p_mask = np.zeros((grid.nx, grid.ny), dtype=bool)
 
-    # set the source location at the top rows of the grid with specified thickness
-    element_thickness_px = 3
+    # set the source location at the top rows of the grid with specified thickness.
+    # source_type="soft" needs exactly one row. A thicker source needs the
+    # hard source, source_type="hard", and each row takes its own delay below.
+    element_thickness_px = 1
     p_mask[0:element_thickness_px, :] = True
-
-    tail_length = int((ncycles + drop_off) / f0 * (1 / grid.dt)) + delay_max_steps
-
-    # define the pressure source [n_sources, nt]d
-    p0 = np.zeros((p_mask.sum(), tail_length))  # [n_sources, nt]
 
     # The order of p_coordinates corresponds to the order of sources in p0
     p_coordinates = map_to_coords(p_mask)
+
+    # define the pressure source [n_sources, nt]
+    p0 = np.zeros((p_coordinates.shape[0], grid.nt))
 
     for i_thickness in range(element_thickness_px):
         # create a gaussian-modulated sinusoidal pulse as the source signal with layer delay
@@ -107,9 +115,14 @@ def main() -> None:
 
         # assign the source signal to the corresponding layer
         n_y = p_coordinates.shape[0] // element_thickness_px
-        p0[n_y * i_thickness : n_y * (i_thickness + 1), :] = p0_vec[:tail_length]
+        p0[n_y * i_thickness : n_y * (i_thickness + 1), :] = p0_vec
+
     # setup the Source instance
-    source = fullwave.Source(p0, p_mask)
+    source = fullwave.Source(
+        p0=p0,
+        coords=p_coordinates,
+        grid_shape=grid.shape,
+    )
 
     #
     # --- define the sensor ---
@@ -118,7 +131,8 @@ def main() -> None:
     sensor_mask[:, :] = True
 
     # setup the Sensor instance
-    sensor = fullwave.Sensor(mask=sensor_mask, sampling_modulus_time=7)
+    # sensor = fullwave.Sensor(mask=sensor_mask, sampling_modulus_time=7)
+    sensor = fullwave.Sensor(mod_x=1, mod_y=1, sampling_modulus_time=7)
 
     #
     # --- run simulation ---
@@ -130,12 +144,17 @@ def main() -> None:
         medium=medium,
         source=source,
         sensor=sensor,
-        run_on_memory=False,
-        # use_exponential_attenuation=False,
+        run_on_memory=True,
+        use_exponential_attenuation=False,
+        # use_exponential_attenuation=True,
+        save_gpu_memory=True,
+        use_gpu_pml=True,
+        source_type="soft",  # the signal is added to the field, not assigned
     )
     # fw_solver.summary()
     # execute the solver
-    sensor_output = fw_solver.run()
+    # sensor_output = fw_solver.run(generate_input_only=True)
+    sensor_output = fw_solver.run(gpu_memory_estimate=True)
 
     #
     # --- visualization ---

@@ -1,4 +1,11 @@
-"""Simple plane wave transmit example."""
+"""Focus a C5-2V curved array through an abdominal wall.
+
+The face of the arc is made reflective with air, so the movie shows the
+reverberation between the probe and the wall.
+
+Run it with:
+    uv run python examples/convex_transducer/convex_transducer_abdominal_wall.py
+"""
 
 import logging
 from pathlib import Path
@@ -10,7 +17,7 @@ from fullwave import MediumBuilder, presets
 from fullwave.utils import plot_utils, signal_process
 
 
-def main() -> None:  # noqa: PLR0915
+def main() -> None:
     """Run convex transducer abdominal wall example."""
     # overwrite the logging level, DEBUG, INFO, WARNING, ERROR
     logging.getLogger("__main__").setLevel(logging.INFO)
@@ -18,7 +25,7 @@ def main() -> None:  # noqa: PLR0915
     #
     # define the working directory
     #
-    work_dir = Path("./outputs/") / "convex_transducer"
+    work_dir = Path("./outputs/") / "convex_transducer_abdominal_wall"
     work_dir.mkdir(parents=True, exist_ok=True)
 
     #
@@ -37,33 +44,9 @@ def main() -> None:  # noqa: PLR0915
     # --- define the convex transducer ---
     #
 
-    element_layer_px = grid.ppw * 3
-    transducer_geometry = fullwave.TransducerGeometry(
-        grid,
-        number_elements=128,
-        # -
-        element_width_m=0.0,
-        # -
-        element_spacing_m=0.508e-3,
-        # -
-        element_layer_px=element_layer_px,
-        # -
-        # [axial, lateral]
-        position_m=(
-            0,
-            0,
-        ),
-        radius=0.04957,
-        # -
-        average_surface_signals=True,
-    )
-    p_max = 1e5
+    # A named array places itself, so only the transmit has to be stated.
     sampling_modulus_time = 7
-    transducer = fullwave.Transducer(
-        transducer_geometry=transducer_geometry,
-        grid=grid,
-        sampling_modulus_time=sampling_modulus_time,
-    )
+    transducer = fullwave.Transducer.c5_2v(grid, sampling_modulus_time=sampling_modulus_time)
     air_map = transducer.make_suraface_reflective_with_air()
 
     # make a sensor for whole domain to make an animation
@@ -73,82 +56,11 @@ def main() -> None:  # noqa: PLR0915
     sensor.plot(export_path=work_dir / "sensor_whole.svg")
 
     #
-    # --- define focus point location ---
+    # --- define the transmit ---
     #
 
-    angle = 0
-    # length = 1000000
-    length = int(grid.nx * (9 / 10))
-    target_location_px = np.array(
-        [
-            # focus transmit
-            # int(grid.nx * (9 / 10)),
-            # grid.ny // 2,
-            #
-            # plane wave (diverging wave)
-            # 1000000,
-            # grid.ny // 2,
-            # plane wave with angle (diverging wave)
-            length * np.cos(np.deg2rad(angle)),
-            length * np.sin(np.deg2rad(angle)) + grid.ny // 2,
-        ],
-        dtype=int,
-    )
-
-    active_source_elements = np.zeros(transducer_geometry.number_elements, dtype=bool)
-    # active_source_elements[95] = 1
-    active_source_elements[32:96] = 1
-    # active_source_elements[:] = 1
-
-    input_signal = np.zeros((transducer.n_sources, grid.nt))
-    dict_source_index_to_location = transducer.dict_source_index_to_location
-    element_id_to_element_center = transducer.element_id_to_element_center
-
-    delay_list = []
-    for i_source_index in range(len(input_signal)):
-        source_location = dict_source_index_to_location[i_source_index + 1]
-        element_id = transducer.transducer_geometry.indexed_element_mask_input[*source_location]
-        if not active_source_elements[element_id - 1]:
-            delay_list.append(0)
-            continue
-
-        source_location = element_id_to_element_center[element_id]
-
-        delay_sec = np.sqrt(np.sum((target_location_px - source_location) ** 2)) * grid.dx / c0
-        delay_list.append(delay_sec)
-    delay_list = np.array(delay_list)
-    delay_list = delay_list.max() - delay_list
-    delay_list = delay_list - delay_list.min()
-
-    for i_source_index in range(len(input_signal)):
-        delay_sec = delay_list[i_source_index]
-        source_location = dict_source_index_to_location[i_source_index + 1]
-
-        n_y = input_signal.shape[0] // element_layer_px
-        i_layer = i_source_index // n_y
-        element_id = transducer.transducer_geometry.indexed_element_mask_input[*source_location]
-        if not active_source_elements[element_id - 1]:
-            p0_vec = np.zeros(grid.nt)
-        else:
-            p0_vec = fullwave.utils.pulse.gaussian_modulated_sinusoidal_signal(
-                nt=grid.nt,
-                f0=f0,
-                duration=duration,
-                ncycles=2,
-                drop_off=2,
-                p0=p_max,
-                i_layer=i_layer,
-                dt_for_layer_delay=grid.dt,
-                cfl_for_layer_delay=grid.cfl,
-                delay_sec=delay_sec,
-            )
-        input_signal[i_source_index, :] = p0_vec.copy()
-
-    #
-    # --- set the signal to transducer ---
-    #
-
-    transducer.set_signal(input_signal)
+    # focus nine tenths of the way down the domain, on the axis
+    transducer.focus(focus_m=(domain_size[0] * 9 / 10, domain_size[1] / 2))
 
     #
     # --- define the acoustic medium properties ---
@@ -193,7 +105,16 @@ def main() -> None:  # noqa: PLR0915
 
     # generate medium for simulation
     medium = mb.run()
-    medium.air_map = air_map  # to make transducer surface reflective
+    # the transducer face reflects, so its air is added to the medium's own
+    medium = fullwave.Medium(
+        grid=grid,
+        sound_speed=medium.sound_speed,
+        density=medium.density,
+        alpha_coeff=medium.alpha_coeff,
+        alpha_power=medium.alpha_power,
+        beta=medium.beta,
+        air_map=np.logical_or(medium.air_map, air_map).astype(int),
+    )
 
     #
     # --- run simulation ---
@@ -217,7 +138,8 @@ def main() -> None:  # noqa: PLR0915
         sensor_output,
         grid,
     )
-    propagation_map = np.nan_to_num(propagation_map, 0, posinf=p_max, neginf=-p_max)
+    pressure = transducer.pulse.pressure
+    propagation_map = np.nan_to_num(propagation_map, 0, posinf=pressure, neginf=-pressure)
 
     p_max_plot = np.abs(propagation_map).max().item() / 8
 

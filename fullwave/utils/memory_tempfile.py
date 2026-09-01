@@ -31,7 +31,7 @@ class MemoryTempfile:
     and create temporary files and directories.
     """
 
-    def __init__(  # noqa: C901, PLR0912
+    def __init__(  # noqa: PLR0912
         self,
         *,
         preferred_paths: list | None = None,
@@ -182,7 +182,7 @@ class MemoryTempfile:
         self,
         suffix: str | None = None,
         prefix: str | None = None,
-        dir: str | None = None,  # noqa: A002
+        dir: str | None = None,
     ) -> str:
         """Create a temporary directory.
 
@@ -207,7 +207,7 @@ class MemoryTempfile:
         self,
         suffix: str | None = None,
         prefix: str | None = None,
-        dir: str | None = None,  # noqa: A002
+        dir: str | None = None,
         *,
         text: bool = False,
     ) -> tuple[int, str]:
@@ -241,7 +241,7 @@ class MemoryTempfile:
         self,
         suffix: str | None = None,
         prefix: str | None = None,
-        dir: str | None = None,  # noqa: A002
+        dir: str | None = None,
     ) -> tempfile.TemporaryDirectory[str]:
         """Create a temporary directory and return a TemporaryDirectory object.
 
@@ -275,7 +275,7 @@ class MemoryTempfile:
         newline: str | None = None,
         suffix: str | None = None,
         prefix: str | None = None,
-        dir: str | None = None,  # noqa: A002
+        dir: str | None = None,
     ) -> tempfile.SpooledTemporaryFile:
         """Create a spooled temporary file.
 
@@ -329,7 +329,7 @@ class MemoryTempfile:
         newline: str | None = None,
         suffix: str | None = None,
         prefix: str | None = None,
-        dir: str | None = None,  # noqa: A002
+        dir: str | None = None,
         *,
         delete: bool = True,
     ) -> tempfile.NamedTemporaryFile:
@@ -379,7 +379,7 @@ class MemoryTempfile:
         newline: str | None = None,
         suffix: str | None = None,
         prefix: str | None = None,
-        dir: str | None = None,  # noqa: A002
+        dir: str | None = None,
     ) -> tempfile.TemporaryFile:
         """Create and return a temporary file.
 

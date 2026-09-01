@@ -102,5 +102,72 @@ def test_coords_and_mask_raises():
 
 
 def test_no_input_raises():
-    with pytest.raises(ValueError, match="Either mask or coords"):
+    with pytest.raises(ValueError, match="Either mask"):
         Sensor()
+
+
+# --- Sparse-grid mode tests ---
+
+
+def test_sparse_grid_2d():
+    sensor = Sensor(mod_x=4, mod_y=4)
+    assert sensor.is_sparse_grid
+    assert sensor.mod_x == 4
+    assert sensor.mod_y == 4
+    assert sensor.mod_z == 0
+    assert not sensor.is_3d
+    assert sensor.n_sensors == 0
+    assert sensor.outcoords.shape == (0, 2)
+    assert sensor.grid_shape is None
+
+
+def test_sparse_grid_3d():
+    sensor = Sensor(mod_x=4, mod_y=4, mod_z=2)
+    assert sensor.is_sparse_grid
+    assert sensor.mod_z == 2
+    assert sensor.is_3d
+    assert sensor.outcoords.shape == (0, 3)
+
+
+def test_sparse_grid_validate_2d_ok():
+    sensor = Sensor(mod_x=4, mod_y=4)
+    sensor.validate((100, 200))  # 2D grid — should not raise
+
+
+def test_sparse_grid_validate_3d_missing_mod_z_raises():
+    sensor = Sensor(mod_x=4, mod_y=4)  # mod_z defaults to 0
+    with pytest.raises(ValueError, match="mod_z"):
+        sensor.validate((100, 200, 50))  # 3D grid
+
+
+def test_sparse_grid_validate_3d_ok():
+    sensor = Sensor(mod_x=4, mod_y=4, mod_z=4)
+    sensor.validate((100, 200, 50))  # should not raise
+
+
+def test_sparse_grid_missing_mod_y_raises():
+    with pytest.raises(ValueError, match="Both mod_x and mod_y"):
+        Sensor(mod_x=4)
+
+
+def test_sparse_grid_missing_mod_x_raises():
+    with pytest.raises(ValueError, match="Both mod_x and mod_y"):
+        Sensor(mod_y=4)
+
+
+def test_sparse_grid_with_mask_raises():
+    mask = np.array([[1, 0]])
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        Sensor(mask=mask, mod_x=4, mod_y=4)
+
+
+def test_sparse_grid_with_coords_raises():
+    coords = np.array([[0, 0]])
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        Sensor(coords=coords, grid_shape=(1, 2), mod_x=4, mod_y=4)
+
+
+def test_sparse_grid_str():
+    sensor = Sensor(mod_x=4, mod_y=4)
+    assert "sparse-grid" in str(sensor)
+    assert "mod_x=4" in str(sensor)

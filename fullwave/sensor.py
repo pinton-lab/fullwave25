@@ -28,6 +28,9 @@ class Sensor:
         *,
         coords: NDArray[np.int64] | None = None,
         grid_shape: tuple[int, ...] | None = None,
+        mod_x: int | None = None,
+        mod_y: int | None = None,
+        mod_z: int = 0,
     ) -> None:
         """Sensor class for Fullwave.
 
@@ -36,7 +39,7 @@ class Sensor:
         mask : NDArray[np.bool] | None
             Binary matrix where the pressure is recorded at each time-step
             shape: [nx, ny] for 2D, [nx, ny, nz] for 3D.
-            Mutually exclusive with coords/grid_shape.
+            Mutually exclusive with coords/grid_shape and mod_x/mod_y.
         sampling_modulus_time: int
             Sampling modulus in time. Default is 1 (record at every time step).
             Changing this value to n will record the pressure every n time steps.
@@ -46,39 +49,95 @@ class Sensor:
             Must be provided together with grid_shape.
         grid_shape : tuple[int, ...] | None
             Shape of the computational grid. Required when using coords input.
+        mod_x : int | None
+            Spatial decimation stride in x (depth) for sparse-grid sensor output.
+            When provided together with mod_y, activates sparse-grid mode.
+            In this mode the solver binary generates sensor positions automatically
+            as [::mod_x, ::mod_y] (and [::mod_z] for 3D) across the domain,
+            ignoring any explicit coords/mask.  Mutually exclusive with mask/coords.
+        mod_y : int | None
+            Spatial decimation stride in y (lateral).  Must be provided with mod_x.
+        mod_z : int
+            Spatial decimation stride in z (elevational).  Only relevant in 3D simulations.
+            Providing mod_z > 0 together with mod_x and mod_y creates a 3D sparse sensor.
+            Default 0 (2D sensor, or no z-subsampling when used in a 3D run).
 
         Raises
         ------
         ValueError
             If grid_shape is not provided when using coords input.
             If both mask and coords are provided (mutually exclusive).
-            If neither mask nor coords (with grid_shape) is provided.
+            If only one of mod_x / mod_y is provided.
+            If mod_x/mod_y are mixed with mask or coords.
+            If none of the three input modes is supplied.
 
         """
-        if coords is not None:
+        if mod_x is not None or mod_y is not None:
+            # --- sparse-grid mode ---
+            if mod_x is None or mod_y is None:
+                msg = "Both mod_x and mod_y must be provided for sparse-grid sensor mode"
+                raise ValueError(msg)
+            if mask is not None or coords is not None:
+                msg = "mod_x/mod_y are mutually exclusive with mask and coords"
+                raise ValueError(msg)
+            if mod_x <= 0 or mod_y <= 0:
+                msg = "mod_x and mod_y must be positive integers"
+                raise ValueError(msg)
+            if mod_z < 0:
+                msg = "mod_z must be a non-negative integer"
+                raise ValueError(msg)
+            self.is_sparse_grid = True
+            self.mod_x = mod_x
+            self.mod_y = mod_y
+            self.mod_z = mod_z
+            self.is_3d = mod_z > 0
+            ndim = 3 if self.is_3d else 2
+            # Empty placeholder — the binary computes positions from mod values.
+            self.outcoords = np.empty((0, ndim), dtype=np.int64)
+            self.grid_shape = None
+        elif coords is not None:
             if grid_shape is None:
                 msg = "grid_shape is required when using coords input"
                 raise ValueError(msg)
             if mask is not None:
                 msg = "mask and coords are mutually exclusive"
                 raise ValueError(msg)
+            self.is_sparse_grid = False
+            self.mod_x = 0
+            self.mod_y = 0
+            self.mod_z = 0
             self.outcoords = np.atleast_2d(coords).astype(np.int64, copy=False)
             self.grid_shape = tuple(grid_shape)
+            self.is_3d = len(self.grid_shape) == 3
         elif mask is not None:
+            self.is_sparse_grid = False
+            self.mod_x = 0
+            self.mod_y = 0
+            self.mod_z = 0
             mask = np.atleast_2d(mask)
             self.grid_shape = mask.shape
             self.outcoords = map_to_coords(mask)
+            self.is_3d = len(self.grid_shape) == 3
         else:
-            msg = "Either mask or coords (with grid_shape) must be provided"
+            msg = "Either mask, coords (with grid_shape), or mod_x with mod_y must be provided"
             raise ValueError(msg)
 
         self.sampling_modulus_time = sampling_modulus_time
-        self.is_3d = len(self.grid_shape) == 3
         super().__init__()
         logger.debug("Sensor instance created.")
 
     def validate(self, grid_shape: NDArray[np.int64] | tuple) -> None:
         """Check if the sensor coordinates are consistent with the grid shape."""
+        if self.is_sparse_grid:
+            grid_shape = tuple(grid_shape) if isinstance(grid_shape, np.ndarray) else grid_shape
+            if len(grid_shape) == 3 and self.mod_z == 0:
+                msg = (
+                    "Sparse-grid sensor used in a 3D simulation but mod_z was not provided. "
+                    "Pass mod_z > 0 to Sensor (e.g. Sensor(mod_x=4, mod_y=4, mod_z=4))."
+                )
+                raise ValueError(msg)
+            logger.debug("Sparse-grid sensor validated.")
+            return
         grid_shape = tuple(grid_shape) if isinstance(grid_shape, np.ndarray) else grid_shape
         assert self.grid_shape == grid_shape, f"{self.grid_shape} != {grid_shape}"
         assert self.n_sensors > 0, "No active sensor found."
@@ -130,7 +189,8 @@ class Sensor:
     ) -> None:
         """Plot the transducer mask, optionally exporting and displaying the figure.
 
-        Raises:
+        Raises
+        ------
             ValueError: If the sensor is 3D because plotting is not supported.
 
         """
@@ -173,6 +233,11 @@ class Sensor:
             Formatted string containing source information.
 
         """
+        if self.is_sparse_grid:
+            mod_str = f"mod_x={self.mod_x}, mod_y={self.mod_y}"
+            if self.is_3d:
+                mod_str += f", mod_z={self.mod_z}"
+            return f"Sensor (sparse-grid): \n  Strides: {mod_str}\n  Is 3D: {self.is_3d}\n"
         return (
             f"Sensor: \n"
             f"  Number of sensors: {self.n_sensors}\n"

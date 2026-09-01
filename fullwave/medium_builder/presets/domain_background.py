@@ -9,6 +9,7 @@ from fullwave import Grid
 from fullwave.constants import MaterialProperties
 
 from fullwave.medium_builder.domain import Domain  # isort:skip
+from fullwave.solver.shipped_database import ShippedDatabase
 
 
 class BackgroundDomain(Domain):
@@ -20,12 +21,8 @@ class BackgroundDomain(Domain):
         background_property_name: str | None = None,
         material_properties: MaterialProperties | None = None,
         *,
-        path_relaxation_parameters_database: Path = Path(__file__).parent.parent
-        / "solver"
-        / "bins"
-        / "database"
-        / "relaxation_params_database_num_relax=2_20260113_0957.mat",
-        n_relaxation_mechanisms: int = 2,
+        path_relaxation_parameters_database: Path = ShippedDatabase.table,
+        n_relaxation_mechanisms: int = ShippedDatabase.mechanisms,
     ) -> None:
         """Initialize a Background instance.
 

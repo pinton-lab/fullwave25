@@ -211,6 +211,41 @@ Here are the main steps to run the Fullwave simulation
 4. Define the sensor.
 5. Execute the simulation.
 
+## Tutorial: transducers and transmits
+
+A named array places itself on the grid, and one call states the transmit.
+
+```python
+grid = fullwave.Grid(domain_size=(4.5e-2, 4.5e-2), f0=5.208e6, duration=6.7e-5, c0=1540)
+
+transducer = fullwave.Transducer.l7_4(grid)
+transducer.plane_wave(angle_deg=2.5)
+
+solver = fullwave.Solver(work_dir="./outputs/my_run", grid=grid, medium=medium, transducer=transducer)
+recorded = solver.run()
+```
+
+The arrays are `l7_4` (linear, 128 elements, 5.208 MHz), `c5_2v` (curved, 49.57 mm radius, 3.7 MHz) and `p4_1c` (phased, 64 elements). `fullwave.TransducerGeometry` builds any other.
+
+The transmits are `plane_wave(angle_deg=...)`, `focus(focus_m=...)`, `diverging(virtual_source_m=...)` and `synthetic_aperture(element)`. Each takes `apodization` and `pulse`. Set `transducer.active_source_elements` first to use part of the aperture.
+
+Every transducer is additive by default, which is what the calibrated setups use. Pass `source_type="clamped"` for a hard source.
+
+`transducer.apply_transducer_stack(...)` paints a probe's backing, matching layer, lens and standoff onto the medium maps before the `Medium` is built. `fullwave.TransducerStack` holds the values.
+
+### Which example to read
+
+| I want to                          | example                                                                                                     |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| send one plane wave                | [simple_plane_wave.py](examples/simple_plane_wave/simple_plane_wave.py)                                     |
+| do the same in 3D                  | [simple_plane_wave_3d.py](examples/wave_3d/simple_plane_wave_3d.py)                                         |
+| compound plane waves into a B-mode | [plane_wave_compounding.py](examples/linear_transducer/plane_wave_compounding.py)                           |
+| focus and watch the beam           | [linear_transducer_focused_animation.py](examples/linear_transducer/linear_transducer_focused_animation.py) |
+| run a full synthetic aperture      | [full_synthetic_aperture.py](examples/linear_transducer/full_synthetic_aperture.py)                         |
+| do the same on a curved array      | [convex_transducer_fsa.py](examples/convex_transducer/convex_transducer_fsa.py)                             |
+| image through an abdominal wall    | [linear_transducer_abdominal_wall.py](examples/linear_transducer/linear_transducer_abdominal_wall.py)       |
+| build a layered phantom            | [medium_builder_example.py](examples/medium_builder/medium_builder_example.py)                              |
+
 ## New simulation development instruction
 
 - after the [installation](#installation)

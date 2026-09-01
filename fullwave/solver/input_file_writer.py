@@ -16,6 +16,28 @@ from fullwave.utils.numerical import matlab_round
 logger = logging.getLogger("__main__." + __name__)
 
 
+def _as_written_float32(variable_mat: np.ndarray) -> NDArray[np.float32]:
+    """Return a map as the float32 the solver reads from its file.
+
+    Parameters
+    ----------
+    variable_mat : np.ndarray
+        The map, on the host or on the accelerator.
+
+    Returns
+    -------
+    NDArray[np.float32]
+        The same map, cast the way `_write_matrix` casts it.
+
+    """
+    if not isinstance(variable_mat, np.ndarray):
+        try:
+            variable_mat = variable_mat.get()
+        except AttributeError:
+            variable_mat = np.asarray(variable_mat)
+    return np.ascontiguousarray(variable_mat, dtype=np.float32)
+
+
 class InputFileWriter:
     """Base class for Fullwave input data generation.
 
@@ -36,6 +58,11 @@ class InputFileWriter:
         use_exponential_attenuation: bool = False,
         use_isotropic_relaxation: bool = False,
         release_after_write: bool = False,
+        pml_thickness: int = 0,
+        exponential_attenuation_pml_thickness_px: int = 0,
+        exponential_attenuation_pml_interior_offset_px: int = 0,
+        use_gpu: bool = False,
+        write_maps_the_solver_does_not_read: bool = False,
     ) -> None:
         """Initialize the InputGeneratorBase instance.
 
@@ -74,6 +101,27 @@ class InputFileWriter:
             Whether to release the variable from memory after writing to file.
             This can help reduce memory usage when generating input files for large simulations.
             default is False.
+        pml_thickness : int, optional
+            PML boundary thickness in grid points (n_pml_layer + n_transition_layer).
+            Required by the solver binary when using sparse grid (mod_x/mod_y != 0) to determine
+            the interior domain boundaries. Also written when mod_x == 0 for future use.
+        exponential_attenuation_pml_thickness_px : int, optional
+            Thickness of the C-PML absorbing layer in grid points.
+            0, the default, writes no file, and the solver then places no layer.
+        exponential_attenuation_pml_interior_offset_px : int, optional
+            Where the interior starts, counted from the last ghost cell.
+            The layer needs it to place its inner face, and it is written
+            only with the thickness above. It is a second value because
+            pml_thickness carries the sparse recording window, which is 0 for
+            a whole domain recording while the interior still starts where it
+            always did.
+        write_maps_the_solver_does_not_read : bool, optional
+            Whether to write the momentum operator maps the n-relaxation solver
+            never reads, which are kappax and, above the first mechanism, apmlx
+            and bpmlx. False, the default, skips them. True writes them all,
+            which an older solver binary needs. The record the skipped maps
+            replace is impedance_constraint.dat, and this writer always writes it
+            on the relaxation path.
 
         """
         logger.debug("Initializing InputFileWriter instance.")
@@ -81,6 +129,8 @@ class InputFileWriter:
         self._work_dir = Path(work_dir)
         self.path_fullwave_simulation_bin = path_fullwave_simulation_bin
         self.use_isotropic_relaxation = use_isotropic_relaxation
+        self.write_maps_the_solver_does_not_read = write_maps_the_solver_does_not_read
+        self.use_gpu = use_gpu
 
         if validate_input:
             check_functions.check_path_exists(self.path_fullwave_simulation_bin)
@@ -99,14 +149,44 @@ class InputFileWriter:
         self.is_3d = self.grid.is_3d
         self.use_exponential_attenuation = use_exponential_attenuation
         self.release_after_write = release_after_write
-
-        self._dim = int(
-            np.rint(self.medium.sound_speed.max()) - np.rint(self.medium.sound_speed.min()),
+        self.pml_thickness = pml_thickness
+        self.exponential_attenuation_pml_thickness_px = exponential_attenuation_pml_thickness_px
+        self.exponential_attenuation_pml_interior_offset_px = (
+            exponential_attenuation_pml_interior_offset_px
         )
 
+        self._precomputed_bulk_modulus: NDArray[np.float32] | None = None
+
+        if self.use_gpu:
+            try:
+                import cupy as cp  # noqa: PLC0415
+
+                n_gpus = cp.cuda.runtime.getDeviceCount()
+                if n_gpus > 1 and self.medium.sound_speed.ndim == 3:
+                    c_min_val, c_max_val = self._compute_dc_map_and_bulk_modulus_multi_gpu(
+                        n_gpus,
+                    )
+                else:
+                    c_min_val, c_max_val = self._compute_dc_map_and_bulk_modulus_single_gpu()
+                self._dim = int(round(c_max_val) - round(c_min_val))
+                self._dc_map_ready = True
+            except ImportError:
+                self._dim = int(
+                    np.rint(self.medium.sound_speed.max()) - np.rint(self.medium.sound_speed.min()),
+                )
+                c_min_val = float(self.medium.sound_speed.min())
+                self._dc_map_ready = False
+        else:
+            self._dim = int(
+                np.rint(self.medium.sound_speed.max()) - np.rint(self.medium.sound_speed.min()),
+            )
+            c_min_val = float(self.medium.sound_speed.min())
+            self._dc_map_ready = False
+
         self._set_d_mat()
-        self._set_d_map(self._dim, self.medium.sound_speed)
-        self._set_dc_map(self.medium.sound_speed)
+        self._set_d_map(self._dim, self.medium.sound_speed, c_min=c_min_val)
+        if not self._dc_map_ready:
+            self._set_dc_map(self.medium.sound_speed)
         logger.debug("InputFileWriter instance created.")
 
     def run(
@@ -169,6 +249,19 @@ class InputFileWriter:
             )
         if incoords_add is not None:
             self._queue_coords_write(simulation_dir / "icc_add.dat", incoords_add)
+        for _vel_suffix, _vel_attr in (("u", "u0"), ("v", "v0"), ("w", "w0")):
+            _signal_vel = getattr(self.source, _vel_attr, None)
+            _incoords_vel = getattr(self.source, f"incoords_{_vel_suffix}", None)
+            if _signal_vel is not None:
+                self._queue_ic_write(
+                    simulation_dir / f"icmat_{_vel_suffix}.dat",
+                    np.transpose(_signal_vel),
+                )
+            if _incoords_vel is not None:
+                self._queue_coords_write(
+                    simulation_dir / f"icc_{_vel_suffix}.dat",
+                    _incoords_vel,
+                )
         self._queue_coords_write(simulation_dir / "icc.dat", self.source.incoords)
         self._copy_simulation_bin_file(simulation_dir)
 
@@ -449,10 +542,10 @@ class InputFileWriter:
         # (((((((a7*x + a6)*x + a5)*x + a4)*x + a3)*x + a2)*x + a1)*x + a0)
         return ((((((a7 * x + a6) * x + a5) * x + a4) * x + a3) * x + a2) * x + a1) * x + a0
 
-    def _set_d_map(self, dim: int, c_map: np.ndarray) -> None:
+    def _set_d_map(self, dim: int, c_map: np.ndarray, *, c_min: float | None = None) -> None:
         self._d_map = np.zeros((9, 2, dim + 1), dtype=np.float64)
 
-        cmin = float(np.min(c_map))  # compute once (was inside loop)
+        cmin = c_min if c_min is not None else float(np.min(c_map))
         scale = self.grid.dt / self.grid.dx  # compute once
         i = np.arange(dim + 1, dtype=np.float64)
         r = (i + cmin) * scale
@@ -663,10 +756,27 @@ class InputFileWriter:
 
         For large 3-D maps the naive approach allocates a full float64 copy
         and makes several sequential passes.
-        This version processes the first axis in chunks using a thread pool so
-        that (a) peak memory stays bounded and (b) multiple cores share the work.
+        GPU path: uses CuPy for the entire computation in one pass.
+        CPU path: processes the first axis in chunks using a thread pool.
         """
         logger.debug("Setting dc map for stencil coefficients.")
+
+        if self.use_gpu:
+            try:
+                import cupy as cp  # noqa: PLC0415
+
+                c_gpu = cp.asarray(c_map, dtype=cp.float64)
+                c_min_rounded = float(matlab_round(float(c_gpu.min())))
+                offset = -c_min_rounded + 1
+                c_gpu += 1e-9
+                cp.rint(c_gpu, out=c_gpu)
+                c_gpu += offset
+                self._dc_map = cp.asnumpy(c_gpu.astype(cp.int32))
+                logger.debug("dc map for stencil coefficients set (GPU).")
+                return
+            except ImportError:
+                pass
+
         c_min_rounded = matlab_round(c_map.min())
         offset = float(-c_min_rounded + 1)
 
@@ -699,6 +809,127 @@ class InputFileWriter:
         logger.debug("dc map for stencil coefficients set.")
 
     # --- batch write utils ---
+
+    def _compute_dc_map_and_bulk_modulus_single_gpu(self) -> tuple[float, float]:
+        """Compute dc_map and bulk_modulus on a single GPU.
+
+        Returns
+        -------
+        tuple[float, float]
+            (c_min_val, c_max_val) of the sound speed.
+
+        """
+        import cupy as cp  # noqa: PLC0415
+
+        c_gpu = cp.asarray(self.medium.sound_speed, dtype=cp.float64)
+        c_min_val = float(c_gpu.min())
+        c_max_val = float(c_gpu.max())
+
+        # dc_map: rint(sound_speed + 1e-9) - rint(c_min) + 1
+        c_tmp = c_gpu.copy()
+        c_min_rounded = float(matlab_round(c_min_val))
+        offset = -c_min_rounded + 1
+        c_tmp += 1e-9
+        cp.rint(c_tmp, out=c_tmp)
+        c_tmp += offset
+        self._dc_map = cp.asnumpy(c_tmp.astype(cp.int32))
+        del c_tmp, c_gpu
+
+        # bulk_modulus: sound_speed^2 * density
+        c_f32 = cp.asarray(self.medium.sound_speed, dtype=cp.float32)
+        rho_f32 = cp.asarray(self.medium.density, dtype=cp.float32)
+        bulk = cp.multiply(c_f32 * c_f32, rho_f32)
+        self._precomputed_bulk_modulus = cp.asnumpy(bulk)
+        del c_f32, rho_f32, bulk
+        cp.get_default_memory_pool().free_all_blocks()
+
+        logger.debug("dc map and bulk modulus set (single GPU).")
+        return c_min_val, c_max_val
+
+    def _compute_dc_map_and_bulk_modulus_multi_gpu(
+        self,
+        n_gpus: int,
+    ) -> tuple[float, float]:
+        """Compute dc_map and bulk_modulus in parallel across multiple GPUs.
+
+        Each GPU processes a slice of the 3D array along axis 0.
+
+        Returns
+        -------
+        tuple[float, float]
+            (c_min_val, c_max_val) of the sound speed.
+
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed  # noqa: PLC0415
+
+        import cupy as cp  # noqa: PLC0415
+
+        sound_speed_np = self.medium.sound_speed
+        density_np = self.medium.density
+
+        # Ensure numpy for slicing
+        if not isinstance(sound_speed_np, np.ndarray):
+            sound_speed_np = cp.asnumpy(sound_speed_np)
+        if not isinstance(density_np, np.ndarray):
+            density_np = cp.asnumpy(density_np)
+
+        n_slabs = sound_speed_np.shape[0]
+        n_workers = min(n_gpus, n_slabs)
+        chunk_size = -(-n_slabs // n_workers)  # ceil division
+
+        logger.info(
+            "Computing dc_map and bulk_modulus using %d GPUs (of %d available).",
+            n_workers,
+            n_gpus,
+        )
+
+        # Phase 1+2: Each GPU computes local min/max, dc_map chunk, bulk_modulus chunk
+        dc_map_result = np.empty(sound_speed_np.shape, dtype=np.int32)
+        bulk_result = np.empty(sound_speed_np.shape, dtype=np.float32)
+        local_mins = np.empty(n_workers, dtype=np.float64)
+        local_maxs = np.empty(n_workers, dtype=np.float64)
+
+        def _process_on_device(worker_id: int, device_id: int) -> None:
+            start = worker_id * chunk_size
+            end = min(start + chunk_size, n_slabs)
+            with cp.cuda.Device(device_id):
+                c_chunk = cp.asarray(sound_speed_np[start:end], dtype=cp.float64)
+                local_mins[worker_id] = float(c_chunk.min())
+                local_maxs[worker_id] = float(c_chunk.max())
+
+                # dc_map for this chunk (offset applied after global min is known)
+                c_chunk += 1e-9
+                cp.rint(c_chunk, out=c_chunk)
+                dc_chunk_f64 = c_chunk  # reuse buffer
+                dc_map_result[start:end] = cp.asnumpy(dc_chunk_f64.astype(cp.int32))
+                del dc_chunk_f64
+
+                # bulk_modulus for this chunk
+                c_f32 = cp.asarray(sound_speed_np[start:end], dtype=cp.float32)
+                rho_f32 = cp.asarray(density_np[start:end], dtype=cp.float32)
+                bulk_chunk = cp.multiply(c_f32 * c_f32, rho_f32)
+                bulk_result[start:end] = cp.asnumpy(bulk_chunk)
+                del c_f32, rho_f32, bulk_chunk
+                cp.get_default_memory_pool().free_all_blocks()
+
+        with ThreadPoolExecutor(max_workers=n_workers) as executor:
+            futures = [executor.submit(_process_on_device, i, i % n_gpus) for i in range(n_workers)]
+            for future in as_completed(futures):
+                future.result()
+
+        c_min_val = float(local_mins.min())
+        c_max_val = float(local_maxs.max())
+
+        # Apply global offset to dc_map
+        c_min_rounded = int(matlab_round(c_min_val))
+        offset = np.int32(-c_min_rounded + 1)
+        dc_map_result += offset
+
+        self._dc_map = dc_map_result
+        self._precomputed_bulk_modulus = bulk_result
+
+        logger.debug("dc map and bulk modulus set (multi-GPU, %d devices).", n_workers)
+        return c_min_val, c_max_val
 
     def _init_pending_writes(self) -> None:
         """Initialize the pending writes list for batch I/O."""
@@ -804,10 +1035,15 @@ class InputFileWriter:
         relaxation_param_map_dict_for_fw2: dict[str, NDArray[np.float64]],
         dim: int,
     ) -> None:
+        k_map = (
+            self._precomputed_bulk_modulus
+            if self._precomputed_bulk_modulus is not None
+            else self.medium.bulk_modulus
+        )
         self._save_maps(
             simulation_dir,
             c_map=self.medium.sound_speed,
-            k_map=self.medium.bulk_modulus,
+            k_map=k_map,
             rho_map=self.medium.density,
             beta_map=self.medium.beta,
         )
@@ -815,18 +1051,21 @@ class InputFileWriter:
         self._save_step_params(simulation_dir)
         self._save_coords_params(simulation_dir)
         self._save_d_params(simulation_dir, dim)
+        self._save_sparse_grid_params(simulation_dir)
 
         if self.use_isotropic_relaxation:
             rename_dict = {
-                "kappa_x": "kappax",
                 "kappa_u": "kappau",
             }
+            if self.write_maps_the_solver_does_not_read:
+                rename_dict["kappa_x"] = "kappax"
 
             for nu in range(1, self.medium.n_relaxation_mechanisms + 1):
                 rename_dict[f"a_pml_u{nu}"] = f"apmlu{nu}"
                 rename_dict[f"b_pml_u{nu}"] = f"bpmlu{nu}"
-                rename_dict[f"a_pml_x{nu}"] = f"apmlx{nu}"
-                rename_dict[f"b_pml_x{nu}"] = f"bpmlx{nu}"
+                if nu == 1 or self.write_maps_the_solver_does_not_read:
+                    rename_dict[f"a_pml_x{nu}"] = f"apmlx{nu}"
+                    rename_dict[f"b_pml_x{nu}"] = f"bpmlx{nu}"
         else:
             rename_dict = {
                 "kappa_x": "kappax",
@@ -857,6 +1096,19 @@ class InputFileWriter:
                     rename_dict[f"a_pml_v{nu}"] = f"apmlv{nu}"
                     rename_dict[f"b_pml_v{nu}"] = f"bpmlv{nu}"
 
+        # the n_relax kernel reads the mechanism count from this file
+        self._queue_v_abs_write(
+            np.int32,
+            simulation_dir / "n_relax.dat",
+            self.medium.n_relaxation_mechanisms,
+        )
+
+        if self.use_isotropic_relaxation:
+            self._save_impedance_constraint_record(
+                simulation_dir,
+                relaxation_param_map_dict_for_fw2,
+            )
+
         # save relaxation params
         for var_name, var in relaxation_param_map_dict_for_fw2.items():
             if var_name in rename_dict:
@@ -864,15 +1116,66 @@ class InputFileWriter:
                 save_path = simulation_dir / f"{var_name_fw2}.dat"
                 self._queue_matrix_write(var_type=np.float32, save_path=save_path, variable_mat=var)
 
+    def _save_impedance_constraint_record(
+        self,
+        simulation_dir: Path,
+        relaxation_param_map_dict_for_fw2: dict[str, NDArray[np.float64]],
+    ) -> None:
+        """Write the three values the n-relaxation solver reads instead of two maps.
+
+        The impedance constraint holds the momentum stretching function at the
+        identity, so kappa_x is 1 at every cell and a_pml_x above the first
+        mechanism is 0 at every cell. The solver refuses a medium that does not
+        carry both. Each extreme is measured on the float32 the solver reads, so
+        the reading is exactly the comparison the solver makes cell by cell.
+
+        Parameters
+        ----------
+        simulation_dir : Path
+            Where the record is written.
+        relaxation_param_map_dict_for_fw2 : dict[str, NDArray[np.float64]]
+            Every relaxation coefficient map the medium carries.
+
+        """
+        kappa_x = _as_written_float32(relaxation_param_map_dict_for_fw2["kappa_x"])
+        largest_kappa_x_error = float(np.abs(kappa_x - np.float32(1.0)).max())
+
+        largest_a_pml_x_above_first = 0.0
+        for nu in range(2, self.medium.n_relaxation_mechanisms + 1):
+            a_pml_x = _as_written_float32(relaxation_param_map_dict_for_fw2[f"a_pml_x{nu}"])
+            largest_a_pml_x_above_first = max(
+                largest_a_pml_x_above_first,
+                float(np.abs(a_pml_x).max()),
+            )
+
+        record = np.array(
+            [
+                self.medium.n_relaxation_mechanisms,
+                largest_kappa_x_error,
+                largest_a_pml_x_above_first,
+            ],
+            dtype=np.float32,
+        )
+        self._queue_matrix_write(
+            var_type=np.float32,
+            save_path=simulation_dir / "impedance_constraint.dat",
+            variable_mat=record,
+        )
+
     def _save_variables_into_dat_file_exponential_attenuation(
         self,
         simulation_dir: Path,
         dim: int,
     ) -> None:
+        k_map = (
+            self._precomputed_bulk_modulus
+            if self._precomputed_bulk_modulus is not None
+            else self.medium.bulk_modulus
+        )
         self._save_maps(
             simulation_dir,
             c_map=self.medium.sound_speed,
-            k_map=self.medium.bulk_modulus,
+            k_map=k_map,
             rho_map=self.medium.density,
             beta_map=self.medium.beta,
             alpha_exp_map=self.medium.alpha_exp,
@@ -881,6 +1184,7 @@ class InputFileWriter:
         self._save_step_params(simulation_dir)
         self._save_coords_params(simulation_dir)
         self._save_d_params(simulation_dir, dim)
+        self._save_sparse_grid_params(simulation_dir)
 
     def _build_symbolic_links_for_dat_files(self, src_dir: Path, dst_dir: Path) -> None:
         var_name_list = [
@@ -899,62 +1203,41 @@ class InputFileWriter:
             "nX",
             "nT",
             "ncoords",
+            "ncoords_add",
+            "ncoords_u",
+            "ncoords_v",
+            "ncoords_w",
             "ncoordsout",
             "ncoordszero",
             "nTic",
             "modT",
+            "modX",
+            "modY",
+            "pml_thickness",
+            "exponential_attenuation_pml_thickness",
+            "exponential_attenuation_pml_interior_offset",
+            "n_relax",
             "d",
             "dmap",
             "ndmap",
             "dcmap",
             "kappax",
             "kappau",
-            "apmlu1",
-            "bpmlu1",
-            "apmlx1",
-            "bpmlx1",
-            "apmlu2",
-            "bpmlu2",
-            "apmlx2",
-            "bpmlx2",
+            "impedance_constraint",
         ]
+        mechanisms = range(1, self.medium.n_relaxation_mechanisms + 1)
+        for nu in mechanisms:
+            var_name_list.extend([f"apmlu{nu}", f"bpmlu{nu}", f"apmlx{nu}", f"bpmlx{nu}"])
         if not self.use_isotropic_relaxation:
-            var_name_list.extend(
-                [
-                    "kappay",
-                    "kappaw",
-                    # --
-                    "apmlw1",
-                    "apmly1",
-                    "bpmlw1",
-                    "bpmly1",
-                    # --
-                    "apmlw2",
-                    "apmly2",
-                    "bpmlw2",
-                    "bpmly2",
-                ],
-            )
+            var_name_list.extend(["kappay", "kappaw"])
+            for nu in mechanisms:
+                var_name_list.extend([f"apmlw{nu}", f"apmly{nu}", f"bpmlw{nu}", f"bpmly{nu}"])
+        if self.is_3d:
+            var_name_list.append("modZ")
         if self.is_3d and not self.use_isotropic_relaxation:
-            var_name_list.extend(
-                [
-                    "nZ",
-                    "dZ",
-                    # --
-                    "kappaz",
-                    "kappav",
-                    # --
-                    "apmlz1",
-                    "apmlv1",
-                    "bpmlz1",
-                    "bpmlv1",
-                    # --
-                    "apmlz2",
-                    "apmlv2",
-                    "bpmlz2",
-                    "bpmlv2",
-                ],
-            )
+            var_name_list.extend(["nZ", "dZ", "kappaz", "kappav"])
+            for nu in mechanisms:
+                var_name_list.extend([f"apmlz{nu}", f"apmlv{nu}", f"bpmlz{nu}", f"bpmlv{nu}"])
         for var_name in var_name_list:
             src_data = src_dir / f"{var_name}.dat"
             dst_data = dst_dir / f"{var_name}.dat"
@@ -1047,6 +1330,10 @@ class InputFileWriter:
         n_sources_add = getattr(self.source, "n_sources_add", 0)
         if n_sources_add > 0:
             var_list.append(("ncoords_add", n_sources_add))
+        for _vel_suffix in ("u", "v", "w"):
+            _n_vel = getattr(self.source, f"n_sources_{_vel_suffix}", 0)
+            if _n_vel > 0:
+                var_list.append((f"ncoords_{_vel_suffix}", _n_vel))
         if self.is_3d:
             var_list.extend(
                 [
@@ -1056,6 +1343,43 @@ class InputFileWriter:
         for var_name, var in var_list:
             save_path = simulation_dir / f"{var_name}.dat"
             self._queue_v_abs_write(np.int32, save_path, var)
+
+    def _save_sparse_grid_params(self, simulation_dir: Path) -> None:
+        """Write the sparse-grid strides, and where the interior starts.
+
+        modX / modY / modZ are written only when the sensor was constructed with
+        mod_x/mod_y, that is when ``sensor.is_sparse_grid`` is True. In standard
+        coordinate or mask mode those files are not produced, which keeps older
+        binaries working.
+
+        ``pml_thickness.dat`` is written either way. It says where the interior
+        starts, which is true of every run and not only of a sparse one, and a
+        solver that places an absorbing layer needs it. Every shipped binary
+        reads it behind a file-exists guard, and outside the sparse path no
+        binary uses the value, so writing it changes no existing result.
+
+        The C-PML absorbing layer carries its own two files, and both are
+        written only when the layer is on. A binary that finds no thickness
+        file places no layer, so an existing run is unchanged.
+        """
+        self._queue_v_abs_write(np.int32, simulation_dir / "pml_thickness.dat", self.pml_thickness)
+        if self.exponential_attenuation_pml_thickness_px > 0:
+            self._queue_v_abs_write(
+                np.int32,
+                simulation_dir / "exponential_attenuation_pml_thickness.dat",
+                self.exponential_attenuation_pml_thickness_px,
+            )
+            self._queue_v_abs_write(
+                np.int32,
+                simulation_dir / "exponential_attenuation_pml_interior_offset.dat",
+                self.exponential_attenuation_pml_interior_offset_px,
+            )
+        if not self.sensor.is_sparse_grid:
+            return
+        self._queue_v_abs_write(np.int32, simulation_dir / "modX.dat", self.sensor.mod_x)
+        self._queue_v_abs_write(np.int32, simulation_dir / "modY.dat", self.sensor.mod_y)
+        if self.is_3d:
+            self._queue_v_abs_write(np.int32, simulation_dir / "modZ.dat", self.sensor.mod_z)
 
     def _save_d_params(
         self,
@@ -1150,6 +1474,13 @@ class InputFileWriter:
         t0 = time.perf_counter()
 
         dtype = np.dtype(var_type)
+
+        # Transfer CuPy arrays to CPU for file writing
+        if not isinstance(variable_mat, np.ndarray):
+            try:
+                variable_mat = variable_mat.get()  # CuPy → numpy
+            except AttributeError:
+                variable_mat = np.asarray(variable_mat)
 
         # Fast path: no conversion, no reorder.
         if variable_mat.dtype == dtype and variable_mat.flags.c_contiguous:

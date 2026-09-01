@@ -1,10 +1,18 @@
-"""Plane wave compounding example."""
+"""Send several steered plane waves and compound them into one image.
+
+Compounding recovers the contrast a single plane wave loses, at the cost of one
+transmit for each angle.
+
+Run it with:
+    uv run python examples/linear_transducer/plane_wave_compounding.py
+"""
 
 import logging
 import shutil
 from pathlib import Path
 
 import cupy
+import matplotlib.pyplot as plt
 import numpy as np
 import pymust
 from einops import rearrange
@@ -17,6 +25,7 @@ from tqdm import tqdm
 
 import fullwave
 from fullwave.utils import plot_utils
+from fullwave.utils.signal_filter import apply_filter
 
 
 def convert_to_db(signal: np.ndarray) -> np.ndarray:
@@ -34,104 +43,6 @@ def convert_to_db(signal: np.ndarray) -> np.ndarray:
 
     """
     return 20 * np.log10(np.abs(signal) / np.max(np.abs(signal)))
-
-
-def make_angled_input_signal(
-    angle_deg: float,
-    length: int,
-    grid: fullwave.Grid,
-    transducer_geometry: fullwave.TransducerGeometry,
-    transducer: fullwave.Transducer,
-    element_layer_px: int,
-    p_max: float = 1e5,
-) -> np.ndarray:
-    """Generate an angled input signal for plane wave transmission.
-
-    Parameters
-    ----------
-    angle_deg : float
-        Angle of the plane wave in degrees.
-    length : int
-        Length parameter for target location calculation.
-    grid : fullwave.Grid
-        Computational grid for the simulation.
-    transducer_geometry : fullwave.TransducerGeometry
-        Geometry of the transducer.
-    transducer : fullwave.Transducer
-        Transducer object containing source information.
-    element_layer_px : int
-        Number of pixels per element layer.
-    p_max : float, optional
-        Maximum pressure amplitude (default: 1e5).
-
-    Returns
-    -------
-    np.ndarray
-        Input signal array of shape (n_sources, nt).
-
-    """
-    target_location_px = np.array(
-        [
-            # focus transmit
-            # int(grid.nx * (9 / 10)),
-            # grid.ny // 2,
-            #
-            # plane wave
-            # 1000000,
-            # grid.ny // 2,
-            # plane wave with angle
-            length * np.cos(np.deg2rad(angle_deg)),
-            length * np.sin(np.deg2rad(angle_deg)) + grid.ny // 2,
-        ],
-        dtype=int,
-    )
-
-    active_source_elements = np.zeros(transducer_geometry.number_elements, dtype=bool)
-    active_sensor_elements = np.zeros(transducer_geometry.number_elements, dtype=bool)
-    active_source_elements[:] = True
-    # active_source_elements[32:96] = True
-    active_sensor_elements[:] = True
-
-    input_signal = np.zeros((transducer.n_sources, grid.nt))
-    dict_source_index_to_location = transducer.dict_source_index_to_location
-    element_id_to_element_center = transducer.element_id_to_element_center
-
-    delay_list = []
-    for i_source_index in range(len(input_signal)):
-        source_location = dict_source_index_to_location[i_source_index + 1]
-        element_id = transducer.transducer_geometry.indexed_element_mask_input[*source_location]
-        source_location = element_id_to_element_center[element_id]
-
-        delay_sec = np.sqrt(np.sum((target_location_px - source_location) ** 2)) * grid.dx / grid.c0
-        delay_list.append(delay_sec)
-    delay_list = np.array(delay_list)
-    delay_list = delay_list.max() - delay_list
-    delay_list = delay_list - delay_list.min()
-
-    for i_source_index in range(len(input_signal)):
-        delay_sec = delay_list[i_source_index]
-        source_location = dict_source_index_to_location[i_source_index + 1]
-
-        n_y = input_signal.shape[0] // element_layer_px
-        i_layer = i_source_index // n_y
-        element_id = transducer.transducer_geometry.indexed_element_mask_input[*source_location]
-        if not active_source_elements[element_id - 1]:
-            p0_vec = np.zeros(grid.nt)
-        else:
-            p0_vec = fullwave.utils.pulse.gaussian_modulated_sinusoidal_signal(
-                nt=grid.nt,
-                f0=grid.f0,
-                duration=grid.duration,
-                ncycles=2,
-                drop_off=2,
-                p0=p_max,
-                i_layer=i_layer,
-                dt_for_layer_delay=grid.dt,
-                cfl_for_layer_delay=grid.cfl,
-                delay_sec=delay_sec,
-            )
-        input_signal[i_source_index, :] = p0_vec.copy()
-    return input_signal
 
 
 def make_echoic_targets(
@@ -245,7 +156,7 @@ def make_echoic_targets(
     return scatterer
 
 
-def main() -> None:  # noqa: PLR0915
+def main() -> None:
     """Run linear transducer abdominal wall example."""
     # overwrite the logging level, DEBUG, INFO, WARNING, ERROR
     logging.getLogger("__main__").setLevel(logging.INFO)
@@ -253,15 +164,16 @@ def main() -> None:  # noqa: PLR0915
     #
     # define the working directory
     #
-    work_dir = Path("./outputs/") / "linear_transducer_plane_wave_compounding"
+    work_dir = Path("./outputs/") / "plane_wave_compounding"
     work_dir.mkdir(parents=True, exist_ok=True)
 
     #
     # --- define the computational grid ---
     #
 
+    # The calibrated L7-4 setup: 5.208 MHz, 12 points per wavelength, Courant 0.4.
     domain_size = (4.5e-2, 4.5e-2)  # [axial, lateral] meters
-    f0 = 2e6
+    f0 = 5.208e6
     c0 = 1540
     duration = domain_size[0] / c0 * 2.3
     ppw = 12
@@ -286,7 +198,7 @@ def main() -> None:  # noqa: PLR0915
     scatterer, _ = fullwave.utils.generate_scatterer(
         grid=grid,
         ratio_scatterer_to_total_grid=0.38,
-        scatter_value_std=0.035,
+        scatter_value_std=0.02 / 2,
         rng=rng,
     )
 
@@ -301,10 +213,31 @@ def main() -> None:  # noqa: PLR0915
         n_targets_lateral=3,
         centered=True,
     )
-    plot_utils.plot_array(scatterer)
+    plot_utils.plot_array(scatterer, export_path=work_dir / "scatterer.png")
     # scatterer modulates the density map.
     # scatterer values are centered around 1.0 with small variations.
     density_map *= scatterer
+
+    #
+    # --- define the linear transducer and its probe stack ---
+    #
+
+    sampling_interval = 7
+    transducer = fullwave.Transducer.l7_4(
+        grid,
+        face_depth_m=fullwave.TransducerStack.backing_thickness_m,
+        sampling_modulus_time=sampling_interval,
+    )
+    transducer_width_m = transducer.transducer_geometry.transducer_width_m
+    transducer.apply_transducer_stack(
+        sound_speed_map,
+        density_map,
+        alpha_coeff_map,
+        alpha_power_map,
+        beta_map,
+        scatterer=scatterer,
+        rng=rng,
+    )
 
     medium = fullwave.Medium(
         grid,
@@ -323,58 +256,20 @@ def main() -> None:  # noqa: PLR0915
 
     # angles = [-10, -7.5, -5, -2.5, 0, 2.5, 5, 7.5, 10]  # degrees
     # angles = np.linspace(-25, 25, num=21, endpoint=True).tolist()  # degrees
-    angles = np.linspace(-10, 10, num=5, endpoint=True).tolist()  # degrees
+    # angles = np.linspace(-10, 10, num=5, endpoint=True).tolist()  # degrees
 
-    # angles = [0]  # degrees
-
-    element_layer_px = 4
-    transducer_width_m = 38e-3
-    transducer_geometry = fullwave.TransducerGeometry(
-        grid,
-        number_elements=128,
-        # -
-        element_width_m=0.298e-3 - 0.048e-3,
-        # -
-        element_spacing_m=0.048e-3,
-        # -
-        element_layer_px=element_layer_px,
-        # -
-        # [axial, lateral]
-        position_m=(
-            0,
-            (domain_size[1] - transducer_width_m) / 2,
-        ),
-        # -
-        radius=float("inf"),
-    )
-
-    sampling_interval = 7
-    transducer = fullwave.Transducer(
-        transducer_geometry=transducer_geometry,
-        grid=grid,
-        sampling_modulus_time=sampling_interval,
-    )
+    angles = [0]  # degrees
 
     #
     # --- run simulation ---
     #
 
-    p_max = 1e5
-    length = 1000000
+    use_filter = True
 
     remove_dir = True
     sensor_output_list = []
     for i_angle, angle in tqdm(enumerate(angles), total=len(angles)):
-        input_signal = make_angled_input_signal(
-            angle_deg=angle,
-            length=length,
-            grid=grid,
-            transducer_geometry=transducer_geometry,
-            transducer=transducer,
-            element_layer_px=element_layer_px,
-            p_max=p_max,
-        )
-        transducer.set_signal(input_signal)
+        transducer.plane_wave(angle_deg=angle, apodization=0.5)
         fw_solver = fullwave.Solver(
             work_dir=work_dir,
             grid=grid,
@@ -392,6 +287,13 @@ def main() -> None:  # noqa: PLR0915
                 simulation_dir_name=f"txrx_{i_angle}",
                 is_static_map=True,
                 recalculate_pml=False,  # Reuse PML from first run
+            )
+        if use_filter:
+            sensor_output = apply_filter(
+                sensor_output,
+                dt=grid.dt * transducer.sampling_modulus_time,  # effective dt after downsampling
+                f_low_hz=0.05e6,
+                use_gpu=True,
             )
         sensor_output = fw_solver.transducer.post_process_sensor_output(
             sensor_output,
@@ -421,23 +323,13 @@ def main() -> None:  # noqa: PLR0915
 
     grid_points = scan_grid(b_mode_x, b_mode_y, b_mode_z)
 
-    wavefront_arrivals_s = [
-        wavefront.plane(
-            origin_m=np.array([0, 0, 0]),  # Wave originates at array face
-            points_m=grid_points,  # All grid points
-            direction=np.array(
-                [
-                    np.sin(np.radians(angle)),
-                    0,
-                    np.cos(np.radians(angle)),
-                ],
-            ),  # Angle direction
-        )
-        / params["c"]
-        for angle in angles
-    ]
-    for i in range(len(wavefront_arrivals_s)):
-        wavefront_arrivals_s[i] -= wavefront_arrivals_s[i].min()
+    origin_m = np.array([0, 0, 0])
+    wavefront_arrivals_s = []
+    for angle in angles:
+        direction = np.array([np.sin(np.radians(angle)), 0, np.cos(np.radians(angle))])
+        at_scan_points_s = wavefront.plane(origin_m, grid_points, direction) / params["c"]
+        at_aperture_s = wavefront.plane(origin_m, element_positions, direction) / params["c"]
+        wavefront_arrivals_s.append(at_scan_points_s - at_aperture_s.min())
     wavefront_arrivals_s = np.stack(wavefront_arrivals_s, axis=0)
 
     # -- beamforming ---
@@ -476,6 +368,23 @@ def main() -> None:  # noqa: PLR0915
     b_mode = cupy.asnumpy(b_mode)
     b_mode = b_mode.reshape(len(b_mode_x), len(b_mode_z))
 
+    # plot convert_to_db(iq_data[0, :, :, 0]).T,
+    plt.close("all")
+    fig, ax = plt.subplots(1, 1, figsize=(6, 6))
+    im = ax.imshow(
+        convert_to_db(iq_data[0, :, :, 0]).T,
+        vmin=-70,
+        vmax=0,
+        aspect=0.3,
+        cmap="gray",
+    )
+    ax.set_xlabel("Element index")
+    ax.set_ylabel("Time samples")
+    cbar = fig.colorbar(im, ax=ax, orientation="vertical", pad=0.02)
+    cbar.set_label("Amplitude [dB]")
+    plt.tight_layout()
+    plt.savefig(work_dir / "iq_data.png", dpi=300)
+
     plot_utils.plot_array(
         convert_to_db(b_mode).T,
         vmin=-30,
@@ -508,7 +417,7 @@ def main() -> None:  # noqa: PLR0915
         xlabel="Lateral position (mm)",
         ylabel="Axial position (mm)",
         colorbar=True,
-        export_path="./temp/temp.png",
+        export_path=work_dir / "b_mode.png",
     )
     np.savez(
         work_dir / "simulation_data.npz",

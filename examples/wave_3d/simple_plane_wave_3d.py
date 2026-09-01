@@ -1,4 +1,11 @@
-"""Simple plane wave transmit example."""
+"""Send one plane wave on a three dimensional grid.
+
+The source is one plane of nodes at the top, so the field stays a plane wave until
+it reaches the object.
+
+Run it with:
+    uv run python examples/wave_3d/simple_plane_wave_3d.py
+"""
 
 import logging
 from pathlib import Path
@@ -9,7 +16,7 @@ import fullwave
 from fullwave.utils import plot_utils
 
 
-def main() -> None:  # noqa: PLR0915
+def main() -> None:
     """Run 3D Simple plane wave transmit example."""
     # overwrite the logging level, DEBUG, INFO, WARNING, ERROR
     logging.getLogger("__main__").setLevel(logging.INFO)
@@ -27,8 +34,8 @@ def main() -> None:  # noqa: PLR0915
     f0 = 1e6
     c0 = 1540
     wavelength = c0 / f0
-    domain_size = (10 * wavelength, 10 * wavelength, 10 * wavelength)  # meters
-    duration = domain_size[0] / c0 * 2
+    domain_size = (10 * wavelength, 10 * wavelength, 20 * wavelength)  # meters
+    duration = domain_size[0] / c0 * 1.0
     grid = fullwave.Grid(domain_size, f0, duration, c0=c0)
     grid.print_info()
 
@@ -88,16 +95,15 @@ def main() -> None:  # noqa: PLR0915
     # --- define the acoustic source ---
     #
 
-    # define where to put the pressure source [nx, ny]
+    # define where to put the pressure source [nx, ny, nz].
+    # source_type="soft" needs exactly one row. A thicker source needs the
+    # hard source, source_type="hard", and each row takes its own delay below.
     p_mask = np.zeros((grid.nx, grid.ny, grid.nz), dtype=bool)
-    element_thickness_px = 3
-    p_mask[0:element_thickness_px, :] = True
+    element_thickness_px = 1
+    p_mask[0:element_thickness_px] = True
 
-    # define the pressure source [n_sources, nt]d
-    p0 = np.zeros((p_mask.sum(), grid.nt))  # [n_sources, nt]
-
-    # The order of p_coordinates corresponds to the order of sources in p0
-    # p_coordinates = map_to_coords(p_mask)
+    # define the pressure source [n_sources, nt]
+    p0 = np.zeros((int(p_mask.sum()), grid.nt))
 
     for i_thickness in range(element_thickness_px):
         # create a gaussian-modulated sinusoidal pulse as the source signal with layer delay
@@ -114,9 +120,8 @@ def main() -> None:  # noqa: PLR0915
         )
 
         # assign the source signal to the corresponding layer
-        p0[grid.ny * grid.nz * i_thickness : grid.ny * grid.nz * (i_thickness + 1), :] = (
-            p0_vec.copy()
-        )
+        n_lateral = grid.ny * grid.nz
+        p0[n_lateral * i_thickness : n_lateral * (i_thickness + 1), :] = p0_vec
 
     source = fullwave.Source(p0, p_mask)
 
@@ -136,10 +141,18 @@ def main() -> None:  # noqa: PLR0915
         medium=medium,
         source=source,
         sensor=sensor,
-        run_on_memory=False,
+        run_on_memory=True,
+        save_gpu_memory=True,
+        # save_gpu_memory=False,
+        # use_exponential_attenuation=True,
+        use_exponential_attenuation=False,
+        # verify_gpu=False,
+        # cuda_device_id=list(range(8)),
+        source_type="soft",  # the signal is added to the field, not assigned
     )
     fw_solver.print_info()
-    sensor_output = fw_solver.run()
+    # sensor_output = fw_solver.run(gpu_memory_estimate=True, generate_input_only=True)
+    sensor_output = fw_solver.run(gpu_memory_estimate=True)
 
     #
     # --- visualization ---

@@ -10,6 +10,7 @@ from fullwave import Medium
 from fullwave.constants import MaterialProperties
 from fullwave.grid import Grid
 from fullwave.medium_builder.domain import Domain
+from fullwave.solver.shipped_database import ShippedDatabase
 from fullwave.utils import check_functions
 
 logger = logging.getLogger("__main__." + __name__)
@@ -28,13 +29,12 @@ class MediumBuilder:
         *,
         ignore_non_linearity: bool = False,
         material_properties: MaterialProperties | None = None,
-        path_relaxation_parameters_database: Path = Path(__file__).parent.parent
-        / "solver"
-        / "bins"
-        / "database"
-        / "relaxation_params_database_num_relax=2_20260113_0957.mat",
-        n_relaxation_mechanisms: int = 2,
+        path_relaxation_parameters_database: Path = ShippedDatabase.table,
+        n_relaxation_mechanisms: int = ShippedDatabase.mechanisms,
         attenuation_builder: str = "lookup",
+        sound_speed_transfer: bool = True,
+        band_scale: float = 1.0,
+        scale_to_requested_alpha_coeff: bool = False,
         n_jobs: int = -1,
     ) -> None:
         """Initialize a DomainOrganizer.
@@ -82,6 +82,9 @@ class MediumBuilder:
         self.path_relaxation_parameters_database = path_relaxation_parameters_database
         self.n_relaxation_mechanisms = n_relaxation_mechanisms
         self.attenuation_builder = attenuation_builder
+        self.sound_speed_transfer = sound_speed_transfer
+        self.band_scale = band_scale
+        self.scale_to_requested_alpha_coeff = scale_to_requested_alpha_coeff
         self.n_jobs = n_jobs
 
     def register_domain(self, domain: Domain) -> None:
@@ -193,6 +196,9 @@ class MediumBuilder:
             path_relaxation_parameters_database=self.path_relaxation_parameters_database,
             n_relaxation_mechanisms=self.n_relaxation_mechanisms,
             attenuation_builder=self.attenuation_builder,
+            sound_speed_transfer=self.sound_speed_transfer,
+            band_scale=self.band_scale,
+            scale_to_requested_alpha_coeff=self.scale_to_requested_alpha_coeff,
             n_jobs=self.n_jobs,
         )
 

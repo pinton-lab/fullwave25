@@ -16,7 +16,8 @@ def make_circle_idx(
         cen: The center of the circle.
         rad: The radius of the circle.
 
-    Returns:
+    Returns
+    -------
         mask: The mask of the circle.
 
     """
@@ -32,7 +33,8 @@ def map_to_coords(
 ) -> NDArray[np.int64]:
     """Map the mask map to coordinates.
 
-    Returns:
+    Returns
+    -------
         NDArray[np.int64]: An array of coordinates corresponding to non-zero elements in the mask.
 
     """
@@ -103,7 +105,8 @@ def map_to_coords_with_sort(map_data: NDArray[np.int64]) -> NDArray[np.int64]:
     Args:
         map_data: The mask map.
 
-    Returns:
+    Returns
+    -------
         NDArray[np.int64]: An array of coordinates corresponding to non-zero elements in the mask.
 
     """
@@ -124,7 +127,8 @@ def map_to_coordinates(
         is_3d: Whether the grid is 3D or not.
         sort: Whether to sort the coordinates by the first dimension.
 
-    Returns:
+    Returns
+    -------
         NDArray[np.int64]: An array of coordinates corresponding to non-zero elements in the mask.
 
     """

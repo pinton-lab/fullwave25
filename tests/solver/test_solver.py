@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 import fullwave
+from fullwave.solver.shipped_database import ShippedDatabase
 from fullwave.solver.solver import (
     _check_compatible_set,
     _make_cuda_arch_option,
@@ -197,10 +198,25 @@ def test_retrieve_fullwave_simulation_path_2d_gpu():
             / "bins"
             / "gpu"
             / "2d"
-            / "num_relax=2"
-            / "fullwave2_2d_2_relax_multi_gpu_cuda124"
+            / "fullwave2_2d_n_relax_multi_gpu_cuda124"
         )
         assert result == expected_path
+
+
+def test_the_released_counts_are_three_and_four():
+    """The release calibrates two counts and it serves four without being asked."""
+    assert sorted(ShippedDatabase.stems) == [3, 4]
+    assert ShippedDatabase.default_mechanisms == 4
+    assert ShippedDatabase.mechanisms == 4
+    for mechanisms in ShippedDatabase.stems:
+        assert ShippedDatabase.table_of(mechanisms).exists()
+        assert ShippedDatabase.invalid_cells_of(mechanisms).exists()
+
+
+def test_an_unreleased_count_has_no_shipped_table():
+    """A count the release did not calibrate must be refused by name."""
+    with pytest.raises(KeyError, match="No shipped table for 2"):
+        ShippedDatabase.table_of(2)
 
 
 def test_retrieve_fullwave_simulation_path_3d_gpu():
@@ -222,8 +238,7 @@ def test_retrieve_fullwave_simulation_path_3d_gpu():
             / "bins"
             / "gpu"
             / "3d"
-            / "num_relax=2"
-            / "fullwave2_3d_2_relax_multi_gpu_cuda118"
+            / "fullwave2_3d_n_relax_multi_gpu_cuda118"
         )
         assert result == expected_path
 
@@ -310,8 +325,7 @@ def test_retrieve_fullwave_simulation_path_different_arch_versions():
                 / "bins"
                 / "gpu"
                 / "3d"
-                / "num_relax=2"
-                / f"fullwave2_3d_2_relax_multi_gpu_{version_str}"
+                / f"fullwave2_3d_n_relax_multi_gpu_{version_str}"
             )
             assert result == expected_path
 
@@ -393,25 +407,16 @@ def test_use_isotropic_relaxation(
     import fullwave.solver.solver as sovler_module
     from fullwave.solver import launcher as launcher_module
 
-    fullwave_binary_path = (
-        Path(__file__).parent.parent.parent
-        / "fullwave"
-        / "solver"
-        / "bins"
-        / "gpu"
-        / "2d"
-        / "num_relax=2"
-        / "fullwave2_2d_2_relax_multi_gpu_cuda124"
-    )
+    # A real file, so the resolution never reaches the cache or the network.
+    fullwave_binary_path = tmp_path / "fullwave2_2d_n_relax_multi_gpu_cuda124"
+    fullwave_binary_path.touch()
     monkeypatch.setattr(
         sovler_module,
         "_retrieve_fullwave_simulation_path",
         lambda use_gpu,  # noqa: ARG005
-        is_3d,  # noqa: ARG005# noqa: ARG005
+        is_3d,  # noqa: ARG005
         use_exponential_attenuation,  # noqa: ARG005
-        use_isotropic_relaxation,  # noqa: ARG005
-        n_relax_mechanisms:  # noqa: ARG005
-        fullwave_binary_path,
+        use_isotropic_relaxation: fullwave_binary_path,  # noqa: ARG005
     )
     monkeypatch.setattr(launcher_module.Launcher, "_verify_cuda_devices_exist", lambda x: "0")  # noqa: ARG005
 
@@ -432,3 +437,22 @@ def test_use_isotropic_relaxation(
                 use_isotropic_relaxation_solver=use_isotropic_relaxation_solver,
             )
             mock_logger.warning.assert_not_called()
+
+
+def test_both_dimensions_resolve_to_one_binary_for_every_count():
+    """The count reaches the kernel through `n_relax.dat`, so it is not in the name."""
+    with (
+        patch("fullwave.solver.solver._make_cuda_arch_option", return_value="sm_89"),
+        patch("fullwave.solver.solver._make_cuda_version_option", return_value=("cuda124", 12.4)),
+        patch("fullwave.solver.solver._check_compatible_set", return_value=True),
+    ):
+        for is_3d, expected in (
+            (False, "fullwave2_2d_n_relax_multi_gpu_cuda124"),
+            (True, "fullwave2_3d_n_relax_multi_gpu_cuda124"),
+        ):
+            resolved = _retrieve_fullwave_simulation_path(
+                use_gpu=True,
+                is_3d=is_3d,
+                use_isotropic_relaxation=True,
+            )
+            assert resolved.name == expected

@@ -1,4 +1,11 @@
-"""Simple plane wave transmit example."""
+"""Read one time step and one sensor out of a result file, without loading it all.
+
+`Solver.run(load_results=False)` returns the path of the result file. The two
+readers below take one slice of it at a time, which a large run needs.
+
+Run it with:
+    uv run python examples/simple_plane_wave/simple_plane_wave_slice_load.py
+"""
 
 import logging
 from pathlib import Path
@@ -19,7 +26,7 @@ def main() -> None:
     #
     # define the working directory
     #
-    work_dir = Path("./outputs/") / "simple_plane_wave"
+    work_dir = Path("./outputs/") / "simple_plane_wave_slice_load"
     work_dir.mkdir(parents=True, exist_ok=True)
 
     #
@@ -145,6 +152,7 @@ def main() -> None:
     propagation_map = sensor_output.reshape(grid.shape)
     plot_utils.plot_array(
         propagation_map,
+        export_path=work_dir / "pressure_at_time_step_100.png",
     )
 
     # Alternatively, we can load the data at a specific sensor index
@@ -158,6 +166,7 @@ def main() -> None:
     # we can plot the time series data directly
     plot_utils.plot_1d_array(
         sensor_output,
+        export_path=work_dir / "trace_of_sensor_10.png",
     )
 
 

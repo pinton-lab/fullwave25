@@ -1,4 +1,13 @@
-"""Simple plane wave transmit example."""
+"""Send one plane wave from an additive source.
+
+An additive source adds its signal to the pressure of its own nodes, so what it
+radiates depends on the time step. `Source.additive` applies the scale that makes
+the row radiate the pressure it is given. One row is enough, because an additive
+source needs no thickness.
+
+Run it with:
+    uv run python examples/simple_plane_wave/simple_plane_wave_additive_source.py
+"""
 
 import logging
 from pathlib import Path
@@ -11,14 +20,14 @@ from fullwave.utils.coordinates import map_to_coords
 
 
 def main() -> None:
-    """Run Simple plane wave transmit example."""
+    """Run one plane wave transmit from an additive source."""
     # overwrite the logging level, DEBUG, INFO, WARNING, ERROR
     logging.getLogger("__main__").setLevel(logging.INFO)
 
     #
     # define the working directory
     #
-    work_dir = Path("./outputs/") / "simple_plane_wave"
+    work_dir = Path("./outputs/") / "simple_plane_wave_additive_source"
     work_dir.mkdir(parents=True, exist_ok=True)
 
     #
@@ -72,39 +81,27 @@ def main() -> None:
     # --- define the acoustic source ---
     #
 
-    ncycles = 2
-    drop_off = 2
-
-    # initialize the pressure source mask
+    # an additive source needs one row, so no layer delay is needed either
     p_mask = np.zeros((grid.nx, grid.ny), dtype=bool)
+    p_mask[0, :] = True
+    p_coordinates = map_to_coords(p_mask)
 
-    # set the source location at the top rows of the grid with specified thickness
-    element_thickness_px = 3
-    p_mask[0:element_thickness_px, :] = True
-
-    # tail_length = int((ncycles + drop_off) / f0 * (1 / grid.dt)) + delay_max_steps
-
-    p_additive_mask = np.zeros((grid.nx, grid.ny), dtype=bool)
-    p_additive_mask[::20, ::20] = True  # every 10th point in both directions
-    p0_additive = np.zeros((p_additive_mask.sum(), grid.nt))  # [n_sources_add, nt]
     p0_vec = fullwave.utils.pulse.gaussian_modulated_sinusoidal_signal(
         nt=grid.nt,  # number of time steps
         f0=f0,  # center frequency [Hz]
         duration=duration,  # duration [s]
-        ncycles=ncycles,  # number of cycles
-        drop_off=drop_off,  # drop off factor
-        p0=1e4,  # maximum amplitude [Pa]
+        ncycles=2,  # number of cycles
+        drop_off=2,  # drop off factor
+        p0=1e5,  # the pressure the row radiates [Pa]
     )
-    p0_additive[:, :] = p0_vec
+    p0 = np.tile(p0_vec, (p_coordinates.shape[0], 1))
 
-    # setup the Source instance
-    source = fullwave.Source(
-        p0=None,
-        mask=None,
-        p0_additive=p0_additive,
-        # mask_additive=p_additive_mask,
-        coords_additive=map_to_coords(p_additive_mask),
+    # Source.additive applies the 2 c dt / dx scale, which Source(p0_additive=...) does not.
+    source = fullwave.Source.additive(
+        p0=p0,
+        coords=p_coordinates,
         grid_shape=grid.shape,
+        grid=grid,
     )
 
     #
@@ -126,10 +123,8 @@ def main() -> None:
         medium=medium,
         source=source,
         sensor=sensor,
-        run_on_memory=False,
+        run_on_memory=True,
     )
-    # fw_solver.summary()
-    # execute the solver
     sensor_output = fw_solver.run()
 
     #

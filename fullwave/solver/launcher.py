@@ -31,6 +31,7 @@ class Launcher:
         use_gpu: bool = True,
         cuda_device_id: str | int | list | None = None,
         save_gpu_memory: bool = False,
+        verify_gpu: bool = True,
     ) -> None:
         """Initialize a FullwaveLauncher instance.
 
@@ -62,6 +63,11 @@ class Launcher:
             depending on the hardware and the simulation settings.
             useful in 3D simulations with large grid sizes
             where GPU memory is a limiting factor.
+        verify_gpu : bool, optional
+            Whether to verify that the specified CUDA devices exist on the system.
+            Defaults to True. Set to False when generating input files only
+            (``generate_input_only=True``) on a machine that may not have
+            the target GPUs available.
 
         """
         self._path_fullwave_simulation_bin = path_fullwave_simulation_bin
@@ -69,7 +75,10 @@ class Launcher:
         assert self._path_fullwave_simulation_bin.exists(), error_msg
         self.is_3d = is_3d
         self.use_gpu = use_gpu
-        self.cuda_device_id = self._configure_cuda_device_id(cuda_device_id)
+        self.cuda_device_id = self._configure_cuda_device_id(
+            cuda_device_id,
+            verify_gpu=verify_gpu,
+        )
         self.save_gpu_memory = save_gpu_memory
         logger.debug("Launcher instance created.")
 
@@ -152,13 +161,20 @@ class Launcher:
                 raise ValueError(message)
 
     @staticmethod
-    def _configure_cuda_device_id(cuda_device_id: str | int | list | None) -> str:
+    def _configure_cuda_device_id(
+        cuda_device_id: str | int | list | None,
+        *,
+        verify_gpu: bool = True,
+    ) -> str:
         """Verify and assign the CUDA device ID.
 
         Parameters
         ----------
         cuda_device_id : str | int | None
             The CUDA device ID to verify and assign.
+        verify_gpu : bool, optional
+            Whether to verify that the specified CUDA devices exist.
+            Defaults to True.
 
         Returns
         -------
@@ -167,7 +183,8 @@ class Launcher:
 
         """
         output = Launcher._parse_cuda_device_id(cuda_device_id)
-        Launcher._verify_cuda_devices_exist(output)
+        if verify_gpu:
+            Launcher._verify_cuda_devices_exist(output)
         return output
 
     def run(
