@@ -615,3 +615,162 @@ def test_dc_map_optimized_matches_original(c_map):
     original = _dc_map_original(c_map)
     optimized = _dc_map_optimized(c_map)
     np.testing.assert_array_equal(original, optimized)
+
+
+def _isotropic_medium(mechanisms: int, *, constrained: bool = True):
+    """Return a dummy medium carrying one isotropic relaxation map of each name.
+
+    Parameters
+    ----------
+    mechanisms : int
+        How many relaxation mechanisms the medium carries.
+    constrained : bool
+        Whether the impedance constraint holds on the maps.
+
+    Returns
+    -------
+    SimpleNamespace
+        The dummy medium.
+
+    """
+    shape = (4, 4)
+    maps = {
+        "kappa_x": np.ones(shape, dtype=np.float64),
+        "kappa_u": np.full(shape, 1.5, dtype=np.float64),
+    }
+    for nu in range(1, mechanisms + 1):
+        maps[f"a_pml_u{nu}"] = np.full(shape, 0.25, dtype=np.float64)
+        maps[f"b_pml_u{nu}"] = np.full(shape, 0.75, dtype=np.float64)
+        maps[f"a_pml_x{nu}"] = np.zeros(shape, dtype=np.float64)
+        maps[f"b_pml_x{nu}"] = np.ones(shape, dtype=np.float64)
+    maps["a_pml_x1"] = np.full(shape, 0.5, dtype=np.float64)
+    if not constrained:
+        maps["kappa_x"][0, 0] = 1.25
+        if mechanisms > 1:
+            maps["a_pml_x2"][1, 1] = 0.5
+
+    _, medium, _, _ = create_dummy_objects()
+    medium.relaxation_param_dict_for_fw2 = maps
+    medium.n_relaxation_mechanisms = mechanisms
+    return medium
+
+
+def _run_isotropic_writer(
+    work_and_bin,
+    monkeypatch,
+    medium,
+    *,
+    sim_dir_name: str,
+    write_maps_the_solver_does_not_read: bool | None = None,
+) -> Path:
+    """Run the writer on the isotropic relaxation path and return its directory.
+
+    Parameters
+    ----------
+    work_and_bin : tuple[Path, Path]
+        The work directory and the fake binary.
+    monkeypatch : pytest.MonkeyPatch
+        The pytest monkeypatch fixture.
+    medium : SimpleNamespace
+        The dummy medium to write.
+    sim_dir_name : str
+        The name of the simulation directory.
+    write_maps_the_solver_does_not_read : bool | None
+        Whether to write the momentum maps the solver never reads. None leaves
+        the writer on its own default.
+
+    Returns
+    -------
+    Path
+        The simulation directory.
+
+    """
+    work_dir, bin_file = work_and_bin
+    grid, _, source, sensor = create_dummy_objects()
+    monkeypatch.setattr(check_functions, "check_path_exists", lambda x: None)  # noqa: ARG005
+    monkeypatch.setattr(check_functions, "check_instance", lambda inst, cls: None)  # noqa: ARG005
+
+    optional = (
+        {}
+        if write_maps_the_solver_does_not_read is None
+        else {"write_maps_the_solver_does_not_read": write_maps_the_solver_does_not_read}
+    )
+    writer = InputFileWriter(
+        work_dir,
+        grid,
+        medium,
+        source,
+        sensor,
+        path_fullwave_simulation_bin=bin_file,
+        validate_input=False,
+        use_isotropic_relaxation=True,
+        **optional,
+    )
+    return Path(writer.run(sim_dir_name, is_static_map=False, recalculate_pml=True))
+
+
+class TestTheMapsTheSolverDoesNotRead:
+    """The writer states the impedance constraint and can skip seven maps."""
+
+    def test_the_record_is_written_on_the_relaxation_path(self, work_and_bin, monkeypatch):
+        sim_path = _run_isotropic_writer(
+            work_and_bin,
+            monkeypatch,
+            _isotropic_medium(4),
+            write_maps_the_solver_does_not_read=True,
+            sim_dir_name="sim_record",
+        )
+        record = np.fromfile(sim_path / "impedance_constraint.dat", dtype=np.float32)
+        assert record.size == 3
+        assert int(record[0]) == 4
+        assert record[1] == 0.0
+        assert record[2] == 0.0
+
+    def test_the_switch_writes_every_map(self, work_and_bin, monkeypatch):
+        sim_path = _run_isotropic_writer(
+            work_and_bin,
+            monkeypatch,
+            _isotropic_medium(4),
+            write_maps_the_solver_does_not_read=True,
+            sim_dir_name="sim_all",
+        )
+        for name in ("kappax", "apmlx2", "apmlx3", "apmlx4", "bpmlx2", "bpmlx3", "bpmlx4"):
+            assert (sim_path / f"{name}.dat").exists(), name
+
+    def test_the_default_skips_seven_maps_at_four_mechanisms(self, work_and_bin, monkeypatch):
+        sim_path = _run_isotropic_writer(
+            work_and_bin,
+            monkeypatch,
+            _isotropic_medium(4),
+            sim_dir_name="sim_default",
+        )
+        for name in ("kappax", "apmlx2", "apmlx3", "apmlx4", "bpmlx2", "bpmlx3", "bpmlx4"):
+            assert not (sim_path / f"{name}.dat").exists(), name
+        assert (sim_path / "impedance_constraint.dat").exists()
+
+    def test_the_switch_skips_seven_maps_at_four_mechanisms(self, work_and_bin, monkeypatch):
+        sim_path = _run_isotropic_writer(
+            work_and_bin,
+            monkeypatch,
+            _isotropic_medium(4),
+            write_maps_the_solver_does_not_read=False,
+            sim_dir_name="sim_skipped",
+        )
+        for name in ("kappax", "apmlx2", "apmlx3", "apmlx4", "bpmlx2", "bpmlx3", "bpmlx4"):
+            assert not (sim_path / f"{name}.dat").exists(), name
+        for name in ("kappau", "apmlx1", "bpmlx1", "apmlu1", "bpmlu1", "apmlu4", "bpmlu4"):
+            assert (sim_path / f"{name}.dat").exists(), name
+        assert (sim_path / "impedance_constraint.dat").exists()
+
+    def test_the_record_states_a_medium_that_breaks_the_constraint(self, work_and_bin, monkeypatch):
+        sim_path = _run_isotropic_writer(
+            work_and_bin,
+            monkeypatch,
+            _isotropic_medium(2, constrained=False),
+            write_maps_the_solver_does_not_read=True,
+            sim_dir_name="sim_free",
+        )
+        record = np.fromfile(sim_path / "impedance_constraint.dat", dtype=np.float32)
+        assert int(record[0]) == 2
+        assert record[1] == pytest.approx(0.25)
+        assert record[2] == pytest.approx(0.5)

@@ -352,6 +352,7 @@ class Solver:
         use_gpu_pml: bool = False,
         pml_alpha_entrance: float | None = None,
         source_type: str = HARD,
+        write_maps_the_solver_does_not_read: bool = False,
     ) -> None:
         """Initialize a Solver instance for the fullwave simulation.
 
@@ -467,6 +468,16 @@ class Solver:
             Defaults to True. Set to False when generating input files only
             (``generate_input_only=True``) on a machine that may not have
             the target GPUs available.
+        write_maps_the_solver_does_not_read : bool, optional
+            Whether to write the momentum operator maps the n-relaxation solver
+            never reads, which are kappax and, above the first mechanism, apmlx
+            and bpmlx. False, the default, skips them and saves one map plus two
+            for each mechanism above the first, which is 7 of 18 maps at 4
+            mechanisms. The record they are replaced by is
+            impedance_constraint.dat, and the writer always writes it on the
+            relaxation path. Set it to True for a solver binary that predates
+            that record. Such a binary stops with an error on kappax.dat rather
+            than returning a wrong answer.
 
         Raises
         ------
@@ -538,6 +549,7 @@ class Solver:
         self.use_gpu = use_gpu
         self.use_exponential_attenuation = use_exponential_attenuation
         self.use_isotropic_relaxation = use_isotropic_relaxation
+        self.write_maps_the_solver_does_not_read = write_maps_the_solver_does_not_read
 
         self.n_relax_mechanisms = medium.n_relaxation_mechanisms
 
@@ -1089,6 +1101,7 @@ class Solver:
             exponential_attenuation_pml_thickness_px=exponential_attenuation_pml_thickness_px,
             exponential_attenuation_pml_interior_offset_px=interior_offset,
             use_gpu=self.use_gpu_pml,
+            write_maps_the_solver_does_not_read=self.write_maps_the_solver_does_not_read,
         )
         simulation_dir = input_file_writer.run(
             simulation_dir_name,

@@ -16,6 +16,28 @@ from fullwave.utils.numerical import matlab_round
 logger = logging.getLogger("__main__." + __name__)
 
 
+def _as_written_float32(variable_mat: np.ndarray) -> NDArray[np.float32]:
+    """Return a map as the float32 the solver reads from its file.
+
+    Parameters
+    ----------
+    variable_mat : np.ndarray
+        The map, on the host or on the accelerator.
+
+    Returns
+    -------
+    NDArray[np.float32]
+        The same map, cast the way `_write_matrix` casts it.
+
+    """
+    if not isinstance(variable_mat, np.ndarray):
+        try:
+            variable_mat = variable_mat.get()
+        except AttributeError:
+            variable_mat = np.asarray(variable_mat)
+    return np.ascontiguousarray(variable_mat, dtype=np.float32)
+
+
 class InputFileWriter:
     """Base class for Fullwave input data generation.
 
@@ -40,6 +62,7 @@ class InputFileWriter:
         exponential_attenuation_pml_thickness_px: int = 0,
         exponential_attenuation_pml_interior_offset_px: int = 0,
         use_gpu: bool = False,
+        write_maps_the_solver_does_not_read: bool = False,
     ) -> None:
         """Initialize the InputGeneratorBase instance.
 
@@ -92,6 +115,13 @@ class InputFileWriter:
             pml_thickness carries the sparse recording window, which is 0 for
             a whole domain recording while the interior still starts where it
             always did.
+        write_maps_the_solver_does_not_read : bool, optional
+            Whether to write the momentum operator maps the n-relaxation solver
+            never reads, which are kappax and, above the first mechanism, apmlx
+            and bpmlx. False, the default, skips them. True writes them all,
+            which an older solver binary needs. The record the skipped maps
+            replace is impedance_constraint.dat, and this writer always writes it
+            on the relaxation path.
 
         """
         logger.debug("Initializing InputFileWriter instance.")
@@ -99,6 +129,7 @@ class InputFileWriter:
         self._work_dir = Path(work_dir)
         self.path_fullwave_simulation_bin = path_fullwave_simulation_bin
         self.use_isotropic_relaxation = use_isotropic_relaxation
+        self.write_maps_the_solver_does_not_read = write_maps_the_solver_does_not_read
         self.use_gpu = use_gpu
 
         if validate_input:
@@ -1024,15 +1055,17 @@ class InputFileWriter:
 
         if self.use_isotropic_relaxation:
             rename_dict = {
-                "kappa_x": "kappax",
                 "kappa_u": "kappau",
             }
+            if self.write_maps_the_solver_does_not_read:
+                rename_dict["kappa_x"] = "kappax"
 
             for nu in range(1, self.medium.n_relaxation_mechanisms + 1):
                 rename_dict[f"a_pml_u{nu}"] = f"apmlu{nu}"
                 rename_dict[f"b_pml_u{nu}"] = f"bpmlu{nu}"
-                rename_dict[f"a_pml_x{nu}"] = f"apmlx{nu}"
-                rename_dict[f"b_pml_x{nu}"] = f"bpmlx{nu}"
+                if nu == 1 or self.write_maps_the_solver_does_not_read:
+                    rename_dict[f"a_pml_x{nu}"] = f"apmlx{nu}"
+                    rename_dict[f"b_pml_x{nu}"] = f"bpmlx{nu}"
         else:
             rename_dict = {
                 "kappa_x": "kappax",
@@ -1070,12 +1103,64 @@ class InputFileWriter:
             self.medium.n_relaxation_mechanisms,
         )
 
+        if self.use_isotropic_relaxation:
+            self._save_impedance_constraint_record(
+                simulation_dir,
+                relaxation_param_map_dict_for_fw2,
+            )
+
         # save relaxation params
         for var_name, var in relaxation_param_map_dict_for_fw2.items():
             if var_name in rename_dict:
                 var_name_fw2 = rename_dict[var_name]
                 save_path = simulation_dir / f"{var_name_fw2}.dat"
                 self._queue_matrix_write(var_type=np.float32, save_path=save_path, variable_mat=var)
+
+    def _save_impedance_constraint_record(
+        self,
+        simulation_dir: Path,
+        relaxation_param_map_dict_for_fw2: dict[str, NDArray[np.float64]],
+    ) -> None:
+        """Write the three values the n-relaxation solver reads instead of two maps.
+
+        The impedance constraint holds the momentum stretching function at the
+        identity, so kappa_x is 1 at every cell and a_pml_x above the first
+        mechanism is 0 at every cell. The solver refuses a medium that does not
+        carry both. Each extreme is measured on the float32 the solver reads, so
+        the reading is exactly the comparison the solver makes cell by cell.
+
+        Parameters
+        ----------
+        simulation_dir : Path
+            Where the record is written.
+        relaxation_param_map_dict_for_fw2 : dict[str, NDArray[np.float64]]
+            Every relaxation coefficient map the medium carries.
+
+        """
+        kappa_x = _as_written_float32(relaxation_param_map_dict_for_fw2["kappa_x"])
+        largest_kappa_x_error = float(np.abs(kappa_x - np.float32(1.0)).max())
+
+        largest_a_pml_x_above_first = 0.0
+        for nu in range(2, self.medium.n_relaxation_mechanisms + 1):
+            a_pml_x = _as_written_float32(relaxation_param_map_dict_for_fw2[f"a_pml_x{nu}"])
+            largest_a_pml_x_above_first = max(
+                largest_a_pml_x_above_first,
+                float(np.abs(a_pml_x).max()),
+            )
+
+        record = np.array(
+            [
+                self.medium.n_relaxation_mechanisms,
+                largest_kappa_x_error,
+                largest_a_pml_x_above_first,
+            ],
+            dtype=np.float32,
+        )
+        self._queue_matrix_write(
+            var_type=np.float32,
+            save_path=simulation_dir / "impedance_constraint.dat",
+            variable_mat=record,
+        )
 
     def _save_variables_into_dat_file_exponential_attenuation(
         self,
@@ -1138,6 +1223,7 @@ class InputFileWriter:
             "dcmap",
             "kappax",
             "kappau",
+            "impedance_constraint",
         ]
         mechanisms = range(1, self.medium.n_relaxation_mechanisms + 1)
         for nu in mechanisms:
