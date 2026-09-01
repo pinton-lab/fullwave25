@@ -1,13 +1,11 @@
-"""Demonstrate the built-in signal filter (no GPU / no simulation required).
+"""Show what the signal filter does, on a trace made by hand.
 
-This script:
-  1. Builds a synthetic sensor trace that mimics typical PML drift artefacts:
-     a slow DC ramp + a 3 MHz ultrasound pulse buried in broadband noise.
-  2. Applies a high-pass filter (0.5 MHz) to remove the drift.
-  3. Applies a band-pass filter (1-5 MHz) to isolate the ultrasound band.
-  4. Plots the time traces and their amplitude spectra side-by-side.
+The example needs no accelerator, because it runs no simulation. It builds a
+trace that carries a slow drift, a 3 MHz pulse and broadband noise. A high pass
+filter at 0.5 MHz removes the drift, and a band pass filter from 1 to 5 MHz keeps
+the pulse alone. It plots each trace and its amplitude spectrum.
 
-Run with:
+Run it with:
     uv run python examples/signal_filter/signal_filter_example.py
 """
 

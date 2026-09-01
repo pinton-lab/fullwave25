@@ -82,13 +82,20 @@ def test_lookup_table_wrong_shape(monkeypatch):
 
     alpha_coeff = np.array([[0.5]], dtype=np.float64)
     alpha_power = np.array([[0.5]], dtype=np.float64)
-    with pytest.raises(ValueError, match="4 \\* n_relaxation_mechanisms \\+ 2 columns"):
+    # The message must name the table, the count it holds and the count asked
+    # for, because the column count alone does not say which of the two is
+    # wrong.
+    with pytest.raises(ValueError, match="holds 17 columns") as raised:
         generate_relaxation_params(
             alpha_coeff,
             alpha_power,
             n_relaxation_mechanisms=4,
             path_database=db_path,
         )
+    said = str(raised.value)
+    assert str(db_path) in said, "the message must name the table"
+    assert "asked for 4" in said, "the message must name the count asked for"
+    assert "needs 18" in said, "the message must name the count that table needs"
     db_path.unlink()
 
 

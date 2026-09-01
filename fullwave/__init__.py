@@ -9,7 +9,8 @@ from .grid import Grid
 from .medium import Medium, MediumExponentialAttenuation, MediumRelaxationMaps
 from .sensor import Sensor
 from .source import Source
-from .transducer import Transducer, TransducerGeometry
+from .transducer import Transducer, TransducerGeometry, TransducerStack
+from .transmit import Pulse
 
 from .medium_builder import presets  # isort:skip
 
@@ -35,11 +36,13 @@ __all__ = [
     "MediumBuilder",
     "MediumExponentialAttenuation",
     "MediumRelaxationMaps",
+    "Pulse",
     "Sensor",
     "Solver",
     "Source",
     "Transducer",
     "TransducerGeometry",
+    "TransducerStack",
     "presets",
     "utils",
 ]
@@ -60,7 +63,7 @@ try:
     __version__ = version("fullwave")
 except PackageNotFoundError:
     # Update via bump-my-version, not manually
-    __version__ = "1.2.6-dev8"
+    __version__ = "1.2.6-dev9"
 
 VERSION = __version__  # for convenience
 logger.info("Fullwave version: %s", __version__)

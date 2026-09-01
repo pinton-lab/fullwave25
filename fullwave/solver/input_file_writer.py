@@ -16,6 +16,28 @@ from fullwave.utils.numerical import matlab_round
 logger = logging.getLogger("__main__." + __name__)
 
 
+def _as_written_float32(variable_mat: np.ndarray) -> NDArray[np.float32]:
+    """Return a map as the float32 the solver reads from its file.
+
+    Parameters
+    ----------
+    variable_mat : np.ndarray
+        The map, on the host or on the accelerator.
+
+    Returns
+    -------
+    NDArray[np.float32]
+        The same map, cast the way `_write_matrix` casts it.
+
+    """
+    if not isinstance(variable_mat, np.ndarray):
+        try:
+            variable_mat = variable_mat.get()
+        except AttributeError:
+            variable_mat = np.asarray(variable_mat)
+    return np.ascontiguousarray(variable_mat, dtype=np.float32)
+
+
 class InputFileWriter:
     """Base class for Fullwave input data generation.
 
@@ -37,7 +59,10 @@ class InputFileWriter:
         use_isotropic_relaxation: bool = False,
         release_after_write: bool = False,
         pml_thickness: int = 0,
+        exponential_attenuation_pml_thickness_px: int = 0,
+        exponential_attenuation_pml_interior_offset_px: int = 0,
         use_gpu: bool = False,
+        write_maps_the_solver_does_not_read: bool = False,
     ) -> None:
         """Initialize the InputGeneratorBase instance.
 
@@ -80,6 +105,23 @@ class InputFileWriter:
             PML boundary thickness in grid points (n_pml_layer + n_transition_layer).
             Required by the solver binary when using sparse grid (mod_x/mod_y != 0) to determine
             the interior domain boundaries. Also written when mod_x == 0 for future use.
+        exponential_attenuation_pml_thickness_px : int, optional
+            Thickness of the C-PML absorbing layer in grid points.
+            0, the default, writes no file, and the solver then places no layer.
+        exponential_attenuation_pml_interior_offset_px : int, optional
+            Where the interior starts, counted from the last ghost cell.
+            The layer needs it to place its inner face, and it is written
+            only with the thickness above. It is a second value because
+            pml_thickness carries the sparse recording window, which is 0 for
+            a whole domain recording while the interior still starts where it
+            always did.
+        write_maps_the_solver_does_not_read : bool, optional
+            Whether to write the momentum operator maps the n-relaxation solver
+            never reads, which are kappax and, above the first mechanism, apmlx
+            and bpmlx. False, the default, skips them. True writes them all,
+            which an older solver binary needs. The record the skipped maps
+            replace is impedance_constraint.dat, and this writer always writes it
+            on the relaxation path.
 
         """
         logger.debug("Initializing InputFileWriter instance.")
@@ -87,6 +129,7 @@ class InputFileWriter:
         self._work_dir = Path(work_dir)
         self.path_fullwave_simulation_bin = path_fullwave_simulation_bin
         self.use_isotropic_relaxation = use_isotropic_relaxation
+        self.write_maps_the_solver_does_not_read = write_maps_the_solver_does_not_read
         self.use_gpu = use_gpu
 
         if validate_input:
@@ -107,6 +150,10 @@ class InputFileWriter:
         self.use_exponential_attenuation = use_exponential_attenuation
         self.release_after_write = release_after_write
         self.pml_thickness = pml_thickness
+        self.exponential_attenuation_pml_thickness_px = exponential_attenuation_pml_thickness_px
+        self.exponential_attenuation_pml_interior_offset_px = (
+            exponential_attenuation_pml_interior_offset_px
+        )
 
         self._precomputed_bulk_modulus: NDArray[np.float32] | None = None
 
@@ -1008,15 +1055,17 @@ class InputFileWriter:
 
         if self.use_isotropic_relaxation:
             rename_dict = {
-                "kappa_x": "kappax",
                 "kappa_u": "kappau",
             }
+            if self.write_maps_the_solver_does_not_read:
+                rename_dict["kappa_x"] = "kappax"
 
             for nu in range(1, self.medium.n_relaxation_mechanisms + 1):
                 rename_dict[f"a_pml_u{nu}"] = f"apmlu{nu}"
                 rename_dict[f"b_pml_u{nu}"] = f"bpmlu{nu}"
-                rename_dict[f"a_pml_x{nu}"] = f"apmlx{nu}"
-                rename_dict[f"b_pml_x{nu}"] = f"bpmlx{nu}"
+                if nu == 1 or self.write_maps_the_solver_does_not_read:
+                    rename_dict[f"a_pml_x{nu}"] = f"apmlx{nu}"
+                    rename_dict[f"b_pml_x{nu}"] = f"bpmlx{nu}"
         else:
             rename_dict = {
                 "kappa_x": "kappax",
@@ -1047,12 +1096,71 @@ class InputFileWriter:
                     rename_dict[f"a_pml_v{nu}"] = f"apmlv{nu}"
                     rename_dict[f"b_pml_v{nu}"] = f"bpmlv{nu}"
 
+        # the n_relax kernel reads the mechanism count from this file
+        self._queue_v_abs_write(
+            np.int32,
+            simulation_dir / "n_relax.dat",
+            self.medium.n_relaxation_mechanisms,
+        )
+
+        if self.use_isotropic_relaxation:
+            self._save_impedance_constraint_record(
+                simulation_dir,
+                relaxation_param_map_dict_for_fw2,
+            )
+
         # save relaxation params
         for var_name, var in relaxation_param_map_dict_for_fw2.items():
             if var_name in rename_dict:
                 var_name_fw2 = rename_dict[var_name]
                 save_path = simulation_dir / f"{var_name_fw2}.dat"
                 self._queue_matrix_write(var_type=np.float32, save_path=save_path, variable_mat=var)
+
+    def _save_impedance_constraint_record(
+        self,
+        simulation_dir: Path,
+        relaxation_param_map_dict_for_fw2: dict[str, NDArray[np.float64]],
+    ) -> None:
+        """Write the three values the n-relaxation solver reads instead of two maps.
+
+        The impedance constraint holds the momentum stretching function at the
+        identity, so kappa_x is 1 at every cell and a_pml_x above the first
+        mechanism is 0 at every cell. The solver refuses a medium that does not
+        carry both. Each extreme is measured on the float32 the solver reads, so
+        the reading is exactly the comparison the solver makes cell by cell.
+
+        Parameters
+        ----------
+        simulation_dir : Path
+            Where the record is written.
+        relaxation_param_map_dict_for_fw2 : dict[str, NDArray[np.float64]]
+            Every relaxation coefficient map the medium carries.
+
+        """
+        kappa_x = _as_written_float32(relaxation_param_map_dict_for_fw2["kappa_x"])
+        largest_kappa_x_error = float(np.abs(kappa_x - np.float32(1.0)).max())
+
+        largest_a_pml_x_above_first = 0.0
+        for nu in range(2, self.medium.n_relaxation_mechanisms + 1):
+            a_pml_x = _as_written_float32(relaxation_param_map_dict_for_fw2[f"a_pml_x{nu}"])
+            largest_a_pml_x_above_first = max(
+                largest_a_pml_x_above_first,
+                float(np.abs(a_pml_x).max()),
+            )
+
+        record = np.array(
+            [
+                self.medium.n_relaxation_mechanisms,
+                largest_kappa_x_error,
+                largest_a_pml_x_above_first,
+            ],
+            dtype=np.float32,
+        )
+        self._queue_matrix_write(
+            var_type=np.float32,
+            save_path=simulation_dir / "impedance_constraint.dat",
+            variable_mat=record,
+        )
 
     def _save_variables_into_dat_file_exponential_attenuation(
         self,
@@ -1095,6 +1203,10 @@ class InputFileWriter:
             "nX",
             "nT",
             "ncoords",
+            "ncoords_add",
+            "ncoords_u",
+            "ncoords_v",
+            "ncoords_w",
             "ncoordsout",
             "ncoordszero",
             "nTic",
@@ -1102,60 +1214,30 @@ class InputFileWriter:
             "modX",
             "modY",
             "pml_thickness",
+            "exponential_attenuation_pml_thickness",
+            "exponential_attenuation_pml_interior_offset",
+            "n_relax",
             "d",
             "dmap",
             "ndmap",
             "dcmap",
             "kappax",
             "kappau",
-            "apmlu1",
-            "bpmlu1",
-            "apmlx1",
-            "bpmlx1",
-            "apmlu2",
-            "bpmlu2",
-            "apmlx2",
-            "bpmlx2",
+            "impedance_constraint",
         ]
+        mechanisms = range(1, self.medium.n_relaxation_mechanisms + 1)
+        for nu in mechanisms:
+            var_name_list.extend([f"apmlu{nu}", f"bpmlu{nu}", f"apmlx{nu}", f"bpmlx{nu}"])
         if not self.use_isotropic_relaxation:
-            var_name_list.extend(
-                [
-                    "kappay",
-                    "kappaw",
-                    # --
-                    "apmlw1",
-                    "apmly1",
-                    "bpmlw1",
-                    "bpmly1",
-                    # --
-                    "apmlw2",
-                    "apmly2",
-                    "bpmlw2",
-                    "bpmly2",
-                ],
-            )
+            var_name_list.extend(["kappay", "kappaw"])
+            for nu in mechanisms:
+                var_name_list.extend([f"apmlw{nu}", f"apmly{nu}", f"bpmlw{nu}", f"bpmly{nu}"])
         if self.is_3d:
             var_name_list.append("modZ")
         if self.is_3d and not self.use_isotropic_relaxation:
-            var_name_list.extend(
-                [
-                    "nZ",
-                    "dZ",
-                    # --
-                    "kappaz",
-                    "kappav",
-                    # --
-                    "apmlz1",
-                    "apmlv1",
-                    "bpmlz1",
-                    "bpmlv1",
-                    # --
-                    "apmlz2",
-                    "apmlv2",
-                    "bpmlz2",
-                    "bpmlv2",
-                ],
-            )
+            var_name_list.extend(["nZ", "dZ", "kappaz", "kappav"])
+            for nu in mechanisms:
+                var_name_list.extend([f"apmlz{nu}", f"apmlv{nu}", f"bpmlz{nu}", f"bpmlv{nu}"])
         for var_name in var_name_list:
             src_data = src_dir / f"{var_name}.dat"
             dst_data = dst_dir / f"{var_name}.dat"
@@ -1263,20 +1345,41 @@ class InputFileWriter:
             self._queue_v_abs_write(np.int32, save_path, var)
 
     def _save_sparse_grid_params(self, simulation_dir: Path) -> None:
-        """Write sparse-grid parameters when the sensor is in sparse-grid mode.
+        """Write the sparse-grid strides, and where the interior starts.
 
-        modX / modY / modZ and pml_thickness are only written when the sensor
-        was constructed with mod_x/mod_y (i.e. sensor.is_sparse_grid is True).
-        In standard coordinate/mask mode these files are not produced, preserving
-        backward compatibility with older binaries that do not expect them.
+        modX / modY / modZ are written only when the sensor was constructed with
+        mod_x/mod_y, that is when ``sensor.is_sparse_grid`` is True. In standard
+        coordinate or mask mode those files are not produced, which keeps older
+        binaries working.
+
+        ``pml_thickness.dat`` is written either way. It says where the interior
+        starts, which is true of every run and not only of a sparse one, and a
+        solver that places an absorbing layer needs it. Every shipped binary
+        reads it behind a file-exists guard, and outside the sparse path no
+        binary uses the value, so writing it changes no existing result.
+
+        The C-PML absorbing layer carries its own two files, and both are
+        written only when the layer is on. A binary that finds no thickness
+        file places no layer, so an existing run is unchanged.
         """
+        self._queue_v_abs_write(np.int32, simulation_dir / "pml_thickness.dat", self.pml_thickness)
+        if self.exponential_attenuation_pml_thickness_px > 0:
+            self._queue_v_abs_write(
+                np.int32,
+                simulation_dir / "exponential_attenuation_pml_thickness.dat",
+                self.exponential_attenuation_pml_thickness_px,
+            )
+            self._queue_v_abs_write(
+                np.int32,
+                simulation_dir / "exponential_attenuation_pml_interior_offset.dat",
+                self.exponential_attenuation_pml_interior_offset_px,
+            )
         if not self.sensor.is_sparse_grid:
             return
         self._queue_v_abs_write(np.int32, simulation_dir / "modX.dat", self.sensor.mod_x)
         self._queue_v_abs_write(np.int32, simulation_dir / "modY.dat", self.sensor.mod_y)
         if self.is_3d:
             self._queue_v_abs_write(np.int32, simulation_dir / "modZ.dat", self.sensor.mod_z)
-        self._queue_v_abs_write(np.int32, simulation_dir / "pml_thickness.dat", self.pml_thickness)
 
     def _save_d_params(
         self,

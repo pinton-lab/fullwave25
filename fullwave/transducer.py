@@ -12,7 +12,9 @@ import numpy as np
 from numpy.typing import NDArray
 
 import fullwave
+from fullwave import transmit
 from fullwave.grid import Grid
+from fullwave.solver import source_type as source_type_module
 from fullwave.utils import check_functions
 from fullwave.utils.coordinates import make_circle_idx, map_to_coordinates, map_to_coords_with_sort
 
@@ -32,6 +34,11 @@ def _make_pos_int(val: float | tuple[float] | tuple[int]) -> NDArray[np.int64]:
 
 class TransducerGeometry:
     """base transducer class."""
+
+    # How many elements sit across the elevation axis. This class places them on
+    # the lateral axis alone, so a subclass that spreads them sets its own count
+    # before it builds the geometry.
+    elements_in_elevation = 1
 
     def __init__(
         self,
@@ -169,24 +176,7 @@ class TransducerGeometry:
         self.radius = radius
         self.zero_offset = zero_offset
 
-        # check the transducer fits into the grid
-        if (
-            self.position_px[1]
-            + self.number_elements * self.element_width_px
-            + (self.number_elements - 1) * self.element_spacing_px
-        ) > self.stored_grid_size[1] and self.radius == float("inf"):
-            error_msg = (
-                "The defined transducer is too large or"
-                "positioned outside the grid in the y-direction:\n"
-                f"position_px: {self.position_px[1]}, "
-                f"number_elements: {self.number_elements}, "
-                f"element_width_px: {self.element_width_px}, "
-                f"element_spacing_px: {self.element_spacing_px}, "
-                f"ny: {self.stored_grid_size[1]}, "
-                f"transducer_width_px: {self.transducer_width_px}, "
-            )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
+        self._check_the_aperture_fits_the_grid()
         if self.position_px[0] > self.stored_grid_size[0]:
             error_msg = "The defined transducer is positioned outside the grid in the x-direction"
             logger.error(error_msg)
@@ -201,7 +191,49 @@ class TransducerGeometry:
             self._sensor_coords,
             self._sensor_ids,
         ) = self._create_element_coords()
+        if len(self._source_coords) == 0:
+            error_msg = (
+                "The transducer put no source pixel on the grid.\n"
+                f"position_px: {self.position_px}, grid: {self.stored_grid_size}"
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         logger.debug("TransducerGeometry instance created.")
+
+    def _check_the_aperture_fits_the_grid(self) -> None:
+        """Refuse an aperture that reaches past the edge of the grid.
+
+        This class places its elements along the lateral axis, so it checks that
+        axis. A subclass that also spreads them across the elevation axis checks
+        that axis too.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        ValueError
+            If the aperture reaches past the lateral edge of the grid.
+
+        """
+        if self.radius != float("inf"):
+            return
+        if (self.position_px[1] + self.transducer_width_px) <= self.stored_grid_size[1]:
+            return
+        error_msg = (
+            "The defined transducer is too large or"
+            "positioned outside the grid in the y-direction:\n"
+            f"position_px: {self.position_px[1]}, "
+            f"elements across the lateral axis: "
+            f"{self.number_elements // self.elements_in_elevation}, "
+            f"element_width_px: {self.element_width_px}, "
+            f"element_spacing_px: {self.element_spacing_px}, "
+            f"ny: {self.stored_grid_size[1]}, "
+            f"transducer_width_px: {self.transducer_width_px}, "
+        )
+        logger.error(error_msg)
+        raise ValueError(error_msg)
 
     def _init_dimensions(  # noqa: PLR0912
         self,
@@ -314,7 +346,7 @@ class TransducerGeometry:
             assert len(position_m) == 3, "position_m must have 3 elements for 3D transducer"
         return position_px, position_m
 
-    def _create_element_coords(  # noqa: PLR0912
+    def _create_element_coords(
         self,
     ) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.int64], NDArray[np.int64]]:
         """Build flat coordinate arrays for source and sensor pixels.
@@ -339,19 +371,27 @@ class TransducerGeometry:
         if self.radius == float("inf"):
             if self.is_3d:
                 for element_index in range(self.number_elements):
+                    lateral_index = element_index // self.elements_in_elevation
+                    elevation_index = element_index % self.elements_in_elevation
                     element_pos_x = self.position_px[0]
                     element_pos_y = round(
                         (
                             self.position_m[1]
-                            + (self.element_width_m + self.element_spacing_m) * element_index
+                            + (self.element_width_m + self.element_spacing_m) * lateral_index
                         )
                         / self.grid_spacing[1],
                     )
-                    element_pos_z = round(self.position_m[2] / self.grid_spacing[2])
+                    element_pos_z = round(
+                        (
+                            self.position_m[2]
+                            + (self.element_height_m + self.element_spacing_m) * elevation_index
+                        )
+                        / self.grid_spacing[2],
+                    )
                     if self.use_px_in_space or self.use_px_in_width:
                         element_pos_y = (
                             self.position_px[1]
-                            + (self.element_width_px + self.element_spacing_px) * element_index
+                            + (self.element_width_px + self.element_spacing_px) * lateral_index
                         )
 
                     xs = np.arange(element_pos_x, element_pos_x + self.element_layer_px)
@@ -402,58 +442,117 @@ class TransducerGeometry:
                     sensor_coords_parts.append(snsr)
                     sensor_ids_parts.append(np.full(len(snsr), element_index + 1))
 
-        else:  # noqa: PLR5501 -- keep the if structure for future extension
-            if self.is_3d:
-                error_msg = "3D convex transducers are not implemented yet."
-                logger.error(error_msg)
-                raise NotImplementedError(error_msg)
-            else:  # noqa: RET506 -- keep the if structure for future extension
-                radius_px = round(self.radius / self.grid.dx)
-                d_theta = np.arctan2(self.element_spacing_m / self.grid.dy, radius_px)
-                theta_list = self._define_theta_at_center(
-                    d_theta=d_theta,
-                    num_elements=self.number_elements,
-                )
-                center = np.array(
-                    [
-                        self.zero_offset / self.grid.dx - radius_px + self.position_px[0],
-                        self.grid.ny // 2 + self.position_px[1],
-                    ],
-                )
-                if not self.average_surface_signals:
-                    logger.warning(
-                        "average_surface_signals is set to False, "
-                        "but it is ignored for convex transducers.",
-                    )
-
-                in_map = self._calculate_inmap(center=center, radius=radius_px)
-                out_map = self._calculate_outmap(center=center, radius=radius_px)
-
-                in_raw = map_to_coords_with_sort(in_map)
-                out_raw = map_to_coords_with_sort(out_map)
-                in_raw, out_raw = self._assign_transducer_num_to_input(
-                    in_coords=in_raw,
-                    out_coords=out_raw,
-                    center=center,
-                    number_elements=self.number_elements,
-                    d_theta=d_theta,
-                    theta_list=theta_list,
-                )
-                # in_raw / out_raw: shape [N, 4], columns [x, y, 0, element_id]
-                valid_in = in_raw[:, 3] > 0
-                valid_out = out_raw[:, 3] > 0
-                return (
-                    in_raw[valid_in, :2].astype(np.int64),
-                    in_raw[valid_in, 3].astype(np.int64),
-                    out_raw[valid_out, :2].astype(np.int64),
-                    out_raw[valid_out, 3].astype(np.int64),
-                )
+        else:
+            return self._arc_element_coords()
 
         source_coords = np.concatenate(source_coords_parts, axis=0).astype(np.int64)
         source_ids = np.concatenate(source_ids_parts, axis=0).astype(np.int64)
         sensor_coords = np.concatenate(sensor_coords_parts, axis=0).astype(np.int64)
         sensor_ids = np.concatenate(sensor_ids_parts, axis=0).astype(np.int64)
         return source_coords, source_ids, sensor_coords, sensor_ids
+
+    def _arc_element_coords(
+        self,
+    ) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.int64], NDArray[np.int64]]:
+        """Build the coordinate arrays of a curved array.
+
+        The arc is drawn from the center of its own circle, and in three dimensions
+        it is repeated across the elevation extent.
+
+        Returns
+        -------
+        tuple
+            The source coordinates, the source element ids, the sensor coordinates
+            and the sensor element ids.
+
+        Raises
+        ------
+        ValueError
+            If the arc puts no pixel on the grid.
+
+        """
+        radius_px = round(self.radius / self.grid.dx)
+        d_theta = np.arctan2(self.element_spacing_m / self.grid.dy, radius_px)
+        theta_list = self._define_theta_at_center(
+            d_theta=d_theta,
+            num_elements=self.number_elements,
+        )
+        center = np.array(
+            [
+                self.zero_offset / self.grid.dx - radius_px + self.position_px[0],
+                self.grid.ny // 2 + self.position_px[1],
+            ],
+        )
+        if not self.average_surface_signals:
+            logger.warning(
+                "average_surface_signals is set to False, "
+                "but it is ignored for convex transducers.",
+            )
+
+        in_map = self._calculate_inmap(center=center, radius=radius_px)
+        out_map = self._calculate_outmap(center=center, radius=radius_px)
+        if not in_map.any() or not out_map.any():
+            error_msg = (
+                "The arc of the transducer put no pixel on the grid. A curved array "
+                "is placed from the center of its own arc, so the crown of the arc "
+                "sits at zero_offset and the arc needs the axial extent below it.\n"
+                f"radius: {self.radius} m, zero_offset: {self.zero_offset} m, "
+                f"position_px: {self.position_px}, grid: {self.stored_grid_size}"
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        in_raw = map_to_coords_with_sort(in_map)
+        out_raw = map_to_coords_with_sort(out_map)
+        in_raw, out_raw = self._assign_transducer_num_to_input(
+            in_coords=in_raw,
+            out_coords=out_raw,
+            center=center,
+            number_elements=self.number_elements,
+            d_theta=d_theta,
+            theta_list=theta_list,
+        )
+        # in_raw / out_raw: shape [N, 4], columns [x, y, 0, element_id]
+        valid_in = in_raw[:, 3] > 0
+        valid_out = out_raw[:, 3] > 0
+        arc = (
+            in_raw[valid_in, :2].astype(np.int64),
+            in_raw[valid_in, 3].astype(np.int64),
+            out_raw[valid_out, :2].astype(np.int64),
+            out_raw[valid_out, 3].astype(np.int64),
+        )
+        return self._placed_on_every_elevation_row(arc)
+
+    def _placed_on_every_elevation_row(
+        self,
+        arc: tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.int64], NDArray[np.int64]],
+    ) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.int64], NDArray[np.int64]]:
+        """Return the arc as this class places it.
+
+        This class draws one arc in the lateral plane, so it returns that arc. A
+        subclass that reaches across the elevation axis repeats it there.
+
+        Parameters
+        ----------
+        arc : tuple
+            The source coordinates, the source element ids, the sensor
+            coordinates and the sensor element ids of one arc.
+
+        Returns
+        -------
+        tuple
+            The same four arrays.
+
+        Raises
+        ------
+        NotImplementedError
+            If the grid is three dimensional.
+
+        """
+        if self.is_3d:
+            error_msg = "3D convex transducers are not implemented yet"
+            raise NotImplementedError(error_msg)
+        return arc
 
     @cached_property
     def indexed_element_mask_input(self) -> NDArray[np.int64]:
@@ -606,8 +705,8 @@ class TransducerGeometry:
 
         """
         return float(
-            self.number_elements * self.element_width_m
-            + (self.number_elements - 1) * self.element_spacing_m,
+            (self.number_elements // self.elements_in_elevation) * self.element_width_m
+            + (self.number_elements // self.elements_in_elevation - 1) * self.element_spacing_m,
         )
 
     @property
@@ -620,10 +719,38 @@ class TransducerGeometry:
             Total width of the transducer in grid points.
 
         """
-        return int(
-            self.number_elements * self.element_width_px
-            + (self.number_elements - 1) * self.element_spacing_px,
+        return int(self._last_element_offset_px(lateral=True) + self.element_width_px)
+
+    def _last_element_offset_px(self, *, lateral: bool) -> int:
+        """Return how far the last element sits from the corner of the aperture.
+
+        The coordinate builder places each element on the metric pitch when the
+        caller states meters, so an aperture read from the rounded pixel pitch is
+        wider than the aperture the builder made.
+
+        Parameters
+        ----------
+        lateral : bool
+            True reads the lateral axis. False reads the elevation axis.
+
+        Returns
+        -------
+        int
+            The offset of the last element [grid points].
+
+        """
+        axis = 1 if lateral else 2
+        elements = (
+            self.number_elements // self.elements_in_elevation
+            if lateral
+            else self.elements_in_elevation
         )
+        extent_px = self.element_width_px if lateral else self.element_height_px
+        extent_m = self.element_width_m if lateral else self.element_height_m
+        if self.use_px_in_space or self.use_px_in_width:
+            return int((extent_px + self.element_spacing_px) * (elements - 1))
+        last_m = self.position_m[axis] + (extent_m + self.element_spacing_m) * (elements - 1)
+        return int(round(last_m / self.grid_spacing[axis]) - int(self.position_px[axis]))
 
     @property
     def transducer_surface(self) -> NDArray[np.int64]:
@@ -696,11 +823,49 @@ class TransducerGeometry:
         )
 
 
+class TransducerStack:
+    """The layers a probe puts between its elements and the tissue, with their unit.
+
+    The values are the ones an ATS-539 acquisition was matched against on a
+    Verasonics. The backing sits above the element row, so the element face must
+    be placed at least `backing_thickness_m` below the top of the grid.
+    """
+
+    backing_thickness_m = 1.0e-3
+    backing_sound_speed_m_s = 1450.0
+    backing_density_kg_m3 = 1700.0
+    backing_alpha_coeff_db_cm_mhz = 20.0
+    backing_face_roughness_m = 0.30e-3
+
+    matching_thickness_m = 0.10e-3
+    matching_sound_speed_m_s = 1900.0
+    matching_density_kg_m3 = 975.0
+    matching_alpha_coeff_db_cm_mhz = 0.5
+
+    lens_thickness_m = 0.34e-3
+    lens_sound_speed_m_s = 1450.0
+    lens_density_kg_m3 = 1400.0
+    lens_alpha_coeff_db_cm_mhz = 1.0
+
+    standoff_thickness_m = 0.80e-3
+    standoff_sound_speed_m_s = 1480.0
+    standoff_density_kg_m3 = 1000.0
+    standoff_alpha_coeff_db_cm_mhz = 0.0022
+    standoff_alpha_power = 1.9
+
+    alpha_power = 1.0
+    beta = 0.0
+
+
 class Transducer:
     """General transducer class.
 
     it connects transducer geometry with fullwave Source and Sensor implementations.
     """
+
+    # The geometry the named constructors build. A subclass that places its
+    # elements differently sets its own.
+    geometry_class = TransducerGeometry
 
     def __init__(
         self,
@@ -709,9 +874,11 @@ class Transducer:
         input_signal: NDArray[np.float64] | None = None,
         active_source_elements: tuple[bool] | None = None,
         active_sensor_elements: tuple[bool] | None = None,
+        pulse: transmit.Pulse | None = None,
         *,
         validate_input: bool = True,
         sampling_modulus_time: int = 1,
+        source_type: str,
     ) -> None:
         """Initialize the GeneralTransducer with the provided geometry, grid, and input signal.
 
@@ -732,10 +899,18 @@ class Transducer:
         validate_input: bool, optional
             Flag indicating whether to validate the input data.
             default is True.
+        pulse: transmit.Pulse | None
+            The excitation one element emits. The transmit methods take it when
+            they are called without one. None takes the default excitation.
         sampling_modulus_time: int
             Sampling modulus in time. Default is 1 (record at every time step).
             Changing this value to n will record the pressure every n time steps.
             It reduces the size of the output data.
+        source_type: str
+            "soft" adds the signal to the field and is the default. The signal
+            is scaled so the aperture radiates the pressure it is given, at the
+            grid's reference sound speed. "hard" is a hard source, which
+            assigns the signal to the pressure of each source pixel instead.
 
         """
         if validate_input:
@@ -755,12 +930,556 @@ class Transducer:
         self.active_sensor_elements = active_sensor_elements
 
         self.sampling_modulus_time = sampling_modulus_time
+        self.pulse = transmit.Pulse() if pulse is None else pulse
+        if source_type not in source_type_module.SOURCE_TYPES:
+            error_msg = (
+                f"source_type {source_type!r} is not one of {source_type_module.SOURCE_TYPES}"
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        self.source_type = source_type
 
         if input_signal is not None:
             self._check_signal(input_signal)
             self._signal: NDArray[np.float64] | None = input_signal
         else:
             self._signal = None
+
+    @classmethod
+    def l7_4(
+        cls,
+        grid: Grid,
+        position_m: tuple[float, ...] | None = None,
+        *,
+        element_layer_px: int = 2,
+        face_depth_m: float = 0.0,
+        sampling_modulus_time: int = 1,
+        source_type: str = source_type_module.HARD,
+    ) -> "Transducer":
+        """Return an ATL Philips L7-4 linear array on one grid.
+
+        128 elements of 0.298 mm pitch and 0.048 mm kerf at 5.208 MHz. The
+        excitation is the one an ATS-539 acquisition was matched against. The
+        elevation aperture of 7.5 mm has no datasheet behind it.
+
+        Parameters
+        ----------
+        grid : Grid
+            The grid the array sits on.
+        position_m : tuple[float, ...] | None
+            Where the corner of the aperture sits [m]. None centers it across
+            the grid with the face at the top.
+        element_layer_px : int
+            How many grid rows one element covers.
+        face_depth_m : float
+            How far below the top of the grid the array face sits [m]. The rows
+            above it hold the backing, which the caller states in the medium.
+        sampling_modulus_time : int
+            How many time steps separate two recorded samples.
+        source_type : str
+            "soft" adds the signal to the field, which is the default and what
+            the calibrated setups use. "hard" is a hard source and assigns it.
+
+        Returns
+        -------
+        Transducer
+            The array, with no excitation set.
+
+        """
+        return cls._preset(
+            grid,
+            position_m,
+            number_elements=128,
+            pitch_m=0.298e-3,
+            kerf_m=0.048e-3,
+            element_height_m=7.5e-3,
+            element_layer_px=element_layer_px,
+            face_depth_m=face_depth_m,
+            pulse=transmit.Pulse(pressure=3.162e5, cycles=1.0, drop_off=2.0),
+            sampling_modulus_time=sampling_modulus_time,
+            source_type=source_type,
+        )
+
+    @classmethod
+    def c5_2v(
+        cls,
+        grid: Grid,
+        position_m: tuple[float, ...] | None = None,
+        *,
+        element_layer_px: int | None = None,
+        face_depth_m: float = 0.0,
+        sampling_modulus_time: int = 1,
+        source_type: str = source_type_module.HARD,
+    ) -> "Transducer":
+        """Return a curved array of 49.57 mm radius on one grid.
+
+        128 elements of 0.508 mm pitch at 3.7 MHz, as the convex examples of this
+        package use it. Three dimensional curved arrays are not supported.
+
+        Parameters
+        ----------
+        grid : Grid
+            The grid the array sits on.
+        position_m : tuple[float, ...] | None
+            Where the corner of the aperture sits [m]. None centers it.
+        element_layer_px : int | None
+            How many grid rows one element covers. None takes three wavelengths,
+            which is what an arc needs to be represented on a grid.
+        face_depth_m : float
+            How far below the top of the grid the array face sits [m]. The rows
+            above it hold the backing, which the caller states in the medium.
+        sampling_modulus_time : int
+            How many time steps separate two recorded samples.
+        source_type : str
+            "soft" adds the signal to the field, which is the default and what
+            the calibrated setups use. "hard" is a hard source and assigns it.
+
+        Returns
+        -------
+        Transducer
+            The array, with no excitation set.
+
+        """
+        return cls._preset(
+            grid,
+            position_m,
+            number_elements=128,
+            pitch_m=0.508e-3,
+            kerf_m=0.0,
+            radius_m=49.57e-3,
+            element_layer_px=round(grid.ppw * 3) if element_layer_px is None else element_layer_px,
+            face_depth_m=face_depth_m,
+            pulse=transmit.Pulse(),
+            sampling_modulus_time=sampling_modulus_time,
+            source_type=source_type,
+        )
+
+    @classmethod
+    def p4_1c(
+        cls,
+        grid: Grid,
+        position_m: tuple[float, ...] | None = None,
+        *,
+        element_layer_px: int = 4,
+        face_depth_m: float = 0.0,
+        sampling_modulus_time: int = 1,
+        source_type: str = source_type_module.HARD,
+    ) -> "Transducer":
+        """Return a 64 element phased array of 27 mm aperture on one grid.
+
+        Parameters
+        ----------
+        grid : Grid
+            The grid the array sits on.
+        position_m : tuple[float, ...] | None
+            Where the corner of the aperture sits [m]. None centers it.
+        element_layer_px : int
+            How many grid rows one element covers.
+        face_depth_m : float
+            How far below the top of the grid the array face sits [m]. The rows
+            above it hold the backing, which the caller states in the medium.
+        sampling_modulus_time : int
+            How many time steps separate two recorded samples.
+        source_type : str
+            "soft" adds the signal to the field, which is the default and what
+            the calibrated setups use. "hard" is a hard source and assigns it.
+
+        Returns
+        -------
+        Transducer
+            The array, with no excitation set.
+
+        """
+        pitch = 27.0e-3 / 64
+        return cls._preset(
+            grid,
+            position_m,
+            number_elements=64,
+            pitch_m=pitch,
+            kerf_m=pitch * 0.2,
+            element_layer_px=element_layer_px,
+            face_depth_m=face_depth_m,
+            pulse=transmit.Pulse(),
+            sampling_modulus_time=sampling_modulus_time,
+            source_type=source_type,
+        )
+
+    @classmethod
+    def _preset(
+        cls,
+        grid: Grid,
+        position_m: tuple[float, ...] | None,
+        *,
+        number_elements: int,
+        pitch_m: float,
+        kerf_m: float,
+        element_layer_px: int,
+        pulse: transmit.Pulse,
+        sampling_modulus_time: int,
+        source_type: str,
+        radius_m: float = float("inf"),
+        element_height_m: float | None = None,
+        face_depth_m: float = 0.0,
+    ) -> "Transducer":
+        """Return one named array, placed and ready for an excitation."""
+        curved = radius_m != float("inf")
+        shape = {
+            "number_elements": number_elements,
+            "element_width_m": 0.0 if curved else pitch_m - kerf_m,
+            "element_height_m": element_height_m if grid.is_3d else None,
+            "element_spacing_m": pitch_m if curved else kerf_m,
+            "element_layer_px": element_layer_px,
+            "radius": radius_m,
+        }
+        corner_m = (face_depth_m, 0.0, 0.0) if grid.is_3d else (face_depth_m, 0.0)
+        geometry = cls.geometry_class(grid, position_m=position_m or corner_m, **shape)
+        if position_m is None and (grid.is_3d or not curved):
+            # The grid rounds each element to whole cells, so the aperture is
+            # centered on the width the geometry built and not on the width the
+            # datasheet gives. A curved array is placed from the center of its own
+            # arc, so its lateral offset stays at zero.
+            corner_px = [
+                round(face_depth_m / grid.dx),
+                0 if curved else (grid.ny - geometry.transducer_width_px) // 2,
+            ]
+            if grid.is_3d:
+                corner_px.append((grid.nz - round((element_height_m or 0.0) / grid.dz)) // 2)
+            geometry = cls.geometry_class(grid, position_px=tuple(corner_px), **shape)
+        return cls(
+            transducer_geometry=geometry,
+            grid=grid,
+            pulse=pulse,
+            sampling_modulus_time=sampling_modulus_time,
+            source_type=source_type,
+        )
+
+    def plane_wave(
+        self,
+        angle_deg: float = 0.0,
+        *,
+        elevation_angle_deg: float = 0.0,
+        pulse: transmit.Pulse | None = None,
+        apodization: float = 0.0,
+    ) -> None:
+        """Set the excitation to one steered plane wave.
+
+        Parameters
+        ----------
+        angle_deg : float
+            The steering angle in the lateral plane [degrees].
+        elevation_angle_deg : float
+            The steering angle in the elevation plane [degrees]. Three dimensions only.
+        pulse : transmit.Pulse | None
+            The excitation one element emits. None takes the transducer's own.
+        apodization : float
+            The Tukey taper across the aperture. 0 gives no taper.
+
+        Returns
+        -------
+        None
+
+        """
+        delays = transmit.plane_wave_delays(
+            self._element_centers_m(),
+            angle_deg,
+            float(self.grid.c0),
+            elevation_angle_deg,
+        )
+        self._set_transmit(delays, pulse, apodization)
+
+    def focus(
+        self,
+        focus_m: tuple[float, ...],
+        *,
+        pulse: transmit.Pulse | None = None,
+        apodization: float = 0.0,
+    ) -> None:
+        """Set the excitation to a focus at one point.
+
+        Parameters
+        ----------
+        focus_m : tuple[float, ...]
+            Where the transmit focuses [m], as (axial, lateral) or
+            (axial, lateral, elevation).
+        pulse : transmit.Pulse | None
+            The excitation one element emits. None takes the transducer's own.
+        apodization : float
+            The Tukey taper across the aperture. 0 gives no taper.
+
+        Returns
+        -------
+        None
+
+        """
+        delays = transmit.focused_delays(
+            self._element_centers_m(),
+            np.asarray(focus_m, dtype=float),
+            float(self.grid.c0),
+        )
+        self._set_transmit(delays, pulse, apodization)
+
+    def diverging(
+        self,
+        virtual_source_m: tuple[float, ...],
+        *,
+        pulse: transmit.Pulse | None = None,
+        apodization: float = 0.0,
+    ) -> None:
+        """Set the excitation to a wave spreading from a virtual source.
+
+        A virtual source behind the aperture gives a wide beam in one transmit.
+
+        Parameters
+        ----------
+        virtual_source_m : tuple[float, ...]
+            Where the wave appears to start [m]. A negative axial value sits
+            behind the aperture.
+        pulse : transmit.Pulse | None
+            The excitation one element emits. None takes the transducer's own.
+        apodization : float
+            The Tukey taper across the aperture. 0 gives no taper.
+
+        Returns
+        -------
+        None
+
+        """
+        delays = transmit.diverging_delays(
+            self._element_centers_m(),
+            np.asarray(virtual_source_m, dtype=float),
+            float(self.grid.c0),
+        )
+        self._set_transmit(delays, pulse, apodization)
+
+    def synthetic_aperture(
+        self,
+        element: int,
+        *,
+        pulse: transmit.Pulse | None = None,
+    ) -> None:
+        """Set the excitation to one element alone.
+
+        The other elements stay silent, which is one transmit of a full synthetic
+        aperture acquisition. Every element still records.
+
+        Parameters
+        ----------
+        element : int
+            Which element fires, counted from one.
+        pulse : transmit.Pulse | None
+            The excitation one element emits. None takes the transducer's own.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        ValueError
+            If the element is outside the aperture.
+
+        """
+        elements = self.transducer_geometry.number_elements
+        if not 1 <= element <= elements:
+            error_msg = f"element {element} is outside the aperture of {elements} elements"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        weights = np.zeros(elements)
+        weights[element - 1] = 1.0
+        self._set_transmit(np.zeros(elements), pulse, weights=weights)
+
+    def apply_transducer_stack(
+        self,
+        sound_speed: NDArray[np.float64],
+        density: NDArray[np.float64],
+        alpha_coeff: NDArray[np.float64],
+        alpha_power: NDArray[np.float64],
+        beta: NDArray[np.float64],
+        scatterer: NDArray[np.float64] | None = None,
+        stack: type[TransducerStack] = TransducerStack,
+        rng: np.random.Generator | None = None,
+    ) -> None:
+        """Paint the layers of the probe onto the medium maps, in place.
+
+        In order from the top of the grid: the backing above the element row,
+        then the matching layer, the lens and the coupling standoff below it. The
+        element rows are left alone, so the source still radiates from them. The
+        wave then reverberates between the probe face and the tissue, which a
+        medium of tissue alone cannot produce.
+
+        Call this on the raw maps before the Medium is built. A curved array is
+        refused, because the arc of its own elements is its backing.
+
+        Parameters
+        ----------
+        sound_speed : NDArray[np.float64]
+            The sound speed map [m/s], changed in place.
+        density : NDArray[np.float64]
+            The density map [kg/m^3], changed in place.
+        alpha_coeff : NDArray[np.float64]
+            The attenuation coefficient map [dB/(MHz^y cm)], changed in place.
+        alpha_power : NDArray[np.float64]
+            The attenuation power map [-], changed in place.
+        beta : NDArray[np.float64]
+            The nonlinearity map [-], changed in place.
+        scatterer : NDArray[np.float64] | None
+            The scatter map. When given, the backing keeps the tissue speckle.
+        stack : type[TransducerStack]
+            The layers to paint. The default is the calibrated probe.
+        rng : np.random.Generator | None
+            The generator the rough backing face uses. None takes a fresh one.
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        ValueError
+            If the array is curved, or if the element face sits too shallow for
+            the backing.
+
+        """
+        if self.transducer_geometry.radius != float("inf"):
+            error_msg = (
+                "a curved array is its own backing, because its elements fill an arc "
+                "and the region behind them is the probe. This paints a flat stack "
+                "above one row, which would cut through that arc."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        rng = np.random.default_rng() if rng is None else rng
+        step_m = float(self.grid.dx)
+        face_row = int(np.asarray(self.transducer_geometry._source_coords)[:, 0].min())
+        backing_rows = round(stack.backing_thickness_m / step_m)
+        if face_row < backing_rows:
+            error_msg = (
+                f"the element face sits at row {face_row} and the backing needs "
+                f"{backing_rows} rows above it. Place the transducer at least "
+                f"{stack.backing_thickness_m * 1e3:.2f} mm below the top of the grid."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        maps = (sound_speed, density, alpha_coeff, alpha_power, beta)
+        rows = np.arange(sound_speed.shape[0])[:, None]
+        lateral = sound_speed.shape[1]
+
+        rough_rows = round(stack.backing_face_roughness_m / step_m)
+        recess = rng.integers(0, rough_rows + 1, size=lateral)[None, :] if rough_rows else 0
+        backing = np.broadcast_to(rows < (face_row - recess), sound_speed.shape)
+        self._paint(
+            maps,
+            backing,
+            stack.backing_sound_speed_m_s,
+            stack.backing_density_kg_m3,
+            stack.backing_alpha_coeff_db_cm_mhz,
+            stack.alpha_power,
+            stack.beta,
+            scatterer,
+        )
+
+        below = face_row + self.transducer_geometry.element_layer_px
+        for thickness_m, speed, rho, alpha, power in (
+            (
+                stack.matching_thickness_m,
+                stack.matching_sound_speed_m_s,
+                stack.matching_density_kg_m3,
+                stack.matching_alpha_coeff_db_cm_mhz,
+                stack.alpha_power,
+            ),
+            (
+                stack.lens_thickness_m,
+                stack.lens_sound_speed_m_s,
+                stack.lens_density_kg_m3,
+                stack.lens_alpha_coeff_db_cm_mhz,
+                stack.alpha_power,
+            ),
+            (
+                stack.standoff_thickness_m,
+                stack.standoff_sound_speed_m_s,
+                stack.standoff_density_kg_m3,
+                stack.standoff_alpha_coeff_db_cm_mhz,
+                stack.standoff_alpha_power,
+            ),
+        ):
+            end = min(sound_speed.shape[0], below + round(thickness_m / step_m))
+            if end > below:
+                layer = np.broadcast_to((rows >= below) & (rows < end), sound_speed.shape)
+                self._paint(maps, layer, speed, rho, alpha, power, stack.beta, None)
+            below = end
+
+    @staticmethod
+    def _paint(
+        maps: tuple[NDArray[np.float64], ...],
+        where: NDArray[np.bool_],
+        speed: float,
+        rho: float,
+        alpha: float,
+        power: float,
+        nonlinearity: float,
+        scatterer: NDArray[np.float64] | None,
+    ) -> None:
+        """Write one layer into the medium maps."""
+        sound_speed, density, alpha_coeff, alpha_power, beta = maps
+        sound_speed[where] = speed
+        alpha_coeff[where] = alpha
+        alpha_power[where] = power
+        beta[where] = nonlinearity
+        density[where] = rho if scatterer is None else (rho * np.asarray(scatterer))[where]
+
+    def _element_centers_m(self) -> NDArray[np.float64]:
+        """Return the center of each element, in meters."""
+        return transmit.element_centers_m(self.transducer_geometry, float(self.grid.dx))
+
+    def _set_transmit(
+        self,
+        delays_s: NDArray[np.float64],
+        pulse: transmit.Pulse | None,
+        apodization: float = 0.0,
+        weights: NDArray[np.float64] | None = None,
+    ) -> None:
+        """Build the excitation from one delay and one weight for each element."""
+        elements = self.transducer_geometry.number_elements
+        if weights is None:
+            weights = transmit.tukey_weights(elements, apodization)
+        active = np.where(self.active_source_elements)[0] + 1
+        chosen = np.isin(self.transducer_geometry._source_ids, active)
+        coords = self.transducer_geometry._source_coords[chosen]
+        self.set_signal(
+            transmit.signal_of(
+                self.grid,
+                coords,
+                self.transducer_geometry._source_ids[chosen],
+                self.pulse if pulse is None else pulse,
+                delays_s,
+                weights,
+                self._extra_pixel_delays(coords),
+            )
+        )
+
+    def _extra_pixel_delays(
+        self,
+        coords: NDArray[np.int64],  # noqa: ARG002
+    ) -> NDArray[np.float64] | None:
+        """Return a further delay for each source pixel, or None for no delay.
+
+        Every element of this transducer fires as one, so there is no delay
+        inside an element and this returns None. A subclass returns one where the
+        delay varies across an element.
+
+        Parameters
+        ----------
+        coords : NDArray[np.int64]
+            The grid position of each source pixel that carries a signal.
+
+        Returns
+        -------
+        NDArray[np.float64] | None
+            One delay for each pixel [s], or None.
+
+        """
+        return None
 
     def _check_signal(self, signal: NDArray[np.float64]) -> None:
         if signal.shape[1] != self.grid.nt:
@@ -1028,10 +1747,22 @@ class Transducer:
             error_msg = "Input signal is not set. use set_signal() to set the signal."
             logger.error(error_msg)
             raise ValueError(error_msg)
+        grid_shape = tuple(self.transducer_geometry.stored_grid_size)
+        if source_type_module.is_soft(self.source_type):
+            scale = source_type_module.additive_signal_scale(
+                float(self.grid.c0), float(self.grid.dt), float(self.grid.dx)
+            )
+            additive = fullwave.source.Source(
+                p0_additive=self.signal * scale,
+                coords_additive=self.source_coords,
+                grid_shape=grid_shape,
+            )
+            additive.additive_signal_is_scaled = True
+            return additive
         return fullwave.source.Source(
             p0=self.signal,
             coords=self.source_coords,
-            grid_shape=tuple(self.transducer_geometry.stored_grid_size),
+            grid_shape=grid_shape,
         )
 
     @property
@@ -1171,6 +1902,8 @@ class LinearTransducer(Transducer):
         position_m: tuple[float, float] | tuple[float, float, float],
         active_source_elements: tuple[bool] | None = None,
         active_sensor_elements: tuple[bool] | None = None,
+        *,
+        source_type: str = source_type_module.HARD,
     ) -> None:
         """Initialize a LinearTransducer instance.
 
@@ -1202,6 +1935,7 @@ class LinearTransducer(Transducer):
             input_signal=input_signal,
             active_source_elements=active_source_elements,
             active_sensor_elements=active_sensor_elements,
+            source_type=source_type,
         )
 
 
@@ -1249,4 +1983,5 @@ def make_p4_1c_trasnducer(
     return fullwave.Transducer(
         transducer_geometry=transducer_geometry,
         grid=grid,
+        source_type=source_type_module.HARD,
     )

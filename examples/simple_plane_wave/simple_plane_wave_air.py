@@ -1,4 +1,10 @@
-"""Simple plane wave transmit example."""
+"""Send one plane wave into a medium holding air.
+
+Air reflects almost everything, so each air cell casts a shadow behind it.
+
+Run it with:
+    uv run python examples/simple_plane_wave/simple_plane_wave_air.py
+"""
 
 import logging
 from pathlib import Path
@@ -18,7 +24,7 @@ def main() -> None:
     #
     # define the working directory
     #
-    work_dir = Path("./outputs/") / "simple_plane_wave"
+    work_dir = Path("./outputs/") / "simple_plane_wave_air"
     work_dir.mkdir(parents=True, exist_ok=True)
 
     # --- define the computational grid ---
@@ -51,7 +57,7 @@ def main() -> None:
     # Define random air distribution in the medium
     air_map = np.zeros((grid.nx, grid.ny), dtype=bool)
 
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(seed=42)
     random_location = rng.random((1000, 2))
     for loc in random_location:
         # x_idx = int(grid.nx // 2 - grid.nx * 0.1) + int(loc[0] * grid.nx * 0.4)

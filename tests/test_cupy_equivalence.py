@@ -11,6 +11,7 @@ import fullwave.medium as medium_module
 from fullwave.medium import Medium, MediumExponentialAttenuation, MediumRelaxationMaps
 from fullwave.solver.input_file_writer import InputFileWriter
 from fullwave.solver.pml_builder import PMLBuilder, PMLBuilderExponentialAttenuation
+from fullwave.solver.shipped_database import ShippedDatabase
 from fullwave.solver.utils import initialize_relaxation_param_dict
 from fullwave.utils.relaxation_parameters import RelaxationParametersGenerator
 
@@ -86,7 +87,7 @@ def _dummy_check_functions():
     )()
 
 
-def _get_relaxation_dict(shape, n_relaxation_mechanisms=2):
+def _get_relaxation_dict(shape, n_relaxation_mechanisms=ShippedDatabase.mechanisms):
     base = initialize_relaxation_param_dict(n_relaxation_mechanisms=n_relaxation_mechanisms)
     rng = np.random.default_rng(42)
     return {key: rng.uniform(0.5, 2.0, size=shape) for key in base}
@@ -391,11 +392,12 @@ class TestPMLBuilderCupyEquivalence:
             cpu.extended_medium.alpha_coeff,
             rtol=1e-14,
         )
-        np.testing.assert_allclose(
-            _to_np(gpu.extended_medium.alpha_power),
-            cpu.extended_medium.alpha_power,
-            rtol=1e-14,
-        )
+        for name in sorted(cpu.extended_medium.relaxation_param_dict):
+            np.testing.assert_allclose(
+                _to_np(gpu.extended_medium.relaxation_param_dict[name]),
+                cpu.extended_medium.relaxation_param_dict[name],
+                rtol=1e-14,
+            )
         np.testing.assert_allclose(
             _to_np(gpu.extended_medium.beta),
             cpu.extended_medium.beta,

@@ -1,16 +1,15 @@
-"""Simple plane wave transmit example using a velocity (u0) source.
+"""Drive the field with a velocity source rather than with a pressure source.
 
-A velocity source drives the particle-velocity equation directly, as opposed to
-the hard pressure source (p0) which drives the pressure equation.  For a plane
-wave propagating in the depth (x) direction the relevant component is u0.
+A velocity source enters the particle velocity equation, and a pressure source
+enters the pressure equation. Along the depth axis the component is u0. The
+impedance relation p = rho * c * u links the two, so the velocity amplitude is
+p_amp / (rho0 * c0).
 
-The acoustic impedance relation  p = rho · c · u  links the two formulations, so
-the velocity amplitude is scaled as
+The source is a small square at the middle of the grid, so the wave reaches every
+edge and the picture shows what the absorbing layer does with it.
 
-    u_amp = p_amp / (ρ₀ · c₀)
-
-Everything else (grid, medium, sensor, solver) is identical to
-simple_plane_wave.py so the two examples can be run side-by-side for comparison.
+Run it with:
+    uv run python examples/simple_plane_wave/simple_plane_wave_velocity_source.py
 """
 
 import logging
@@ -158,11 +157,7 @@ def main() -> None:
         source=source,
         sensor=sensor,
         run_on_memory=False,
-        use_exponential_attenuation=True,
         save_gpu_memory=True,
-        path_fullwave_simulation_bin=Path(
-            "/home/msode/workspace/lab_repos/fullwave-python-public/debug_solver_bin/fullwave2_2d_exponential_attenuation_multi_gpu",
-        ),
     )
     sensor_output = fw_solver.run()
 
@@ -173,8 +168,10 @@ def main() -> None:
         sensor_output,
         grid,
     )
-    p_max_plot = np.abs(propagation_map).max().item() / 4
-    time_step = propagation_map.shape[0] // 3
+    # the run lasts two crossings of the depth, and the source sits at the middle,
+    # so the wave is still inside the domain at one eighth of it
+    time_step = propagation_map.shape[0] // 8
+    p_max_plot = np.abs(propagation_map[time_step]).max().item()
     plot_utils.plot_array(
         propagation_map[time_step, :, :],
         aspect=propagation_map.shape[2] / propagation_map.shape[1],

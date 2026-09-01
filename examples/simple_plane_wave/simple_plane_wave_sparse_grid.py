@@ -1,9 +1,10 @@
-"""Simple plane wave example using sparse-grid sensor output.
+"""Record every fourth grid point rather than every one.
 
-Instead of recording every grid point, the sensor is configured with
-mod_x=4, mod_y=4 so the binary records only every 4th point in each
-spatial dimension.  This reduces output data size by a factor of 16
-compared to a full-domain sensor.
+`Sensor(mod_x=4, mod_y=4)` keeps one point in each direction out of four, which
+makes the output 16 times smaller than a sensor over the whole domain.
+
+Run it with:
+    uv run python examples/simple_plane_wave/simple_plane_wave_sparse_grid.py
 """
 
 import logging
@@ -111,7 +112,6 @@ def main() -> None:
         medium=medium,
         source=source,
         sensor=sensor,
-        use_exponential_attenuation=True,
     )
     fw_solver.summary()
 

@@ -1,9 +1,17 @@
-"""Full synthetic aperture example."""
+"""Acquire a full synthetic aperture with an L7-4 linear array and beamform it.
+
+One element transmits and every element records, once for each of the 128
+transmits.
+
+Run it with:
+    uv run python examples/linear_transducer/full_synthetic_aperture.py
+"""
 
 import logging
 from pathlib import Path
 
 import cupy
+import matplotlib.pyplot as plt
 import numpy as np
 import pymust
 from einops import rearrange
@@ -33,72 +41,6 @@ def convert_to_db(signal: np.ndarray) -> np.ndarray:
 
     """
     return 20 * np.log10(np.abs(signal) / np.max(np.abs(signal)))
-
-
-def make_input_signal(
-    active_source_element_id: int,
-    grid: fullwave.Grid,
-    transducer_geometry: fullwave.TransducerGeometry,
-    transducer: fullwave.Transducer,
-    element_layer_px: int,
-    *,
-    p_max: float = 1e5,
-) -> np.ndarray:
-    """Generate an input signal for single element transmission.
-
-    Parameters
-    ----------
-    active_source_element_id : int
-        ID of the active source element.
-    grid : fullwave.Grid
-        Computational grid for the simulation.
-    transducer_geometry : fullwave.TransducerGeometry
-        Geometry of the transducer.
-    transducer : fullwave.Transducer
-        Transducer object containing source information.
-    element_layer_px : int
-        Number of pixels per element layer.
-    p_max : float, optional
-        Maximum pressure amplitude (default: 1e5).
-
-    Returns
-    -------
-    np.ndarray
-        Input signal array of shape (n_sources, nt).
-
-    """
-    active_source_elements = np.zeros(transducer_geometry.number_elements, dtype=bool)
-    active_sensor_elements = np.zeros(transducer_geometry.number_elements, dtype=bool)
-    active_source_elements[active_source_element_id] = True
-    active_sensor_elements[:] = True
-
-    input_signal = np.zeros((transducer.n_sources, grid.nt))
-    dict_source_index_to_location = transducer.dict_source_index_to_location
-
-    for i_source_index in range(len(input_signal)):
-        delay_sec = 0
-        source_location = dict_source_index_to_location[i_source_index + 1]
-
-        n_y = input_signal.shape[0] // element_layer_px
-        i_layer = i_source_index // n_y
-        element_id = transducer.transducer_geometry.indexed_element_mask_input[*source_location]
-        if not active_source_elements[element_id - 1]:
-            p0_vec = np.zeros(grid.nt)
-        else:
-            p0_vec = fullwave.utils.pulse.gaussian_modulated_sinusoidal_signal(
-                nt=grid.nt,
-                f0=grid.f0,
-                duration=grid.duration,
-                ncycles=2,
-                drop_off=2,
-                p0=p_max,
-                i_layer=i_layer,
-                dt_for_layer_delay=grid.dt,
-                cfl_for_layer_delay=grid.cfl,
-                delay_sec=delay_sec,
-            )
-        input_signal[i_source_index, :] = p0_vec.copy()
-    return input_signal
 
 
 def make_echoic_targets(
@@ -212,26 +154,30 @@ def make_echoic_targets(
     return scatterer
 
 
-def main() -> None:  # noqa: PLR0915
+def main() -> None:
     """Run linear trransducer full synthetic aperture simulation and beamforming."""
     # overwrite the logging level, DEBUG, INFO, WARNING, ERROR
+    # logging.getLogger("__main__").setLevel(logging.DEBUG)
     logging.getLogger("__main__").setLevel(logging.INFO)
 
     #
     # define the working directory
     #
-    work_dir = Path("./outputs/") / "linear_transducer_fsa"
+    work_dir = Path("./outputs/") / "full_synthetic_aperture"
     work_dir.mkdir(parents=True, exist_ok=True)
 
     #
     # --- define the computational grid ---
     #
 
-    domain_size = (6e-2, 6e-2)  # [axial, lateral] meters
+    domain_size = (4.5e-2, 4.5e-2)  # [axial, lateral] meters
     f0 = 2e6
     c0 = 1540
     duration = domain_size[0] / c0 * 2.3
-    grid = fullwave.Grid(domain_size, f0, duration, c0=c0)
+    ppw = 12
+    cfl = 0.4
+
+    grid = fullwave.Grid(domain_size, f0, duration, c0=c0, ppw=ppw, cfl=cfl)
 
     #
     # --- define the acoustic medium properties ---
@@ -265,10 +211,31 @@ def main() -> None:  # noqa: PLR0915
         n_targets_lateral=3,
         centered=True,
     )
-    plot_utils.plot_array(scatterer)
+    plot_utils.plot_array(scatterer, export_path=work_dir / "scatterer.png")
     # scatterer modulates the density map.
     # scatterer values are centered around 1.0 with small variations.
     density_map *= scatterer
+
+    #
+    # --- define the linear transducer and its probe stack ---
+    #
+
+    sampling_interval = 7
+    transducer = fullwave.Transducer.l7_4(
+        grid,
+        face_depth_m=fullwave.TransducerStack.backing_thickness_m,
+        sampling_modulus_time=sampling_interval,
+    )
+    transducer_width_m = transducer.transducer_geometry.transducer_width_m
+    transducer.apply_transducer_stack(
+        sound_speed_map,
+        density_map,
+        alpha_coeff_map,
+        alpha_power_map,
+        beta_map,
+        scatterer=scatterer,
+        rng=rng,
+    )
 
     medium = fullwave.Medium(
         grid,
@@ -278,6 +245,7 @@ def main() -> None:  # noqa: PLR0915
         alpha_power=alpha_power_map,
         beta=beta_map,
         air_map=air_map,
+        n_jobs=1,
     )
     medium.plot(export_path=work_dir / "medium.svg")
     #
@@ -285,56 +253,19 @@ def main() -> None:  # noqa: PLR0915
     #
 
     active_source_element_id_list = list(range(128))
-    active_source_element_id_list = active_source_element_id_list[32::32]  # for faster demo
-
-    element_layer_px = 4
-    transducer_width_m = 38e-3
-    transducer_geometry = fullwave.TransducerGeometry(
-        grid,
-        number_elements=128,
-        # -
-        element_width_m=0.298e-3 - 0.048e-3,
-        # -
-        element_spacing_m=0.048e-3,
-        # -
-        element_layer_px=element_layer_px,
-        # -
-        # [axial, lateral]
-        position_m=(
-            0,
-            (domain_size[1] - transducer_width_m) / 2,
-        ),
-        # -
-        radius=float("inf"),
-    )
-
-    sampling_interval = 7
-    transducer = fullwave.Transducer(
-        transducer_geometry=transducer_geometry,
-        grid=grid,
-        sampling_modulus_time=sampling_interval,
-    )
+    # active_source_element_id_list = active_source_element_id_list[32::32]  # for faster demo
 
     #
     # --- run simulation ---
     #
-
-    p_max = 1e5
 
     sensor_output_list = []
     for i_active_source_element_id, active_source_element_id in tqdm(
         enumerate(active_source_element_id_list),
         total=len(active_source_element_id_list),
     ):
-        input_signal = make_input_signal(
-            active_source_element_id=active_source_element_id,
-            grid=grid,
-            transducer_geometry=transducer_geometry,
-            transducer=transducer,
-            element_layer_px=element_layer_px,
-            p_max=p_max,
-        )
-        transducer.set_signal(input_signal)
+        # one element transmits, every element records
+        transducer.synthetic_aperture(active_source_element_id + 1)
         fw_solver = fullwave.Solver(
             work_dir=work_dir,
             grid=grid,
@@ -358,7 +289,8 @@ def main() -> None:  # noqa: PLR0915
             average_surface_signals=True,
         )
         sensor_output_list.append(sensor_output)
-
+        # if remove_dir is True:
+        #     shutil.rmtree(work_dir / f"txrx_{i_angle}")
     #
     # --- beamform with mach ---
     #
@@ -396,8 +328,6 @@ def main() -> None:  # noqa: PLR0915
         / params["c"]
         for i_elem in active_source_element_id_list
     ]
-    for i in range(len(wavefront_arrivals_s)):
-        wavefront_arrivals_s[i] -= wavefront_arrivals_s[i].min()
     wavefront_arrivals_s = np.stack(wavefront_arrivals_s, axis=0)
 
     # --- post-process and beamform ---
@@ -440,6 +370,23 @@ def main() -> None:  # noqa: PLR0915
     # reshape to 2D image
     b_mode = b_mode.reshape(len(b_mode_x), len(b_mode_z))
 
+    # plot convert_to_db(iq_data[0, :, :, 0]).T,
+    plt.close("all")
+    fig, ax = plt.subplots(1, 1, figsize=(6, 6))
+    im = ax.imshow(
+        convert_to_db(iq_data[1, :, :, 0]).T,
+        vmin=-100,
+        vmax=0,
+        aspect=0.3,
+        cmap="gray",
+    )
+    ax.set_xlabel("Element index")
+    ax.set_ylabel("Time samples")
+    cbar = fig.colorbar(im, ax=ax, orientation="vertical", pad=0.02)
+    cbar.set_label("Amplitude [dB]")
+    plt.tight_layout()
+    plt.savefig(work_dir / "iq_data.png", dpi=300)
+
     #
     # --- visualization ---
     #
@@ -460,6 +407,30 @@ def main() -> None:  # noqa: PLR0915
         ylabel="Axial position (mm)",
         colorbar=True,
         export_path=work_dir / "beamformed_image.svg",
+    )
+    plot_utils.plot_array(
+        convert_to_db(b_mode).T,
+        vmin=-30,
+        vmax=0,
+        aspect=1,
+        cmap="gray",
+        extent=[
+            b_mode_x[0] * 1e3,
+            b_mode_x[-1] * 1e3,
+            b_mode_z[-1] * 1e3,
+            b_mode_z[0] * 1e3,
+        ],
+        xlabel="Lateral position (mm)",
+        ylabel="Axial position (mm)",
+        colorbar=True,
+        export_path=work_dir / "beamformed_image.png",
+    )
+    np.savez(
+        work_dir / "simulation_data.npz",
+        b_mode=b_mode,
+        b_mode_x=b_mode_x,
+        b_mode_z=b_mode_z,
+        iq_data=iq_data,
     )
 
 

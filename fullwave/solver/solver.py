@@ -12,6 +12,12 @@ import fullwave
 from fullwave.solver.input_file_writer import InputFileWriter
 from fullwave.solver.launcher import Launcher
 from fullwave.solver.pml_builder import PMLBuilder, PMLBuilderExponentialAttenuation
+from fullwave.solver.source_type import (
+    HARD,
+    SOURCE_TYPES,
+    as_additive_source,
+    is_soft,
+)
 from fullwave.utils import (
     MemoryTempfile,
     check_functions,
@@ -49,15 +55,17 @@ VERIFIED_CUDA_ARCHITECTURES = [
     "sm_90",  # Hopper: H100, H200
 ]
 
+
 COMPATIBLE_CUDA_VERSIONS = [
     11.8,
     12.4,
     12.9,
     13.0,
+    13.1,
 ]
 
 COMPATIBLE_CUDA_RANGES = [
-    (11.8, 13.0),
+    (11.8, 13.1),
 ]
 
 VERIFIED_CUDA_VERSIONS = [
@@ -194,13 +202,42 @@ def _check_compatible_set(cuda_version: float, cuda_arch: str) -> bool:
     return (cuda_version, cuda_arch) in COMPATIBLE_CUDA_VERSIONS_ARCHITECTURES_set
 
 
+def _relaxation_binary_path(
+    *,
+    dimension: str,
+    cuda_version_option: str,
+    isotropic_str: str = "",
+) -> Path:
+    """Return where the relaxation solver binary sits.
+
+    One binary serves every mechanism count, because the kernel reads the count
+    from ``n_relax.dat`` at run time rather than from its own name.
+
+    Parameters
+    ----------
+    dimension : str
+        Either "2d" or "3d".
+    cuda_version_option : str
+        The CUDA tag the binary name ends with, such as "cuda124".
+    isotropic_str : str, optional
+        The anisotropy tag the name carries, empty for the isotropic solver.
+
+    Returns
+    -------
+    Path
+        The bundled path of the binary, which may not exist.
+
+    """
+    root = Path(__file__).parent / "bins" / "gpu" / dimension
+    return root / f"fullwave2_{dimension}_n_relax{isotropic_str}_multi_gpu_{cuda_version_option}"
+
+
 def _retrieve_fullwave_simulation_path(
     *,
     use_gpu: bool = True,
     is_3d: bool = False,
     use_exponential_attenuation: bool = False,
     use_isotropic_relaxation: bool = True,
-    n_relax_mechanisms: int = 2,
 ) -> Path:
     arch_option = _make_cuda_arch_option(use_gpu=use_gpu)
     cuda_version_option, cuda_version = _make_cuda_version_option(use_gpu=use_gpu)
@@ -246,24 +283,10 @@ def _retrieve_fullwave_simulation_path(
             raise NotImplementedError(error_msg)
     elif is_3d:
         if use_gpu:
-            if n_relax_mechanisms != 2:
-                error_msg = (
-                    "Currently, only 2 relaxation mechanisms are supported in 3D simulations. "
-                    "Please set n_relax_mechanisms to 2 for 3D simulations."
-                )
-                logger.error(error_msg)
-                raise NotImplementedError(error_msg)
-
-            path_fullwave_simulation_bin = (
-                Path(__file__).parent
-                / "bins"
-                / "gpu"
-                / "3d"
-                / f"num_relax={n_relax_mechanisms}"
-                / (
-                    f"fullwave2_3d_{n_relax_mechanisms}_relax{isotropic_str}"
-                    f"_multi_gpu_{cuda_version_option}"
-                )
+            path_fullwave_simulation_bin = _relaxation_binary_path(
+                dimension="3d",
+                cuda_version_option=cuda_version_option,
+                isotropic_str=isotropic_str,
             )
         else:
             path_fullwave_simulation_bin = (
@@ -277,16 +300,10 @@ def _retrieve_fullwave_simulation_path(
             raise NotImplementedError(error_msg)
     else:  # noqa: PLR5501
         if use_gpu:
-            path_fullwave_simulation_bin = (
-                Path(__file__).parent
-                / "bins"
-                / "gpu"
-                / "2d"
-                / f"num_relax={n_relax_mechanisms}"
-                / (
-                    f"fullwave2_2d_{n_relax_mechanisms}_relax{isotropic_str}"
-                    f"_multi_gpu_{cuda_version_option}"
-                )
+            path_fullwave_simulation_bin = _relaxation_binary_path(
+                dimension="2d",
+                cuda_version_option=cuda_version_option,
+                isotropic_str=isotropic_str,
             )
         else:
             path_fullwave_simulation_bin = (
@@ -324,7 +341,8 @@ class Solver:
         m_spatial_order: int = 8,
         pml_layer_thickness_px: int | None = None,
         n_transition_layer: int | None = None,
-        run_on_memory: bool = False,
+        exponential_attenuation_pml_thickness_px: int | None = None,
+        run_on_memory: bool | None = None,
         use_gpu: bool = True,
         use_exponential_attenuation: bool = False,
         use_isotropic_relaxation: bool = True,
@@ -332,6 +350,9 @@ class Solver:
         save_gpu_memory: bool = False,
         verify_gpu: bool = True,
         use_gpu_pml: bool = False,
+        pml_alpha_entrance: float | None = None,
+        source_type: str = HARD,
+        write_maps_the_solver_does_not_read: bool = False,
     ) -> None:
         """Initialize a Solver instance for the fullwave simulation.
 
@@ -368,18 +389,37 @@ class Solver:
             Fullwave simulation has 2M th order spatial accuracy and fourth order accuracy in time.
             see Pinton, G. (2021) http://arxiv.org/abs/2106.11476 for more detail.
         pml_layer_thickness_px : int, optional
-            PML layer thickness (default is 3 ppw).
+            Width of the margin between the interior and the grid edge, in grid
+            points. For the relaxation model the default is 4 wavelengths.
+            For the exponential attenuation model the default is the depth of
+            whichever absorber is in use, so no cell of the margin is idle.
         n_transition_layer : int, optional
             Number of transition layers (default is 3 ppw).
+        exponential_attenuation_pml_thickness_px : int, optional
+            Thickness of the C-PML absorbing layer in grid points.
+            The C-PML belongs to the exponential attenuation model, so this
+            argument is refused when ``use_exponential_attenuation`` is False.
+            The relaxation model absorbs with its own two stage layer, which
+            ``pml_layer_thickness_px`` sizes.
+            None, the default, gives 2 wavelengths.
+            0 turns the layer off and tapers ``alpha_exp`` in the margin instead,
+            which is what every release before this one did.
         run_on_memory : bool, optional
             Flag indicating whether to run the simulation in memory.
+            Defaults to True, which keeps the input files and the recorded
+            field off the disk. A run writes several arrays of the whole grid
+            and reads back one array for each recorded step, and none of that
+            needs to survive the run, because ``run`` returns the field.
             If True, a temporary directory is created in memory.
             it uses the /run/user/{uid} directory if available.
             the maximum size depends on the system configuration.
             if needed, increase the size of /run/user/{uid} using the following website:
             https://wiki.archlinux.org/title/Profile-sync-daemon#Allocate_more_memory_to_accommodate_profiles_in_/run/user/xxxx
-            If False, a temporary directory is created on disk.
-            Defaults to False.
+            It falls back to the disk when no such directory is available.
+            None, the default, means memory, and it steps aside for a static
+            map, which needs the files on a disk. An explicit True refuses a
+            static map rather than stepping aside. Set it to False to keep the
+            simulation directory.
         use_gpu : bool, optional
             Whether to use GPU for the simulation.
             Currently, only GPU version is supported.
@@ -428,6 +468,16 @@ class Solver:
             Defaults to True. Set to False when generating input files only
             (``generate_input_only=True``) on a machine that may not have
             the target GPUs available.
+        write_maps_the_solver_does_not_read : bool, optional
+            Whether to write the momentum operator maps the n-relaxation solver
+            never reads, which are kappax and, above the first mechanism, apmlx
+            and bpmlx. False, the default, skips them and saves one map plus two
+            for each mechanism above the first, which is 7 of 18 maps at 4
+            mechanisms. The record they are replaced by is
+            impedance_constraint.dat, and the writer always writes it on the
+            relaxation path. Set it to True for a solver binary that predates
+            that record. Such a binary stops with an error on kappax.dat rather
+            than returning a wrong answer.
 
         Raises
         ------
@@ -438,6 +488,15 @@ class Solver:
             and transducer) are defined simultaneously.
 
         """
+        if exponential_attenuation_pml_thickness_px is not None and not use_exponential_attenuation:
+            error_msg = (
+                "exponential_attenuation_pml_thickness_px belongs to the exponential "
+                "attenuation model, and this run uses the relaxation model. Set "
+                "use_exponential_attenuation=True, or size the relaxation PML with "
+                "pml_layer_thickness_px."
+            )
+            raise ValueError(error_msg)
+
         # type hints
         self.source: fullwave.Source
         self.sensor: fullwave.Sensor
@@ -446,6 +505,11 @@ class Solver:
         self.input_file_writer: InputFileWriter
         self.save_gpu_memory = save_gpu_memory
 
+        # None means memory, and it steps aside for a static map. An explicit
+        # True refuses one instead, because the caller asked for memory.
+        self.run_on_memory_is_stated = run_on_memory is not None
+        self.work_dir_on_disk = Path(work_dir)
+        run_on_memory = True if run_on_memory is None else run_on_memory
         self.run_on_memory = run_on_memory
         if run_on_memory:
             message = (
@@ -485,6 +549,7 @@ class Solver:
         self.use_gpu = use_gpu
         self.use_exponential_attenuation = use_exponential_attenuation
         self.use_isotropic_relaxation = use_isotropic_relaxation
+        self.write_maps_the_solver_does_not_read = write_maps_the_solver_does_not_read
 
         self.n_relax_mechanisms = medium.n_relaxation_mechanisms
 
@@ -494,7 +559,6 @@ class Solver:
                 is_3d=self.is_3d,
                 use_exponential_attenuation=self.use_exponential_attenuation,
                 use_isotropic_relaxation=use_isotropic_relaxation,
-                n_relax_mechanisms=self.n_relax_mechanisms,
             )
             path_fullwave_simulation_bin = ensure_binary(local_path)
         else:
@@ -532,13 +596,25 @@ class Solver:
 
         self.use_pml = use_pml
         if not use_pml:
+            if exponential_attenuation_pml_thickness_px:
+                error_msg = (
+                    "use_pml=False asks for no PML, and "
+                    "exponential_attenuation_pml_thickness_px="
+                    f"{exponential_attenuation_pml_thickness_px} asks for one. Set use_pml=True, "
+                    "or drop the thickness."
+                )
+                raise ValueError(error_msg)
+            exponential_attenuation_pml_thickness_px = 0
             pml_layer_thickness_px = 0
             n_transition_layer = 0
 
-        if pml_layer_thickness_px is None:
-            pml_layer_thickness_px = self.grid.ppw * 3
+        # The exponential attenuation builder sizes its own margin, because the
+        # margin holds one absorber and nothing else, and only that builder
+        # knows which of its two absorbers is in use.
+        if pml_layer_thickness_px is None and not use_exponential_attenuation:
+            pml_layer_thickness_px = self.grid.ppw * 4
         if n_transition_layer is None:
-            n_transition_layer = self.grid.ppw * 3
+            n_transition_layer = self.grid.ppw * 2
 
         if source is not None:
             self.source = source
@@ -547,6 +623,30 @@ class Solver:
         else:
             error_msg = "source or transducer must be provided"
             raise ValueError(error_msg)
+
+        if source_type not in SOURCE_TYPES:
+            error_msg = f"source_type {source_type!r} is not one of {SOURCE_TYPES}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        if is_soft(source_type) and self.source.p0_additive is not None:
+            error_msg = (
+                "this source already carries an additive signal. source_type='soft' "
+                "converts a hard source into a soft one, and this source holds no "
+                "hard source positions, so its signal would be lost. Set the source type "
+                "in one place, either on the Transducer or on the Solver."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        if not is_soft(source_type) and self.source.p0_additive is not None:
+            self._warn_if_the_additive_signal_was_not_scaled()
+        if is_soft(source_type):
+            self.source = as_additive_source(
+                self.source,
+                self.grid,
+                self.medium,
+                use_exponential_attenuation=use_exponential_attenuation,
+            )
+            logger.info("source_type=%s, the source is driven by addition", source_type)
 
         if sensor is not None:
             self.sensor = sensor
@@ -580,6 +680,7 @@ class Solver:
                 sensor=self.sensor,
                 m_spatial_order=m_spatial_order,
                 n_pml_layer=pml_layer_thickness_px,
+                exponential_attenuation_pml_thickness_px=exponential_attenuation_pml_thickness_px,
                 use_gpu=use_gpu_pml,
             )
         else:
@@ -593,7 +694,28 @@ class Solver:
                 n_transition_layer=n_transition_layer,
                 use_isotropic_relaxation=use_isotropic_relaxation,
                 use_gpu=use_gpu_pml,
+                pml_alpha_entrance=pml_alpha_entrance,
             )
+
+    def _warn_if_the_additive_signal_was_not_scaled(self) -> None:
+        """Say so when an additive signal was built by hand and may carry no scale.
+
+        An additive source adds a value to the pressure of its own nodes on every
+        step, so it radiates the signal times `dx / (2 c dt)`. A signal built by
+        hand and not scaled therefore radiates an amplitude that follows the
+        Courant number.
+        """
+        if getattr(self.source, "additive_signal_is_scaled", False):
+            return
+        message = (
+            "this source carries an additive signal that was built by hand, and the solver "
+            "uses it exactly as given. An additive signal radiates p0_additive * dx / (2 c dt), "
+            "so it must already carry the 2 c dt / dx scale. Build it with "
+            "fullwave.Source.additive(...), or pass a hard source with "
+            "Solver(source_type='soft'), or set the source type on a Transducer, "
+            "and the scale is applied for you."
+        )
+        logger.warning(message)
 
     @staticmethod
     def _release_gpu_memory_pools() -> None:
@@ -899,14 +1021,25 @@ class Solver:
         logger.debug(message)
 
         if self.run_on_memory and is_static_map:
-            error_msg = (
-                "run_on_memory cannot be True when is_static_map is True. "
-                "Static map simulations require input files to be stored on a disk. run_on_memory, "
-                "on the other hand, removes the input files after the simulation is complete. "
-                "Please set run_on_memory to False when using static map."
+            if self.run_on_memory_is_stated:
+                error_msg = (
+                    "run_on_memory cannot be True when is_static_map is True. "
+                    "Static map simulations require input files to be stored on a disk. "
+                    "run_on_memory, on the other hand, removes the input files after the "
+                    "simulation is complete. Please set run_on_memory to False when using "
+                    "static map."
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            message = (
+                "A static map needs the input files on a disk, so this run uses work_dir "
+                f"{self.work_dir_on_disk} rather than memory. Pass run_on_memory=False to "
+                "say so, or run_on_memory=True to refuse a static map."
             )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
+            logger.warning(message)
+            self.run_on_memory = False
+            self.work_dir = self.work_dir_on_disk
+            self.work_dir.mkdir(exist_ok=True, parents=True)
 
         self._validate_filter_params(
             highpass_cutoff_mhz,
@@ -933,7 +1066,8 @@ class Solver:
         if record_whole_domain:
             mod_x = 1
             mod_y = 1
-            mod_z = 1 if self.is_3d else None
+            # Sensor reads mod_z as a count and treats 0 as two dimensions.
+            mod_z = 1 if self.is_3d else 0
 
             sensor = fullwave.Sensor(
                 mod_x=mod_x,
@@ -946,10 +1080,11 @@ class Solver:
 
         # pml_thickness = PML + transition layers on each side, excluding ghost cells.
         # Used by the binary to locate the interior domain when building a sparse sensor grid.
-        if record_whole_domain:
-            pml_thickness = 0
-        else:
-            pml_thickness = self.pml_builder.num_boundary_points - self.pml_builder.m_spatial_order
+        interior_offset = self.pml_builder.num_boundary_points - self.pml_builder.m_spatial_order
+        pml_thickness = 0 if record_whole_domain else interior_offset
+        exponential_attenuation_pml_thickness_px = (
+            self.pml_builder.exponential_attenuation_pml_thickness_px
+        )
 
         start_input_file_writer_time = time.time()
         input_file_writer = InputFileWriter(
@@ -963,7 +1098,10 @@ class Solver:
             use_isotropic_relaxation=self.use_isotropic_relaxation,
             release_after_write=release_after_write,
             pml_thickness=pml_thickness,
+            exponential_attenuation_pml_thickness_px=exponential_attenuation_pml_thickness_px,
+            exponential_attenuation_pml_interior_offset_px=interior_offset,
             use_gpu=self.use_gpu_pml,
+            write_maps_the_solver_does_not_read=self.write_maps_the_solver_does_not_read,
         )
         simulation_dir = input_file_writer.run(
             simulation_dir_name,

@@ -11,7 +11,7 @@ Binaries are versioned independently from the Python package — update
 ``BINARY_RELEASE_TAG`` only when new binaries are published.
 
 The release tag can be overridden at runtime with the environment variable
-``FULLWAVE25_BINARY_TAG`` (e.g. ``export FULLWAVE25_BINARY_TAG=v1.2.2``).
+``FULLWAVE25_BINARY_TAG`` (e.g. ``export FULLWAVE25_BINARY_TAG=fullwave_bin_v1.4``).
 """
 
 import logging
@@ -28,7 +28,7 @@ CACHE_DIR = Path.home() / ".cache" / "fullwave25" / "bins"
 
 # Pinned release tag for the solver binaries.
 # Update this only when new binaries are uploaded to a GitHub release.
-BINARY_RELEASE_TAG = "fullwave_bin_v1.3"
+BINARY_RELEASE_TAG = "fullwave_bin_v1.4.1"
 
 
 def _download_url(filename: str, tag: str) -> str:
@@ -41,7 +41,7 @@ def _download_binary(url: str, dest: Path) -> None:
     tmp = dest.with_suffix(".download_tmp")
     try:
         try:
-            from tqdm import tqdm
+            from tqdm import tqdm  # noqa: PLC0415
 
             class _Hook:
                 def __init__(self) -> None:

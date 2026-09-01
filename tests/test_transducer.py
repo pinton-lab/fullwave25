@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 import fullwave
+import fullwave.solver.source_type as source_type_module
 from fullwave.transducer import Transducer, TransducerGeometry
 
 
@@ -107,12 +108,15 @@ def test_negative_position():
 
 # Dummy grid class with nt attribute for GeneralTransducer tests
 class DummyGridWithTime:
-    def __init__(self, nx, ny, dx, dy, nt):
+    def __init__(self, nx, ny, dx, dy, nt, c0=1540.0, cfl=0.4):
         self.nx = nx
         self.ny = ny
         self.dx = dx
         self.dy = dy
         self.nt = nt
+        self.c0 = c0
+        self.cfl = cfl
+        self.dt = cfl * dx / c0
         self.is_3d = False
 
 
@@ -144,6 +148,7 @@ def test_valid_general_transducer():
         grid=grid,
         input_signal=input_signal,
         validate_input=False,
+        source_type=source_type_module.SOFT,
     )
     # Check that the active elements default to all True.
     np.testing.assert_array_equal(
@@ -193,6 +198,7 @@ def test_invalid_signal_shape():
             grid=grid,
             input_signal=wrong_signal,
             validate_input=False,
+            source_type=source_type_module.SOFT,
         )
 
 
@@ -227,6 +233,7 @@ def test_custom_active_elements():
         active_source_elements=custom_active,
         active_sensor_elements=custom_active,
         validate_input=False,
+        source_type=source_type_module.SOFT,
     )
     # Check that the custom active arrays are stored correctly.
     np.testing.assert_array_equal(gt.active_source_elements, custom_active)

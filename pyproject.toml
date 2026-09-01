@@ -1,6 +1,6 @@
 [project]
 name = "fullwave25"
-version = "1.2.6-dev8" # Update via bump-my-version, not manually
+version = "1.2.6-dev9" # Update via bump-my-version, not manually
 description = "Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -46,7 +46,14 @@ examples = [
 path = "fullwave/__init__.py"
 
 [dependency-groups]
-dev = ["deptry>=0.23.1", "pre-commit>=4.1.0", "pytest>=8.3.5", "ruff>=0.12.9"]
+dev = [
+    "deptry>=0.23.1",
+    "h5py>=3.14.0",
+    "nbclient>=0.10.2",
+    "pre-commit>=4.1.0",
+    "pytest>=8.3.5",
+    "ruff>=0.12.9",
+]
 
 [build-system]
 requires = ["hatchling"]

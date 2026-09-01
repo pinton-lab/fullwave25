@@ -14,10 +14,14 @@ import numexpr as ne
 import numpy as np
 
 from fullwave import Grid
+from fullwave.solver.shipped_database import ShippedDatabase
 from fullwave.solver.utils import initialize_relaxation_param_dict
 from fullwave.utils import check_functions, plot_utils
 from fullwave.utils.coordinates import coords_to_map, map_to_coords
-from fullwave.utils.relaxation_parameters import generate_relaxation_params
+from fullwave.utils.relaxation_parameters import (
+    band_scaled_sound_speed,
+    generate_relaxation_params,
+)
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -156,6 +160,87 @@ def _upload_or_convert_arrays(
     }
 
 
+def lossless_value_of(parameter_name: str) -> float:
+    """Return what a lossless voxel holds for one relaxation parameter.
+
+    A stretching factor of 1 and a damping of 0 give a wavenumber of exactly
+    omega over c.
+
+    Parameters
+    ----------
+    parameter_name : str
+        The name of the relaxation parameter.
+
+    Returns
+    -------
+    float
+        The value a lossless voxel holds.
+
+    """
+    return 1.0 if parameter_name.startswith("kappa") else 0.0
+
+
+def _make_the_lossless_voxels_lossless(
+    relaxation_param_dict: dict[str, NDArray[np.float64]],
+    alpha_coeff: NDArray[np.float64] | float,
+) -> None:
+    """Write the lossless values wherever the attenuation coefficient is zero.
+
+    Parameters
+    ----------
+    relaxation_param_dict : dict[str, NDArray[np.float64]]
+        The parameters, changed in place.
+    alpha_coeff : NDArray[np.float64] | float
+        The attenuation coefficient of each voxel [dB/(MHz^y cm)].
+
+    Returns
+    -------
+    None
+
+    """
+    if not relaxation_param_dict:
+        return
+    coefficient = np.asarray(alpha_coeff)
+    if coefficient.ndim == 0:
+        if float(coefficient) != 0.0:
+            return
+        for name, values in relaxation_param_dict.items():
+            values[...] = lossless_value_of(name)
+        return
+    lossless = coefficient == 0
+    if not bool(lossless.any()):
+        return
+    for name, values in relaxation_param_dict.items():
+        values[lossless] = lossless_value_of(name)
+
+
+def _resolve_lossless_marking(
+    alpha_coeff: NDArray[np.float64] | float | None,
+    lossless_coords: NDArray[np.int64] | None,
+    xp: ModuleType,
+    dtype: np.dtype,
+) -> tuple[NDArray[np.float64] | float | None, NDArray[np.int64] | None]:
+    """Return the stored `(alpha_coeff, lossless_coords)` pair.
+
+    A scalar stays a scalar and coordinates stay coordinates, so neither costs a
+    domain-sized array.
+    """
+    if lossless_coords is not None and np.ndim(alpha_coeff) > 0:
+        message = (
+            "lossless_coords and an array alpha_coeff both mark the lossless voxels, "
+            "so give one or the other"
+        )
+        raise ValueError(message)
+    if alpha_coeff is None:
+        stored_coefficient = None
+    elif np.ndim(alpha_coeff) == 0:
+        stored_coefficient = float(alpha_coeff)
+    else:
+        stored_coefficient = xp.atleast_2d(xp.asarray(alpha_coeff)).astype(dtype, copy=False)
+    stored_coords = None if lossless_coords is None else np.asarray(lossless_coords, dtype=np.int64)
+    return stored_coefficient, stored_coords
+
+
 @dataclass
 class MediumRelaxationMaps:
     """Medium class for Fullwave."""
@@ -167,6 +252,8 @@ class MediumRelaxationMaps:
     air_coords: NDArray[np.int64]
     relaxation_param_dict: dict[str, NDArray[np.float64]]
     relaxation_param_dict_for_fw2: dict[str, NDArray[np.float64]]
+    alpha_coeff: NDArray[np.float64] | float | None
+    lossless_coords: NDArray[np.int64] | None
     use_regression: bool = False
 
     def __init__(
@@ -177,9 +264,11 @@ class MediumRelaxationMaps:
         beta: NDArray[np.float64],
         relaxation_param_dict: dict[str, NDArray[np.float64]],
         *,
+        alpha_coeff: NDArray[np.float64] | float | None = None,
+        lossless_coords: NDArray[np.int64] | None = None,
         air_map: NDArray[np.int64] | None = None,
         air_coords: NDArray[np.int64] | None = None,
-        n_relaxation_mechanisms: int = 2,
+        n_relaxation_mechanisms: int = ShippedDatabase.mechanisms,
         use_isotropic_relaxation: bool = True,
         n_jobs: int = -1,
         dtype: type = np.float64,
@@ -206,6 +295,16 @@ class MediumRelaxationMaps:
             key: kappa_x1, kappa_x2, d_x1_nu{i}, alpha_x1_nu{i}, d_x2_nu{i}, alpha_x2_nu{i}
             value.shape: [nx, ny] for 2D, [nx, ny, nz] for 3D for each value
             see Pinton, G. (2021) http://arxiv.org/abs/2106.11476 for more detail.
+        alpha_coeff : float or NDArray[np.float64], optional
+            Attenuation coefficient the relaxation parameters were built for
+            [dB/(MHz^y cm)]. Marks a voxel lossless where it is exactly 0, which
+            the relaxation maps alone cannot express because the lookup clips a
+            smaller request to its minimum. Prefer a scalar, or lossless_coords.
+            None leaves the zero-attenuation gate a no-op for this medium.
+        lossless_coords : NDArray[np.int64], optional
+            Coordinates of the voxels that carry no attenuation, shape
+            [n_lossless, ndim], as air_coords does for air. Mutually exclusive
+            with an array alpha_coeff.
         air_map: NDArray[np.int64], optional
             Binary matrix where the medium is air.
             shape: [nx, ny] for 2D, [nx, ny, nz] for 3D
@@ -235,8 +334,10 @@ class MediumRelaxationMaps:
         """
         check_functions.check_compatible_value(
             n_relaxation_mechanisms,
-            [2],
-            "Only n_relaxation_mechanisms=2 are supported currently.",
+            [1, 2, 3, 4, 5, 6],
+            "n_relaxation_mechanisms must be between 1 and 6. "
+            "A count other than 2 needs the n_relax solver kernel, "
+            "which reads the count from n_relax.dat.",
         )
         self.use_gpu = use_gpu
         self.xp: ModuleType = _get_array_module(use_gpu=use_gpu)
@@ -261,6 +362,9 @@ class MediumRelaxationMaps:
             self.sound_speed = xp.atleast_2d(xp.asarray(sound_speed)).astype(self.dtype, copy=False)
             self.density = xp.atleast_2d(xp.asarray(density)).astype(self.dtype, copy=False)
             self.beta = xp.atleast_2d(xp.asarray(beta)).astype(self.dtype, copy=False)
+            self.alpha_coeff, self.lossless_coords = _resolve_lossless_marking(
+                alpha_coeff, lossless_coords, xp, self.dtype
+            )
         except Exception:
             if xp is np:
                 raise
@@ -347,6 +451,8 @@ class MediumRelaxationMaps:
                     di, dj = d_arrays[i], d_arrays[j]
                     ai, aj = a_arrays[i], a_arrays[j]
                     swap = ne.evaluate("di / kappa + ai > dj / kappa + aj")
+                    if not swap.any():
+                        continue
                     d_arrays[i] = np.where(swap, dj, di)
                     d_arrays[j] = np.where(swap, di, dj)
                     a_arrays[i] = np.where(swap, aj, ai)
@@ -422,7 +528,7 @@ class MediumRelaxationMaps:
         self,
         relaxation_param_dict: dict[str, NDArray[np.float64]],
         contents_shape: NDArray[np.int64] | tuple[int, ...],
-        n_relaxation_mechanisms: int = 2,
+        n_relaxation_mechanisms: int = ShippedDatabase.mechanisms,
     ) -> None:
         """Check if the relaxation parameter updates have valid keys and matching shapes.
 
@@ -499,7 +605,6 @@ class MediumRelaxationMaps:
         output_dtype: np.dtype | None = None,
     ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
         xp = self.xp
-        use_gpu = xp is not np
 
         dx = xp.asarray(dx, dtype=xp.float64)
         kappa_x = xp.asarray(kappa_x, dtype=xp.float64)
@@ -507,19 +612,18 @@ class MediumRelaxationMaps:
         dt = xp.asarray(dt, dtype=xp.float64)
 
         eps = xp.finfo(xp.float64).eps
+        two_over_dt = 2.0 / dt
 
-        if use_gpu:
-            b = xp.exp(-(dx / kappa_x + alpha_x) * dt)
-            denom = kappa_x * (dx + kappa_x * alpha_x) + eps
-            a = dx / denom * (b - 1)
+        if xp is np:
+            rate = ne.evaluate("dx / kappa_x + alpha_x")
+            total = ne.evaluate("two_over_dt + rate")
+            b = ne.evaluate("(two_over_dt - rate) / total")
+            a = ne.evaluate("-(dx / (kappa_x ** 2 + eps)) / total")
         else:
-            eps_local = eps  # noqa: F841
-            # b = exp(-(dx/kappa_x + alpha_x) * dt)
-            b = ne.evaluate("exp(-(dx/kappa_x + alpha_x) * dt)")
-            # denom = kappa_x*(dx + kappa_x*alpha_x) + eps
-            denom = ne.evaluate("kappa_x*(dx + kappa_x*alpha_x) + eps_local")
-            # a = dx/denom*(b - 1)
-            a = ne.evaluate("dx/denom*(b - 1)")
+            rate = dx / kappa_x + alpha_x
+            total = two_over_dt + rate
+            b = (two_over_dt - rate) / total
+            a = -(dx / (kappa_x**2 + eps)) / total
 
         if output_dtype is not None and output_dtype != xp.float64:
             a = a.astype(output_dtype, copy=False)
@@ -1091,14 +1195,14 @@ class Medium:
         *,
         air_map: NDArray[np.int64] | None = None,
         air_coords: NDArray[np.int64] | None = None,
-        path_relaxation_parameters_database: Path = Path(__file__).parent
-        / "solver"
-        / "bins"
-        / "database"
-        / "relaxation_params_database_num_relax=2_20260113_0957.mat",
-        n_relaxation_mechanisms: int = 2,
+        path_relaxation_parameters_database: Path = ShippedDatabase.table,
+        path_invalid_cells: Path | None = None,
+        n_relaxation_mechanisms: int = ShippedDatabase.mechanisms,
         attenuation_builder: str = "lookup",
         use_isotropic_relaxation: bool = True,
+        sound_speed_transfer: bool = True,
+        band_scale: float = 1.0,
+        scale_to_requested_alpha_coeff: bool = False,
         n_jobs: int = -1,
         dtype: type = np.float64,
         use_gpu: bool = False,
@@ -1135,6 +1239,11 @@ class Medium:
             Mutually exclusive with air_map.
         path_relaxation_parameters_database : Path, optional
             Path to the relaxation parameters database.
+        path_invalid_cells : Path, optional
+            Path to the JSON record an evaluation wrote, which names every
+            invalid cell of the table and why it is invalid. A request that lands
+            on one is warned about, and the lookup still serves it. Without it
+            nothing is marked and the behaviour is unchanged.
         n_relaxation_mechanisms : int, optional
             Number of relaxation mechanisms, by default 4
         attenuation_builder : str, optional
@@ -1148,6 +1257,33 @@ class Medium:
             This option omits the anisotropic relaxation mechanisms to model the attenuation.
             We usually recommend using isotropic relaxation mechanisms
             unless the anisotropic attenuation is required for the simulation.
+        sound_speed_transfer : bool, optional
+            Correct the looked-up relaxation parameters for the medium's sound
+            speed. The table was calibrated at 1540 m/s, where this is the
+            identity. Elsewhere the uncorrected attenuation is wrong by
+            1540/c, reaching 9.1% at a fat sound speed of 1412 m/s. Set False
+            to reproduce a result produced before this existed.
+        band_scale : float, optional
+            Transfer the calibration to a frequency band scaled by this factor,
+            so 0.1 moves the usable band from 1-20 MHz to 0.1-2 MHz. Give it
+            explicitly rather than deriving it from the transmit frequency,
+            which needs no transfer while it lies inside the calibrated band.
+            A value other than 1.0 also moves the sound speed the built medium
+            carries, by up to 0.5%, because the transfer re-anchors the
+            Kramers-Kronig phase velocity. ``sound_speed`` is then the speed the
+            medium carries at the calibration reference frequency of 5 MHz, and
+            ``MediumRelaxationMaps.sound_speed`` reports the base speed that
+            gives it. See ``band_scaled_sound_speed``.
+        scale_to_requested_alpha_coeff : bool, optional
+            Give the requested attenuation coefficient rather than the
+            calibrated level the lookup serves. The coefficient axis holds
+            0.0022 and then 0.01 to 1.00 in absolute steps of 0.01, so a request
+            between two levels is served the one above and a request past either
+            end is clipped. Setting this True scales the relaxation departure by
+            the shortfall instead. It matters most under a band transfer, which
+            multiplies the request by a factor and often carries it off the
+            axis. False, the default, reproduces every result produced before
+            this existed.
         n_jobs : int, optional
             Number of parallel jobs for relaxation parameter calculation.
             Default is -1, which uses all available CPUs.
@@ -1163,8 +1299,10 @@ class Medium:
         """
         check_functions.check_compatible_value(
             n_relaxation_mechanisms,
-            [2],
-            "Only n_relaxation_mechanisms=2 are supported currently.",
+            [1, 2, 3, 4, 5, 6],
+            "n_relaxation_mechanisms must be between 1 and 6. "
+            "A count other than 2 needs the n_relax solver kernel, "
+            "which reads the count from n_relax.dat.",
         )
         check_functions.check_instance(grid, Grid)
         check_functions.check_path_exists(path_relaxation_parameters_database)
@@ -1215,19 +1353,14 @@ class Medium:
             self.air_coords = np.empty((0, ndim), dtype=np.int64)
 
         self.path_relaxation_parameters_database = path_relaxation_parameters_database
+        self.path_invalid_cells = path_invalid_cells
         self.n_relaxation_mechanisms = n_relaxation_mechanisms
         self.use_isotropic_relaxation = use_isotropic_relaxation
 
-        if self.n_relaxation_mechanisms != 2 and self.n_air > 0:
-            warning_msg = (
-                "Warning: Currently, only n_relaxation_mechanisms=2 supports air regions. "
-                "Setting air regions to zero for other n_relaxation_mechanisms."
-            )
-            logger.warning(warning_msg)
-            ndim = 3 if self.is_3d else 2
-            self.air_coords = np.empty((0, ndim), dtype=np.int64)
-
         self.attenuation_builder = attenuation_builder
+        self.sound_speed_transfer = sound_speed_transfer
+        self.band_scale = band_scale
+        self.scale_to_requested_alpha_coeff = scale_to_requested_alpha_coeff
         self.n_jobs = n_jobs
         self.check_fields()
         logger.debug("Medium instance created.")
@@ -1412,6 +1545,88 @@ class Medium:
 
     # ---
 
+    def _relaxation_parameters_of(
+        self,
+        sound_speed: NDArray[np.float64],
+        alpha_coeff: NDArray[np.float64],
+        alpha_power: NDArray[np.float64],
+    ) -> dict[str, NDArray[np.float64]]:
+        """Look up the relaxation parameters of the given maps.
+
+        Parameters
+        ----------
+        sound_speed : NDArray[np.float64]
+            The band scaled sound speed the parameters are built at [m/s].
+        alpha_coeff : NDArray[np.float64]
+            Attenuation coefficient [dB/cm/MHz^y].
+        alpha_power : NDArray[np.float64]
+            Attenuation power [-].
+
+        Returns
+        -------
+        dict[str, NDArray[np.float64]]
+            One entry for each relaxation parameter, of the shape given.
+
+        Raises
+        ------
+        ValueError
+            If the attenuation builder is not the lookup.
+
+        """
+        if self.attenuation_builder != "lookup":
+            error_msg = (
+                f"Unknown attenuation_builder: {self.attenuation_builder}. "
+                'Only "lookup" is supported currently.'
+            )
+            raise ValueError(error_msg)
+        relaxation_param_dict = generate_relaxation_params(
+            n_relaxation_mechanisms=self.n_relaxation_mechanisms,
+            alpha_coeff=alpha_coeff,
+            alpha_power=alpha_power,
+            path_database=self.path_relaxation_parameters_database,
+            path_invalid_cells=self.path_invalid_cells,
+            band_scale=self.band_scale,
+            sound_speed=sound_speed if self.sound_speed_transfer else None,
+            scale_to_requested_alpha_coeff=self.scale_to_requested_alpha_coeff,
+        )
+        _make_the_lossless_voxels_lossless(relaxation_param_dict, alpha_coeff)
+        if self.dtype != np.float64:
+            relaxation_param_dict = {
+                key: value.astype(self.dtype, copy=False)
+                for key, value in relaxation_param_dict.items()
+            }
+        return relaxation_param_dict
+
+    def relaxation_parameters_at(
+        self,
+        coords: NDArray[np.int64],
+    ) -> tuple[dict[str, NDArray[np.float64]], NDArray[np.float64]]:
+        """Return the relaxation parameters and the sound speed at the given positions.
+
+        Parameters
+        ----------
+        coords : NDArray[np.int64]
+            Positions, shape [n_positions, ndim].
+
+        Returns
+        -------
+        tuple[dict[str, NDArray[np.float64]], NDArray[np.float64]]
+            One value for each relaxation parameter at each position, and the
+            band scaled sound speed at each position [m/s].
+
+        """
+        index = tuple(np.asarray(coords).T)
+        alpha_coeff = self._to_numpy(self.alpha_coeff[index])
+        alpha_power = self._to_numpy(self.alpha_power[index])
+        sound_speed = band_scaled_sound_speed(
+            self._to_numpy(self.sound_speed[index]),
+            alpha_coeff,
+            alpha_power,
+            self.band_scale,
+        )
+        parameters = self._relaxation_parameters_of(sound_speed, alpha_coeff, alpha_power)
+        return parameters, sound_speed
+
     def build(self) -> MediumRelaxationMaps:
         """Retrieve the relaxation parameters from alpha and power maps.
 
@@ -1429,31 +1644,26 @@ class Medium:
 
         """
         logger.debug("Building MediumRelaxationMaps from alpha and power maps.")
-        if self.attenuation_builder == "lookup":
-            relaxation_param_dict = generate_relaxation_params(
-                n_relaxation_mechanisms=self.n_relaxation_mechanisms,
-                alpha_coeff=self.alpha_coeff,
-                alpha_power=self.alpha_power,
-                path_database=self.path_relaxation_parameters_database,
-            )
-        else:
-            error_msg = (
-                f"Unknown attenuation_builder: {self.attenuation_builder}. "
-                'Only "lookup" is supported currently.'
-            )
-            raise ValueError(error_msg)
-        if self.dtype != np.float64:
-            relaxation_param_dict = {
-                k: v.astype(self.dtype, copy=False) for k, v in relaxation_param_dict.items()
-            }
+        sound_speed = band_scaled_sound_speed(
+            self.sound_speed,
+            self.alpha_coeff,
+            self.alpha_power,
+            self.band_scale,
+        )
+        relaxation_param_dict = self._relaxation_parameters_of(
+            sound_speed,
+            self.alpha_coeff,
+            self.alpha_power,
+        )
         # Convert relaxation params to GPU if needed (MediumRelaxationMaps will
         # call xp.asarray on them in __init__)
         return MediumRelaxationMaps(
             grid=self.grid,
-            sound_speed=self.sound_speed,
+            sound_speed=sound_speed,
             density=self.density,
             beta=self.beta,
             relaxation_param_dict=relaxation_param_dict,
+            alpha_coeff=self.alpha_coeff,
             air_coords=self.air_coords,
             n_relaxation_mechanisms=self.n_relaxation_mechanisms,
             use_isotropic_relaxation=self.use_isotropic_relaxation,

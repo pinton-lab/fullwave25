@@ -10,6 +10,7 @@ from fullwave.constants import MaterialProperties
 from fullwave.utils import check_functions
 
 from fullwave.medium_builder.domain import Domain  # isort:skip
+from fullwave.solver.shipped_database import ShippedDatabase
 
 
 class ScattererDomain(Domain):
@@ -22,12 +23,8 @@ class ScattererDomain(Domain):
         ncycles: int,
         material_properties: MaterialProperties | None = None,
         *,
-        path_relaxation_parameters_database: Path = Path(__file__).parent.parent
-        / "solver"
-        / "bins"
-        / "database"
-        / "relaxation_params_database_num_relax=2_20260113_0957.mat",
-        n_relaxation_mechanisms: int = 2,
+        path_relaxation_parameters_database: Path = ShippedDatabase.table,
+        n_relaxation_mechanisms: int = ShippedDatabase.mechanisms,
         seed: int | None = None,
     ) -> None:
         """Initialize a Background instance.

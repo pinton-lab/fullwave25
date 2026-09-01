@@ -7,6 +7,8 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import DTypeLike, NDArray
 
+from fullwave.solver.shipped_database import ShippedDatabase
+
 logger = logging.getLogger("__main__." + __name__)
 
 
@@ -86,7 +88,7 @@ def _relaxation_param_keys(n_relaxation_mechanisms: int) -> list[str]:
 
 
 def initialize_relaxation_param_dict(
-    n_relaxation_mechanisms: int = 2,
+    n_relaxation_mechanisms: int = ShippedDatabase.mechanisms,
     value: NDArray[np.float64] | None = None,
 ) -> dict[str, NDArray[np.float64]]:
     """Initialize a dictionary with relaxation parameters.
