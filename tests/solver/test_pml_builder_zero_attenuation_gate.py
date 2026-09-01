@@ -1,9 +1,13 @@
 """Tests for the zero-attenuation gate.
 
+Two writers apply it. `Medium` writes the lossless values as it produces the
+parameters, and `PMLBuilder` writes them again over maps a caller made by hand.
+
 The gate is isolated by building one medium twice, once as shipped and once with
-the gate replaced by a no-op, so the two arms differ only in the gate. Half the
-tests check that it leaves something alone, which is where the risk is, because
-the `a` maps carry the absorbing layer as well as the interior relaxation.
+both writers replaced by a no-op, so the two arms differ only in the gate. Half
+the tests check that it leaves something alone, which is where the risk is,
+because the `a` maps carry the absorbing layer as well as the interior
+relaxation.
 """
 
 from __future__ import annotations
@@ -12,6 +16,7 @@ import numpy as np
 import pytest
 
 import fullwave
+from fullwave import medium as medium_module
 from fullwave.solver.pml_builder import PMLBuilder
 
 F0 = 1e6
@@ -29,11 +34,37 @@ def _no_gate(_builder: PMLBuilder, _maps: dict) -> int:
     return 0
 
 
+def _no_medium_gate(_maps: dict, _coefficient) -> None:
+    """Stand in for the medium's own gate, which writes the values at production."""
+    return
+
+
 def _build(*, gate_enabled: bool) -> tuple[dict, PMLBuilder]:
     """Return the PML arrays for one medium, half of it lossless.
 
     The lossless half is the far half in x, so the gated region spans the
     interior and is clipped by the boundary guard on three sides.
+    """
+    original = PMLBuilder._apply_zero_attenuation_gate
+    original_medium = medium_module._make_the_lossless_voxels_lossless
+    if not gate_enabled:
+        PMLBuilder._apply_zero_attenuation_gate = _no_gate
+        medium_module._make_the_lossless_voxels_lossless = _no_medium_gate
+    try:
+        return _built()
+    finally:
+        PMLBuilder._apply_zero_attenuation_gate = original
+        medium_module._make_the_lossless_voxels_lossless = original_medium
+
+
+def _built() -> tuple[dict, PMLBuilder]:
+    """Build one medium and its PML arrays, with whatever gate is in place.
+
+    Returns
+    -------
+    tuple[dict, PMLBuilder]
+        The PML arrays and the builder.
+
     """
     domain_size = (3.2e-3, 3.2e-3)
     grid = fullwave.Grid(domain_size=domain_size, f0=F0, duration=domain_size[0] / C0 * 2, c0=C0)
@@ -60,13 +91,7 @@ def _build(*, gate_enabled: bool) -> tuple[dict, PMLBuilder]:
         n_transition_layer=N_TRANSITION_LAYER,
         use_isotropic_relaxation=True,
     )
-    original = PMLBuilder._apply_zero_attenuation_gate
-    if not gate_enabled:
-        PMLBuilder._apply_zero_attenuation_gate = _no_gate
-    try:
-        extended = builder.run(use_pml=True)
-    finally:
-        PMLBuilder._apply_zero_attenuation_gate = original
+    extended = builder.run(use_pml=True)
     arrays = {k: np.asarray(v) for k, v in extended.relaxation_param_dict_for_fw2.items()}
     return arrays, builder
 
@@ -241,11 +266,13 @@ def test_maps_route_reaches_the_gate_when_it_carries_the_coefficient() -> None:
         assert (gated[key][voxels] == 0).all(), key
 
 
-def test_maps_route_without_a_coefficient_keeps_the_old_behaviour() -> None:
-    """Omitting the coefficient leaves the drive nonzero, which is the old behaviour."""
+def test_maps_route_without_a_coefficient_is_already_gated_at_production() -> None:
+    """Maps that came from `Medium.build` stay lossless with no coefficient to gate on."""
     plain, builder = _build_from_maps(carry_alpha_coeff=False)
     voxels = _gated_voxels(plain[DRIVE_KEYS[0]].shape, builder.num_boundary_points)
-    assert any((plain[key][voxels] != 0).any() for key in DRIVE_KEYS)
+    assert voxels.any(), "the fixture gated nothing, so it tests nothing"
+    for key in DRIVE_KEYS:
+        assert (plain[key][voxels] == 0).all(), key
 
 
 def _build_uniform_from_maps(alpha_coeff_value):

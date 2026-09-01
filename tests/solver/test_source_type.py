@@ -300,3 +300,14 @@ def test_solver_rejects_an_unknown_source_type(tmp_path):
             source_type="assign",
             path_fullwave_simulation_bin=stand_in,
         )
+
+
+def test_an_attenuating_position_still_takes_the_relaxation_phase_speed():
+    shape = (6, 4)
+    dx = 1e-4
+    courant = 0.2
+    medium = _MediumThatLooksUp(np.full(shape, 1540.0), kappa=1.01)
+    converted = source_type.as_additive_source(
+        _source(shape, amplitude=1.0e5), _Grid(dt=courant * dx / 1540.0, dx=dx), medium
+    )
+    assert converted.p0_additive.max() == pytest.approx(1.0e5 * 2 * courant / 1.01)

@@ -160,6 +160,60 @@ def _upload_or_convert_arrays(
     }
 
 
+def lossless_value_of(parameter_name: str) -> float:
+    """Return what a lossless voxel holds for one relaxation parameter.
+
+    A stretching factor of 1 and a damping of 0 give a wavenumber of exactly
+    omega over c.
+
+    Parameters
+    ----------
+    parameter_name : str
+        The name of the relaxation parameter.
+
+    Returns
+    -------
+    float
+        The value a lossless voxel holds.
+
+    """
+    return 1.0 if parameter_name.startswith("kappa") else 0.0
+
+
+def _make_the_lossless_voxels_lossless(
+    relaxation_param_dict: dict[str, NDArray[np.float64]],
+    alpha_coeff: NDArray[np.float64] | float,
+) -> None:
+    """Write the lossless values wherever the attenuation coefficient is zero.
+
+    Parameters
+    ----------
+    relaxation_param_dict : dict[str, NDArray[np.float64]]
+        The parameters, changed in place.
+    alpha_coeff : NDArray[np.float64] | float
+        The attenuation coefficient of each voxel [dB/(MHz^y cm)].
+
+    Returns
+    -------
+    None
+
+    """
+    if not relaxation_param_dict:
+        return
+    coefficient = np.asarray(alpha_coeff)
+    if coefficient.ndim == 0:
+        if float(coefficient) != 0.0:
+            return
+        for name, values in relaxation_param_dict.items():
+            values[...] = lossless_value_of(name)
+        return
+    lossless = coefficient == 0
+    if not bool(lossless.any()):
+        return
+    for name, values in relaxation_param_dict.items():
+        values[lossless] = lossless_value_of(name)
+
+
 def _resolve_lossless_marking(
     alpha_coeff: NDArray[np.float64] | float | None,
     lossless_coords: NDArray[np.int64] | None,
@@ -1535,6 +1589,7 @@ class Medium:
             sound_speed=sound_speed if self.sound_speed_transfer else None,
             scale_to_requested_alpha_coeff=self.scale_to_requested_alpha_coeff,
         )
+        _make_the_lossless_voxels_lossless(relaxation_param_dict, alpha_coeff)
         if self.dtype != np.float64:
             relaxation_param_dict = {
                 key: value.astype(self.dtype, copy=False)

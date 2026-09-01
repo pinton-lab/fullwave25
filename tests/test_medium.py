@@ -1,8 +1,10 @@
 import numpy as np
 import pytest
 
+import fullwave
 import fullwave.medium as medium_module
 from fullwave.medium import Medium, MediumRelaxationMaps
+from fullwave.solver import source_type
 from fullwave.solver.shipped_database import ShippedDatabase
 from fullwave.solver.utils import initialize_relaxation_param_dict
 
@@ -814,3 +816,63 @@ def test_calc_relaxation_param_dict_for_fw2_multiple_nu(monkeypatch):
     assert "b_pml_x1" in fw2_dict
     assert "a_pml_x2" in fw2_dict
     assert "b_pml_x2" in fw2_dict
+
+
+class TestTheLosslessVoxelsAreLosslessAtProduction:
+    """A voxel that asks for no attenuation carries the lossless parameters."""
+
+    def _grid(self):
+        return fullwave.Grid(
+            domain_size=(3.2e-3, 3.2e-3), f0=1.0e6, duration=3.2e-3 / 1540.0 * 2, c0=1540.0
+        )
+
+    def _medium(self, coefficient):
+        grid = self._grid()
+        shape = (grid.nx, grid.ny)
+        return grid, fullwave.Medium(
+            grid=grid,
+            sound_speed=np.full(shape, 1540.0),
+            density=np.full(shape, 1000.0),
+            alpha_coeff=np.full(shape, coefficient),
+            alpha_power=np.full(shape, 1.0001),
+            beta=np.zeros(shape),
+            n_relaxation_mechanisms=4,
+            use_isotropic_relaxation=True,
+        )
+
+    def test_a_lossless_lookup_carries_the_lossless_values(self):
+        grid, medium = self._medium(0.0)
+        coords = np.stack(
+            [np.zeros(grid.ny, dtype=np.int64), np.arange(grid.ny, dtype=np.int64)], axis=1
+        )
+        parameters, _ = medium.relaxation_parameters_at(coords)
+        assert parameters
+        for name, values in parameters.items():
+            wanted = 1.0 if name.startswith("kappa") else 0.0
+            assert np.allclose(np.asarray(values), wanted), name
+
+    def test_a_lossless_lookup_travels_at_the_stored_sound_speed(self):
+        grid, medium = self._medium(0.0)
+        coords = np.stack(
+            [np.zeros(grid.ny, dtype=np.int64), np.arange(grid.ny, dtype=np.int64)], axis=1
+        )
+        parameters, sound_speed = medium.relaxation_parameters_at(coords)
+        speed = source_type.relaxation_phase_speed(parameters, sound_speed, float(grid.f0))
+        assert np.allclose(np.asarray(speed), 1540.0)
+
+    def test_an_attenuating_lookup_keeps_its_own_dispersion(self):
+        grid, medium = self._medium(0.5)
+        coords = np.stack(
+            [np.zeros(grid.ny, dtype=np.int64), np.arange(grid.ny, dtype=np.int64)], axis=1
+        )
+        parameters, sound_speed = medium.relaxation_parameters_at(coords)
+        speed = np.asarray(
+            source_type.relaxation_phase_speed(parameters, sound_speed, float(grid.f0))
+        )
+        assert not np.allclose(speed, 1540.0)
+
+    def test_the_whole_map_is_lossless_where_the_coefficient_is_zero(self):
+        _, medium = self._medium(0.0)
+        for name, values in medium.build().relaxation_param_dict.items():
+            wanted = 1.0 if name.startswith("kappa") else 0.0
+            assert np.allclose(np.asarray(values), wanted), name
