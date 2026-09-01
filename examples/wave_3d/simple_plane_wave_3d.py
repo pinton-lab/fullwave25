@@ -96,8 +96,8 @@ def main() -> None:
     #
 
     # define where to put the pressure source [nx, ny, nz].
-    # source_type="additive" needs exactly one row. A thicker source needs the
-    # hard source, source_type="clamped", and each row takes its own delay below.
+    # source_type="soft" needs exactly one row. A thicker source needs the
+    # hard source, source_type="hard", and each row takes its own delay below.
     p_mask = np.zeros((grid.nx, grid.ny, grid.nz), dtype=bool)
     element_thickness_px = 1
     p_mask[0:element_thickness_px] = True
@@ -148,7 +148,7 @@ def main() -> None:
         use_exponential_attenuation=False,
         # verify_gpu=False,
         # cuda_device_id=list(range(8)),
-        source_type="additive",  # the signal is added to the field, not assigned
+        source_type="soft",  # the signal is added to the field, not assigned
     )
     fw_solver.print_info()
     # sensor_output = fw_solver.run(gpu_memory_estimate=True, generate_input_only=True)

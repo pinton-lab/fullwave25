@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 import fullwave
+import fullwave.solver.source_type as source_type_module
 from fullwave.transducer import Transducer, TransducerGeometry
 
 
@@ -147,6 +148,7 @@ def test_valid_general_transducer():
         grid=grid,
         input_signal=input_signal,
         validate_input=False,
+        source_type=source_type_module.SOFT,
     )
     # Check that the active elements default to all True.
     np.testing.assert_array_equal(
@@ -196,6 +198,7 @@ def test_invalid_signal_shape():
             grid=grid,
             input_signal=wrong_signal,
             validate_input=False,
+            source_type=source_type_module.SOFT,
         )
 
 
@@ -230,6 +233,7 @@ def test_custom_active_elements():
         active_source_elements=custom_active,
         active_sensor_elements=custom_active,
         validate_input=False,
+        source_type=source_type_module.SOFT,
     )
     # Check that the custom active arrays are stored correctly.
     np.testing.assert_array_equal(gt.active_source_elements, custom_active)

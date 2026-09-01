@@ -180,8 +180,8 @@ def test_the_transducer_refuses_an_unknown_source_type():
 
 def test_the_additive_signal_is_scaled_so_the_aperture_radiates_its_pressure():
     grid = _grid()
-    hard = fullwave.Transducer.p4_1c(grid, source_type="clamped")
-    additive = fullwave.Transducer.p4_1c(grid)
+    hard = fullwave.Transducer.p4_1c(grid, source_type="hard")
+    additive = fullwave.Transducer.p4_1c(grid, source_type="soft")
     hard.plane_wave()
     additive.plane_wave()
     scale = 2.0 * grid.c0 * grid.dt / grid.dx
@@ -200,8 +200,8 @@ def test_the_additive_signal_carries_the_scale_at_every_courant_number():
             ppw=12,
             cfl=courant,
         )
-        hard = fullwave.Transducer.p4_1c(grid, source_type="clamped")
-        additive = fullwave.Transducer.p4_1c(grid)
+        hard = fullwave.Transducer.p4_1c(grid, source_type="hard")
+        additive = fullwave.Transducer.p4_1c(grid, source_type="soft")
         hard.plane_wave()
         additive.plane_wave()
         ratio = np.abs(additive.source.p0_additive).max() / np.abs(hard.source.p0).max()
@@ -210,7 +210,7 @@ def test_the_additive_signal_carries_the_scale_at_every_courant_number():
 
 def test_an_additive_transducer_builds_an_additive_source():
     grid = _grid()
-    transducer = fullwave.Transducer.p4_1c(grid)
+    transducer = fullwave.Transducer.p4_1c(grid, source_type="soft")
     transducer.plane_wave()
     source = transducer.source
     assert source.p0_additive is not None

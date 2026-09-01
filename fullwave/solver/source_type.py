@@ -7,11 +7,11 @@ amplitude. Measured in a uniform lossless medium, where the maximum intensity
 projection must equal the source pressure squared, a hard source reads 0.989886
 at 16 points per wavelength, 0.954260 at 8 and 0.997504 at 32.
 
-An additive source does not radiate the value it is given. Adding `s` to the
+A soft source does not radiate the value it is given. Adding `s` to the
 pressure of one plane of nodes on every step is a volume rate of `s / dt` over a
 thickness `dx`. A source of that rate radiates `s * dx / (2 * c * dt)` in
 each direction. A caller who wants to radiate `p` must inject `p * 2 * c * dt / dx`.
-With that scale an additive source reads 0.999877 of the same reference.
+With that scale a soft source reads 0.999877 of the same reference.
 """
 
 from typing import TYPE_CHECKING
@@ -24,9 +24,9 @@ from fullwave.source import Source
 if TYPE_CHECKING:
     import fullwave
 
-CLAMPED = "clamped"
-ADDITIVE = "additive"
-SOURCE_TYPES = (CLAMPED, ADDITIVE)
+HARD = "hard"
+SOFT = "soft"
+SOURCE_TYPES = (HARD, SOFT)
 
 
 def _is_on_the_device(array: object) -> bool:
@@ -57,9 +57,9 @@ def _at_the_source(array: NDArray, index: tuple[NDArray, ...]) -> NDArray:
     return np.asarray(array, dtype=float)[index]
 
 
-def is_additive(source_type: str) -> bool:
+def is_soft(source_type: str) -> bool:
     """Return whether this source type adds to the field rather than assigning it."""
-    return source_type == ADDITIVE
+    return source_type == SOFT
 
 
 def source_row(coords: NDArray[np.int64], grid_shape: tuple[int, ...]) -> int:
@@ -93,7 +93,7 @@ def source_row(coords: NDArray[np.int64], grid_shape: tuple[int, ...]) -> int:
     across = int(np.prod(grid_shape[1:]))
     if rows.size != 1 or len(coords) != across:
         error_msg = (
-            f"source_type='{ADDITIVE}' needs a source that fills one whole row of "
+            f"source_type='{SOFT}' needs a source that fills one whole row of "
             f"the grid, and this source has {len(coords)} positions on "
             f"{rows.size} rows, against {across} positions in one row"
         )

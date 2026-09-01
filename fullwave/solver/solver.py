@@ -13,10 +13,10 @@ from fullwave.solver.input_file_writer import InputFileWriter
 from fullwave.solver.launcher import Launcher
 from fullwave.solver.pml_builder import PMLBuilder, PMLBuilderExponentialAttenuation
 from fullwave.solver.source_type import (
-    CLAMPED,
+    HARD,
     SOURCE_TYPES,
     as_additive_source,
-    is_additive,
+    is_soft,
 )
 from fullwave.utils import (
     MemoryTempfile,
@@ -351,7 +351,7 @@ class Solver:
         verify_gpu: bool = True,
         use_gpu_pml: bool = False,
         pml_alpha_entrance: float | None = None,
-        source_type: str = CLAMPED,
+        source_type: str = HARD,
     ) -> None:
         """Initialize a Solver instance for the fullwave simulation.
 
@@ -616,18 +616,18 @@ class Solver:
             error_msg = f"source_type {source_type!r} is not one of {SOURCE_TYPES}"
             logger.error(error_msg)
             raise ValueError(error_msg)
-        if is_additive(source_type) and self.source.p0_additive is not None:
+        if is_soft(source_type) and self.source.p0_additive is not None:
             error_msg = (
-                "this source already carries an additive signal. source_type='additive' "
-                "converts a hard source into an additive one, and this source holds no "
+                "this source already carries an additive signal. source_type='soft' "
+                "converts a hard source into a soft one, and this source holds no "
                 "hard source positions, so its signal would be lost. Set the source type "
                 "in one place, either on the Transducer or on the Solver."
             )
             logger.error(error_msg)
             raise ValueError(error_msg)
-        if not is_additive(source_type) and self.source.p0_additive is not None:
+        if not is_soft(source_type) and self.source.p0_additive is not None:
             self._warn_if_the_additive_signal_was_not_scaled()
-        if is_additive(source_type):
+        if is_soft(source_type):
             self.source = as_additive_source(
                 self.source,
                 self.grid,
@@ -700,7 +700,7 @@ class Solver:
             "uses it exactly as given. An additive signal radiates p0_additive * dx / (2 c dt), "
             "so it must already carry the 2 c dt / dx scale. Build it with "
             "fullwave.Source.additive(...), or pass a hard source with "
-            "Solver(source_type='additive'), or set the source type on a Transducer, "
+            "Solver(source_type='soft'), or set the source type on a Transducer, "
             "and the scale is applied for you."
         )
         logger.warning(message)

@@ -878,7 +878,7 @@ class Transducer:
         *,
         validate_input: bool = True,
         sampling_modulus_time: int = 1,
-        source_type: str = source_type_module.ADDITIVE,
+        source_type: str,
     ) -> None:
         """Initialize the GeneralTransducer with the provided geometry, grid, and input signal.
 
@@ -907,9 +907,9 @@ class Transducer:
             Changing this value to n will record the pressure every n time steps.
             It reduces the size of the output data.
         source_type: str
-            "additive" adds the signal to the field and is the default. The signal
+            "soft" adds the signal to the field and is the default. The signal
             is scaled so the aperture radiates the pressure it is given, at the
-            grid's reference sound speed. "clamped" is a hard source, which
+            grid's reference sound speed. "hard" is a hard source, which
             assigns the signal to the pressure of each source pixel instead.
 
         """
@@ -954,7 +954,7 @@ class Transducer:
         element_layer_px: int = 2,
         face_depth_m: float = 0.0,
         sampling_modulus_time: int = 1,
-        source_type: str = source_type_module.ADDITIVE,
+        source_type: str = source_type_module.HARD,
     ) -> "Transducer":
         """Return an ATL Philips L7-4 linear array on one grid.
 
@@ -977,8 +977,8 @@ class Transducer:
         sampling_modulus_time : int
             How many time steps separate two recorded samples.
         source_type : str
-            "additive" adds the signal to the field, which is the default and what
-            the calibrated setups use. "clamped" is a hard source and assigns it.
+            "soft" adds the signal to the field, which is the default and what
+            the calibrated setups use. "hard" is a hard source and assigns it.
 
         Returns
         -------
@@ -1009,7 +1009,7 @@ class Transducer:
         element_layer_px: int | None = None,
         face_depth_m: float = 0.0,
         sampling_modulus_time: int = 1,
-        source_type: str = source_type_module.ADDITIVE,
+        source_type: str = source_type_module.HARD,
     ) -> "Transducer":
         """Return a curved array of 49.57 mm radius on one grid.
 
@@ -1031,8 +1031,8 @@ class Transducer:
         sampling_modulus_time : int
             How many time steps separate two recorded samples.
         source_type : str
-            "additive" adds the signal to the field, which is the default and what
-            the calibrated setups use. "clamped" is a hard source and assigns it.
+            "soft" adds the signal to the field, which is the default and what
+            the calibrated setups use. "hard" is a hard source and assigns it.
 
         Returns
         -------
@@ -1063,7 +1063,7 @@ class Transducer:
         element_layer_px: int = 4,
         face_depth_m: float = 0.0,
         sampling_modulus_time: int = 1,
-        source_type: str = source_type_module.ADDITIVE,
+        source_type: str = source_type_module.HARD,
     ) -> "Transducer":
         """Return a 64 element phased array of 27 mm aperture on one grid.
 
@@ -1081,8 +1081,8 @@ class Transducer:
         sampling_modulus_time : int
             How many time steps separate two recorded samples.
         source_type : str
-            "additive" adds the signal to the field, which is the default and what
-            the calibrated setups use. "clamped" is a hard source and assigns it.
+            "soft" adds the signal to the field, which is the default and what
+            the calibrated setups use. "hard" is a hard source and assigns it.
 
         Returns
         -------
@@ -1748,7 +1748,7 @@ class Transducer:
             logger.error(error_msg)
             raise ValueError(error_msg)
         grid_shape = tuple(self.transducer_geometry.stored_grid_size)
-        if source_type_module.is_additive(self.source_type):
+        if source_type_module.is_soft(self.source_type):
             scale = source_type_module.additive_signal_scale(
                 float(self.grid.c0), float(self.grid.dt), float(self.grid.dx)
             )
@@ -1902,6 +1902,8 @@ class LinearTransducer(Transducer):
         position_m: tuple[float, float] | tuple[float, float, float],
         active_source_elements: tuple[bool] | None = None,
         active_sensor_elements: tuple[bool] | None = None,
+        *,
+        source_type: str = source_type_module.HARD,
     ) -> None:
         """Initialize a LinearTransducer instance.
 
@@ -1933,6 +1935,7 @@ class LinearTransducer(Transducer):
             input_signal=input_signal,
             active_source_elements=active_source_elements,
             active_sensor_elements=active_sensor_elements,
+            source_type=source_type,
         )
 
 
@@ -1980,4 +1983,5 @@ def make_p4_1c_trasnducer(
     return fullwave.Transducer(
         transducer_geometry=transducer_geometry,
         grid=grid,
+        source_type=source_type_module.HARD,
     )
