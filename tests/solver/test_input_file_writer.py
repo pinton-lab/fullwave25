@@ -27,7 +27,10 @@ def create_dummy_objects():
         bulk_modulus=np.array([2e9, 2e9], dtype=np.float64),
         density=np.array([1000, 1000], dtype=np.float64),
         beta=np.array([0.5, 0.5], dtype=np.float64),
-        relaxation_param_dict_for_fw2={"a_pml_u1": np.array([[1.0]], dtype=np.float64)},
+        relaxation_param_dict_for_fw2={
+            "a_pml_u1": np.array([[1.0]], dtype=np.float64),
+            "kappa_x": np.array([[1.0]], dtype=np.float64),
+        },
         n_relaxation_mechanisms=1,
         air_coords=np.array([[0, 0], [1, 1]], dtype=np.int64),
         n_air=1,
@@ -234,7 +237,6 @@ def test_run_static_links_the_depth_files_of_an_isotropic_three_dimensional_grid
     source.incoords = np.array([[1, 2, 3], [3, 4, 5]], dtype=np.int64)
     sensor.outcoords = np.array([[1, 2, 3], [3, 4, 5]], dtype=np.int64)
     medium.air_coords = np.array([[0, 0, 0], [1, 1, 1]], dtype=np.int64)
-    medium.relaxation_param_dict_for_fw2["kappa_x"] = np.array([[1.0]], dtype=np.float64)
 
     for fname in ["c.dat", "nZ.dat", "dZ.dat", "modZ.dat"]:
         (work_dir / fname).write_text("dummy content")
@@ -258,6 +260,26 @@ def test_run_static_links_the_depth_files_of_an_isotropic_three_dimensional_grid
         linked = sim_path / fname
         assert linked.is_symlink(), f"{fname} is not linked into the simulation directory"
         assert linked.samefile(work_dir / fname)
+
+
+def test_the_anisotropic_relaxation_is_refused(work_and_bin, monkeypatch):
+    """Only the isotropic relaxation is supported, so False raises before anything is written."""
+    work_dir, bin_file = work_and_bin
+    grid, medium, source, sensor = create_dummy_objects()
+    monkeypatch.setattr(check_functions, "check_path_exists", lambda x: None)  # noqa: ARG005
+    monkeypatch.setattr(check_functions, "check_instance", lambda inst, cls: None)  # noqa: ARG005
+
+    with pytest.raises(NotImplementedError, match="only isotropic relaxation"):
+        InputFileWriter(
+            work_dir,
+            grid,
+            medium,
+            source,
+            sensor,
+            path_fullwave_simulation_bin=bin_file,
+            validate_input=False,
+            use_isotropic_relaxation=False,
+        )
 
 
 def test_run_with_p0_additive_writes_icmat_add(tmp_path, work_and_bin, monkeypatch):

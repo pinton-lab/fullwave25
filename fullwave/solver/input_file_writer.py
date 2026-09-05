@@ -56,7 +56,7 @@ class InputFileWriter:
         path_fullwave_simulation_bin: Path = Path(__file__).parent / "bins" / "fullwave_solver_gpu",
         validate_input: bool = True,
         use_exponential_attenuation: bool = False,
-        use_isotropic_relaxation: bool = False,
+        use_isotropic_relaxation: bool = True,
         release_after_write: bool = False,
         pml_thickness: int = 0,
         exponential_attenuation_pml_thickness_px: int = 0,
@@ -94,6 +94,7 @@ class InputFileWriter:
             to reduce memory usage while retaining accuracy.
             For 2D it will reduce the memory usage by approximately 15%.
             For 3D it will reduce the memory usage by approximately 25%.
+            Only True is supported, and False raises NotImplementedError.
             This option omits the anisotropic relaxation mechanisms to model the attenuation.
             We usually recommend using isotropic relaxation mechanisms
             unless the anisotropic attenuation is required for the simulation.
@@ -126,6 +127,12 @@ class InputFileWriter:
         """
         logger.debug("Initializing InputFileWriter instance.")
 
+        if use_isotropic_relaxation is False:
+            error_msg = (
+                "Currently, only isotropic relaxation is supported. "
+                "Please set use_isotropic_relaxation to True for the simulation."
+            )
+            raise NotImplementedError(error_msg)
         self._work_dir = Path(work_dir)
         self.path_fullwave_simulation_bin = path_fullwave_simulation_bin
         self.use_isotropic_relaxation = use_isotropic_relaxation
@@ -1228,16 +1235,8 @@ class InputFileWriter:
         mechanisms = range(1, self.medium.n_relaxation_mechanisms + 1)
         for nu in mechanisms:
             var_name_list.extend([f"apmlu{nu}", f"bpmlu{nu}", f"apmlx{nu}", f"bpmlx{nu}"])
-        if not self.use_isotropic_relaxation:
-            var_name_list.extend(["kappay", "kappaw"])
-            for nu in mechanisms:
-                var_name_list.extend([f"apmlw{nu}", f"apmly{nu}", f"bpmlw{nu}", f"bpmly{nu}"])
         if self.is_3d:
             var_name_list.extend(["modZ", "nZ", "dZ"])
-        if self.is_3d and not self.use_isotropic_relaxation:
-            var_name_list.extend(["kappaz", "kappav"])
-            for nu in mechanisms:
-                var_name_list.extend([f"apmlz{nu}", f"apmlv{nu}", f"bpmlz{nu}", f"bpmlv{nu}"])
         for var_name in var_name_list:
             src_data = src_dir / f"{var_name}.dat"
             dst_data = dst_dir / f"{var_name}.dat"
