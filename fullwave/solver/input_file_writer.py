@@ -1233,9 +1233,9 @@ class InputFileWriter:
             for nu in mechanisms:
                 var_name_list.extend([f"apmlw{nu}", f"apmly{nu}", f"bpmlw{nu}", f"bpmly{nu}"])
         if self.is_3d:
-            var_name_list.append("modZ")
+            var_name_list.extend(["modZ", "nZ", "dZ"])
         if self.is_3d and not self.use_isotropic_relaxation:
-            var_name_list.extend(["nZ", "dZ", "kappaz", "kappav"])
+            var_name_list.extend(["kappaz", "kappav"])
             for nu in mechanisms:
                 var_name_list.extend([f"apmlz{nu}", f"apmlv{nu}", f"bpmlz{nu}", f"bpmlv{nu}"])
         for var_name in var_name_list:

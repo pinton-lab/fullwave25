@@ -222,6 +222,44 @@ def test_run_static_creates_symbolic_links(tmp_path, work_and_bin, monkeypatch):
     assert dst_file.samefile(src_file)
 
 
+def test_run_static_links_the_depth_files_of_an_isotropic_three_dimensional_grid(
+    tmp_path, work_and_bin, monkeypatch
+):
+    """A three dimensional static map run links nZ.dat and dZ.dat whatever the relaxation kind."""
+    work_dir, bin_file = work_and_bin
+    grid, medium, source, sensor = create_dummy_objects()
+    grid.is_3d = True
+    grid.nz = 10
+    grid.dz = 0.1
+    source.incoords = np.array([[1, 2, 3], [3, 4, 5]], dtype=np.int64)
+    sensor.outcoords = np.array([[1, 2, 3], [3, 4, 5]], dtype=np.int64)
+    medium.air_coords = np.array([[0, 0, 0], [1, 1, 1]], dtype=np.int64)
+    medium.relaxation_param_dict_for_fw2["kappa_x"] = np.array([[1.0]], dtype=np.float64)
+
+    for fname in ["c.dat", "nZ.dat", "dZ.dat", "modZ.dat"]:
+        (work_dir / fname).write_text("dummy content")
+
+    monkeypatch.setattr(check_functions, "check_path_exists", lambda x: None)  # noqa: ARG005
+    monkeypatch.setattr(check_functions, "check_instance", lambda inst, cls: None)  # noqa: ARG005
+
+    writer = InputFileWriter(
+        work_dir,
+        grid,
+        medium,
+        source,
+        sensor,
+        path_fullwave_simulation_bin=bin_file,
+        validate_input=False,
+        use_isotropic_relaxation=True,
+    )
+    sim_path = Path(writer.run("sim_static_3d", is_static_map=True, recalculate_pml=True))
+
+    for fname in ["nZ.dat", "dZ.dat", "modZ.dat"]:
+        linked = sim_path / fname
+        assert linked.is_symlink(), f"{fname} is not linked into the simulation directory"
+        assert linked.samefile(work_dir / fname)
+
+
 def test_run_with_p0_additive_writes_icmat_add(tmp_path, work_and_bin, monkeypatch):
     """When source has p0_additive, icmat_add.dat is written with same layout as icmat.dat."""
     work_dir, bin_file = work_and_bin
