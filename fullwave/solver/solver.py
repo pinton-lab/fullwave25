@@ -1197,10 +1197,20 @@ class Solver:
 
         n_source_timesteps = source.icmat.shape[1]
 
-        gb = 1024.0**3
+        gib = 1024.0**3
 
         base_depth = depth // n_gpus
         remainder = depth % n_gpus
+
+        box, hole = (None, None)
+        if not self.use_exponential_attenuation:
+            box, hole = self._relaxation_regions(medium)
+        # Every GPU holds every source matrix and every zero pressure coordinate.
+        source_points = sum(
+            getattr(source, name, 0) or 0
+            for name in ("n_sources", "n_sources_add", "n_sources_u", "n_sources_v", "n_sources_w")
+        )
+        body_start = 0
 
         for rank, dev_id in enumerate(device_ids):
             depth_this = base_depth + (1 if rank < remainder else 0)
@@ -1213,10 +1223,12 @@ class Solver:
                 n_halo_sides = 2
             local_depth = depth_this + n_halo_sides * halo_depth
             slab = local_depth * lateral
+            low = max(body_start - (halo_depth if rank > 0 else 0), 0)
+            high = min(body_start + depth_this + (halo_depth if rank < n_gpus - 1 else 0), depth)
+            body_start += depth_this
 
             n_sources = max(source.n_sources // n_gpus, 0)
             n_sensors = max(sensor.n_sensors // n_gpus, 0)
-            n_air_local = max(medium.n_air // n_gpus, 0)
 
             if self.use_exponential_attenuation:
                 total = self._mem_exponential(
@@ -1231,29 +1243,32 @@ class Solver:
                     is_3d=self.is_3d,
                 )
             else:
+                band, interior = self._band_and_interior(low, high, grid.shape, box, hole)
                 total = self._mem_relaxation(
                     slab,
                     n_deriv_levels,
-                    n_sources,
+                    source_points,
                     n_source_timesteps,
                     save_gpu_memory=self.save_gpu_memory,
-                    n_air=n_air_local,
+                    n_air=medium.n_air,
                     n_sensors=n_sensors,
                     n_relax=self.n_relax_mechanisms,
                     float_bytes=float_bytes,
                     int_bytes=int_bytes,
                     is_3d=self.is_3d,
+                    band=band,
+                    interior=interior,
                 )
 
             mode = "exponential" if self.use_exponential_attenuation else "relaxation"
             saving = ", save_gpu_memory=True" if self.save_gpu_memory else ""
             logger.info(
                 "GPU memory estimate [GPU %s] (%s mode%s): "
-                "%.2f GB  (depth=%d +%d halo, lateral=%d)",
+                "%.2f GiB  (depth=%d +%d halo, lateral=%d)",
                 dev_id.strip(),
                 mode,
                 saving,
-                total / gb,
+                total / gib,
                 depth_this,
                 n_halo_sides * halo_depth,
                 lateral,
@@ -1337,8 +1352,20 @@ class Solver:
         float_bytes: int,
         int_bytes: int,
         is_3d: bool,
+        band: int | None = None,
+        interior: int | None = None,
     ) -> int:
-        """Return estimated GPU bytes for relaxation (power-law) solver.
+        """Return estimated GPU bytes for the relaxation (power-law) solver.
+
+        The count follows the allocation of the region trimmed kernel, the same
+        count as ``nrelax_device_bytes`` in the solver's ``gpu_memory_nrelax.cuh``.
+        Over the whole slab the card holds the pressure and one velocity for each
+        axis at two time levels, ``kappa_x2``, ``rho``, ``K``, the two finite
+        amplitude maps and ``dcmap``, and mechanism 1 of the pressure memory, its
+        ``a``, ``b`` and one memory variable for each axis. The mechanisms above
+        the first hold the same over the interior box alone, and the momentum
+        absorbing layer holds its ``a``, ``b`` and one memory variable for each
+        axis over the band around the hole alone.
 
         Parameters
         ----------
@@ -1347,7 +1374,7 @@ class Solver:
         n_deriv_levels : int
             Number of derivative-map levels.
         n_sources : int
-            Approximate source count on this GPU.
+            Source points this GPU holds, summed over every source kind.
         n_source_timesteps : int
             Number of source time steps.
         save_gpu_memory : bool
@@ -1362,8 +1389,13 @@ class Solver:
             Bytes per float (4).
         int_bytes : int
             Bytes per int (4).
-        is_3d: bool,
-            Whether the simulation is 3D (affects sensor memory).
+        is_3d : bool
+            Whether the simulation is 3D.
+        band : int | None
+            Grid points of the momentum layer band on this GPU. None takes the slab.
+        interior : int | None
+            Grid points of this GPU's share of the interior box of the mechanisms
+            above the first. None takes the slab.
 
         Returns
         -------
@@ -1373,35 +1405,151 @@ class Solver:
         """
         fb = float_bytes
         ib = int_bytes
-        ndim = 3 if is_3d else 2
-        n_fields = 4 if is_3d else 3  # p, u, [v], w
+        axes = 3 if is_3d else 2
+        band = slab if band is None else band
+        interior = slab if interior is None else interior
+        per_mechanism = 2 + axes
 
-        # wave fields: n_fields pairs x 2 time levels
-        mem = n_fields * 2 * slab * fb
-        # relaxation psi:
-        mem += 2 * (ndim * n_relax * 2 * slab * fb)
-        # material: rho + K + beta
-        mem += 3 * slab * fb
-        # kappa: 2 arrays (kappa_x1, kappa_x2)
-        mem += 2 * slab * fb
-        # PML: pml_x1 + pml_x2, each has 2 * n_relax arrays
-        mem += 2 * (2 * n_relax) * slab * fb
-        # (dmap + dcmap)
-        mem += 9 * 2 * n_deriv_levels * fb + slab * ib
-        # source (icmat + coords)
+        mem = 2 * (axes + 1) * slab * fb
+        mem += 5 * slab * fb
+        mem += slab * ib
+        mem += per_mechanism * slab * fb
+        mem += per_mechanism * max(n_relax - 1, 0) * interior * fb
+        mem += per_mechanism * band * fb
+        mem += 9 * 2 * n_deriv_levels * fb
         if n_sources > 0:
-            mem += n_sources * fb if save_gpu_memory else n_sources * n_source_timesteps * fb
-            mem += ndim * n_sources * ib
-
-        # air
+            samples = n_sources if save_gpu_memory else n_sources * n_source_timesteps
+            mem += samples * fb + axes * n_sources * ib
         if n_air > 0:
-            mem += ndim * n_air * ib
-        # sensor
+            mem += axes * n_air * ib
         if n_sensors > 0:
-            mem += n_sensors * fb
-            mem += (ndim + 1) * n_sensors * ib
-            mem += n_sensors * ib
+            mem += n_sensors * (fb + (axes + 2) * ib)
         return mem
+
+    @staticmethod
+    def _center_line_span(values: NDArray, axis: int, *, zeros: bool) -> tuple[int, int]:
+        """Return the first and one past the last index of a map's center line along one axis.
+
+        Parameters
+        ----------
+        values : NDArray
+            The map, on the host or on the GPU.
+        axis : int
+            The axis the line runs along. The other axes sit at their centers.
+        zeros : bool
+            True spans the zero cells, False the nonzero cells.
+
+        Returns
+        -------
+        tuple[int, int]
+            The span, empty as ``(0, 0)`` when no cell matches.
+
+        """
+        index = tuple(
+            slice(None) if a == axis else size // 2 for a, size in enumerate(values.shape)
+        )
+        line = values[index]
+        line = line.get() if hasattr(line, "get") else np.asarray(line)
+        found = np.flatnonzero(line == 0 if zeros else line != 0)
+        if found.size == 0:
+            return (0, 0)
+        return (int(found[0]), int(found[-1]) + 1)
+
+    def _relaxation_regions(
+        self,
+        medium: fullwave.MediumRelaxationMaps,
+    ) -> tuple[list[tuple[int, int]] | None, list[tuple[int, int]] | None]:
+        """Return the interior box and the momentum layer hole the kernel will measure.
+
+        The kernel stores every mechanism above the first over the box where its
+        ``a`` is nonzero, and the momentum absorbing layer over the band around the
+        box where the first momentum ``a`` is zero. Both are read here along the
+        center lines of each axis, which is how the kernel finds the hole, and a
+        clean box shape is assumed for both.
+
+        Parameters
+        ----------
+        medium : fullwave.MediumRelaxationMaps
+            The extended medium after the absorbing layer is built.
+
+        Returns
+        -------
+        tuple
+            The box and the hole as one ``(start, end)`` span for each axis. None
+            stands for a map the medium does not carry, which counts as the whole
+            slab.
+
+        """
+        maps = medium.relaxation_param_dict_for_fw2
+        box_maps = [maps.get(f"a_pml_u{nu}") for nu in range(2, self.n_relax_mechanisms + 1)]
+        box_maps = [values for values in box_maps if values is not None]
+        box = None
+        if self.n_relax_mechanisms > 1 and len(box_maps) == self.n_relax_mechanisms - 1:
+            box = []
+            for axis in range(box_maps[0].ndim):
+                spans = [self._center_line_span(values, axis, zeros=False) for values in box_maps]
+                spans = [span for span in spans if span[1] > span[0]]
+                box.append(
+                    (min(s for s, _ in spans), max(e for _, e in spans)) if spans else (0, 0)
+                )
+        hole = None
+        if maps.get("a_pml_x1") is not None:
+            values = maps["a_pml_x1"]
+            hole = [self._center_line_span(values, axis, zeros=True) for axis in range(values.ndim)]
+            if any(end <= start for start, end in hole):
+                hole = [(0, 0)] * values.ndim
+        return box, hole
+
+    @staticmethod
+    def _band_and_interior(
+        low: int,
+        high: int,
+        shape: tuple[int, ...],
+        box: list[tuple[int, int]] | None,
+        hole: list[tuple[int, int]] | None,
+    ) -> tuple[int, int]:
+        """Return one GPU's band and interior box cells, as the kernel counts them.
+
+        Parameters
+        ----------
+        low : int
+            The first grid row the GPU holds, its halo included.
+        high : int
+            One past the last grid row the GPU holds, its halo included.
+        shape : tuple[int, ...]
+            The extended grid shape.
+        box : list[tuple[int, int]] | None
+            The interior box, one span for each axis, or None for the whole slab.
+        hole : list[tuple[int, int]] | None
+            The momentum layer hole, one span for each axis, or None for the whole slab.
+
+        Returns
+        -------
+        tuple[int, int]
+            The band cells and the interior cells of this GPU.
+
+        """
+        rows = high - low
+        lateral = int(np.prod(shape[1:]))
+        if box is None:
+            interior = rows * lateral
+        else:
+            box_rows = max(0, min(high, box[0][1]) - max(low, box[0][0]))
+            interior = box_rows * int(np.prod([end - start for start, end in box[1:]]))
+        if hole is None:
+            return rows * lateral, interior
+        hole_low = min(max(hole[0][0] - low, 0), rows)
+        hole_high = max(min(max(hole[0][1] - low, 0), rows), hole_low)
+        hole_rows = hole_high - hole_low
+        band = (rows - hole_rows) * lateral
+        hole_columns = hole[1][1] - hole[1][0]
+        strip_columns = shape[1] - hole_columns
+        if len(shape) == 3:
+            strip_depths = shape[2] - (hole[2][1] - hole[2][0])
+            band += hole_rows * (strip_columns * shape[2] + hole_columns * strip_depths)
+        else:
+            band += hole_rows * strip_columns
+        return band, interior
 
     def print_info(self) -> None:
         """Print the Solver instance information."""
