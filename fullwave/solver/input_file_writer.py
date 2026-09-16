@@ -1409,6 +1409,29 @@ class InputFileWriter:
         dst.symlink_to(self.path_fullwave_simulation_bin.resolve())
 
     @staticmethod
+    def _write_in_slabs(
+        variable_mat: np.ndarray,
+        dtype: DTypeLike,
+        save_path: str | Path,
+        slab_bytes: int = 256 * 1024**2,
+    ) -> None:
+        """Write an array in C order, cast one slab of its first axis at a time.
+
+        The bytes are those of one whole cast buffer, and the largest buffer
+        held is one slab, so many maps can be written at once.
+        """
+        dtype = np.dtype(dtype)
+        if variable_mat.ndim == 0:
+            np.ascontiguousarray(variable_mat, dtype=dtype).tofile(save_path)
+            return
+        row_bytes = max(1, dtype.itemsize * (variable_mat.size // max(variable_mat.shape[0], 1)))
+        rows_per_slab = max(1, slab_bytes // row_bytes)
+        with Path(save_path).open("wb") as handle:
+            for start in range(0, variable_mat.shape[0], rows_per_slab):
+                slab = variable_mat[start : start + rows_per_slab]
+                np.ascontiguousarray(slab, dtype=dtype).tofile(handle)
+
+    @staticmethod
     def _write_ic(
         fname: str | Path,
         icmat: np.ndarray,
@@ -1417,11 +1440,7 @@ class InputFileWriter:
         logger.debug("Writing initial condition matrix to %s", fname, stacklevel=2)
 
         t0 = time.perf_counter()
-        out = np.ascontiguousarray(
-            icmat.T,
-            dtype=np.float32,
-        )  # does transpose+cast into one new buffer
-        out.tofile(fname)
+        InputFileWriter._write_in_slabs(icmat.T, np.float32, fname)
         t1 = time.perf_counter()
 
         logger.debug("Initial condition matrix written in %.2e seconds", t1 - t0, stacklevel=2)
@@ -1485,8 +1504,7 @@ class InputFileWriter:
         if variable_mat.dtype == dtype and variable_mat.flags.c_contiguous:
             variable_mat.tofile(save_path)  # writes in C order
         else:
-            out = np.ascontiguousarray(variable_mat, dtype=dtype)  # at most one new buffer
-            out.tofile(save_path)
+            InputFileWriter._write_in_slabs(variable_mat, dtype, save_path)
 
         t1 = time.perf_counter()
         logger.debug("Matrix written in %.2e seconds", t1 - t0, stacklevel=2)

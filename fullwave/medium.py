@@ -19,6 +19,7 @@ from fullwave.solver.utils import initialize_relaxation_param_dict
 from fullwave.utils import check_functions, plot_utils
 from fullwave.utils.coordinates import coords_to_map, map_to_coords
 from fullwave.utils.relaxation_parameters import (
+    _array_module,
     band_scaled_sound_speed,
     generate_relaxation_params,
 )
@@ -200,7 +201,8 @@ def _make_the_lossless_voxels_lossless(
     """
     if not relaxation_param_dict:
         return
-    coefficient = np.asarray(alpha_coeff)
+    xp = np if np.ndim(alpha_coeff) == 0 else _array_module(alpha_coeff)
+    coefficient = xp.asarray(alpha_coeff)
     if coefficient.ndim == 0:
         if float(coefficient) != 0.0:
             return
@@ -273,6 +275,7 @@ class MediumRelaxationMaps:
         n_jobs: int = -1,
         dtype: type = np.float64,
         use_gpu: bool = False,
+        compute_coefficients: bool = True,
     ) -> None:
         """Medium class for Fullwave.
 
@@ -330,6 +333,10 @@ class MediumRelaxationMaps:
         use_gpu : bool, optional
             If True, use CuPy for GPU-accelerated computation (default is False).
             Requires CuPy to be installed. Falls back to CPU if CuPy is unavailable.
+        compute_coefficients : bool, optional
+            If True (the default), compute ``relaxation_param_dict_for_fw2``
+            here. False leaves it empty for a caller that writes every entry
+            itself, as the PML builder does.
 
         """
         check_functions.check_compatible_value(
@@ -354,7 +361,6 @@ class MediumRelaxationMaps:
         try:
             self.relaxation_param_dict = initialize_relaxation_param_dict(
                 n_relaxation_mechanisms=n_relaxation_mechanisms,
-                value=xp.zeros_like(xp.asarray(sound_speed), dtype=self.dtype),
             )
             self.grid = grid
             self.is_3d = grid.is_3d
@@ -379,7 +385,6 @@ class MediumRelaxationMaps:
             xp = np
             self.relaxation_param_dict = initialize_relaxation_param_dict(
                 n_relaxation_mechanisms=n_relaxation_mechanisms,
-                value=np.zeros_like(np.asarray(sound_speed), dtype=self.dtype),
             )
             self.grid = grid
             self.is_3d = grid.is_3d
@@ -404,11 +409,22 @@ class MediumRelaxationMaps:
             relaxation_param_updates=relaxation_param_dict,
         )
         self.use_isotropic_relaxation = use_isotropic_relaxation
-        self.relaxation_param_dict_for_fw2 = self._calc_relaxation_param_dict_for_fw2(
-            use_isotropic_relaxation=self.use_isotropic_relaxation,
+        self.relaxation_param_dict_for_fw2 = (
+            self._calc_relaxation_param_dict_for_fw2(
+                use_isotropic_relaxation=self.use_isotropic_relaxation,
+            )
+            if compute_coefficients
+            else {}
         )
         self.check_fields()
         logger.debug("MediumRelaxationMaps instance created.")
+
+    def build_coefficients(self) -> None:
+        """Compute ``relaxation_param_dict_for_fw2`` if the constructor was told to skip it."""
+        if not self.relaxation_param_dict_for_fw2:
+            self.relaxation_param_dict_for_fw2 = self._calc_relaxation_param_dict_for_fw2(
+                use_isotropic_relaxation=self.use_isotropic_relaxation,
+            )
 
     def _update_relaxation_param_dict(
         self,
@@ -1627,11 +1643,17 @@ class Medium:
         parameters = self._relaxation_parameters_of(sound_speed, alpha_coeff, alpha_power)
         return parameters, sound_speed
 
-    def build(self) -> MediumRelaxationMaps:
+    def build(self, *, compute_coefficients: bool = True) -> MediumRelaxationMaps:
         """Retrieve the relaxation parameters from alpha and power maps.
 
         it uses the relaxation parameters look up table
         to generate the relaxation parameters.
+
+        Parameters
+        ----------
+        compute_coefficients : bool, optional
+            Passed to `MediumRelaxationMaps`. False skips the solver
+            coefficients, which a caller that extends the maps first does not use.
 
         Returns
         -------
@@ -1670,6 +1692,7 @@ class Medium:
             n_jobs=self.n_jobs,
             dtype=self.dtype,
             use_gpu=self.use_gpu,
+            compute_coefficients=compute_coefficients,
         )
 
     def _db_mhz_cm_to_a_exp(
