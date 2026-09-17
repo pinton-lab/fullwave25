@@ -42,6 +42,7 @@ COMPATIBLE_CUDA_ARCHITECTURES = [
     "sm_90",  # Hopper: H100, H200
     "sm_100",  # Blackwell: RTX 50 series
     "sm_101",  # Blackwell: RTX 50 series
+    "sm_103",  # Blackwell
     "sm_120",  # Blackwell: RTX 50 series
     "sm_121",  # Blackwell: RTX 50 series
 ]
@@ -96,6 +97,7 @@ COMPATIBLE_CUDA_VERSIONS_ARCHITECTURES_set = {
     (12.9, "sm_90"),
     (12.9, "sm_100"),
     (12.9, "sm_101"),
+    (12.9, "sm_103"),
     (12.9, "sm_120"),
     (12.9, "sm_121"),
     # ---
@@ -142,7 +144,10 @@ def _make_cuda_version_option(*, cuda_arch: str, use_gpu: bool = True) -> tuple[
 
     The driver reports the newest CUDA version it supports, and it also runs a binary
     built with an older CUDA version. The choice is therefore the newest CUDA version
-    with a build for the architecture that is not newer than the driver.
+    with a build for the architecture that is not newer than the driver. Where no such
+    build exists, the choice is the oldest build of the driver's CUDA major version,
+    which runs through CUDA minor version compatibility. A Blackwell GPU on a CUDA 12.8
+    driver takes this path, because its first build is CUDA 12.9.
 
     Parameters
     ----------
@@ -160,8 +165,8 @@ def _make_cuda_version_option(*, cuda_arch: str, use_gpu: bool = True) -> tuple[
     Raises
     ------
     ValueError
-        If the driver version cannot be read, or no build for the architecture is
-        as old as the driver or older.
+        If the driver version cannot be read, or the architecture has no build as
+        old as the driver and none of the driver's CUDA major version.
 
     """
     cuda_version: float = retrieve_cuda_version()
@@ -179,8 +184,15 @@ def _make_cuda_version_option(*, cuda_arch: str, use_gpu: bool = True) -> tuple[
             for version, arch in COMPATIBLE_CUDA_VERSIONS_ARCHITECTURES_set
             if arch == cuda_arch
         )
-        runnable_versions = [version for version in built_versions if version <= cuda_version]
-        if not runnable_versions:
+        older_versions = [version for version in built_versions if version <= cuda_version]
+        same_major_versions = [
+            version for version in built_versions if int(version) == int(cuda_version)
+        ]
+        if older_versions:
+            closest_version = older_versions[-1]
+        elif same_major_versions:
+            closest_version = same_major_versions[0]
+        else:
             error_msg = (
                 f"No binary for architecture {cuda_arch} runs on a driver that supports "
                 f"CUDA {cuda_version}. The binaries for this architecture are built with "
@@ -188,13 +200,14 @@ def _make_cuda_version_option(*, cuda_arch: str, use_gpu: bool = True) -> tuple[
             )
             logger.error(error_msg)
             raise ValueError(error_msg)
-        closest_version = runnable_versions[-1]
         if closest_version != cuda_version:
             message = (
                 f"Warning: CUDA version {cuda_version} of the driver has no binary for "
                 f"architecture {cuda_arch}. "
                 f"Using the closest compatible version {closest_version} instead."
             )
+            if closest_version > cuda_version:
+                message += " It runs through CUDA minor version compatibility."
             logger.warning(message)
             cuda_version = closest_version
 

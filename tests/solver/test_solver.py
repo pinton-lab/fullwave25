@@ -7,6 +7,8 @@ import pytest
 import fullwave
 from fullwave.solver.shipped_database import ShippedDatabase
 from fullwave.solver.solver import (
+    COMPATIBLE_CUDA_ARCHITECTURES,
+    COMPATIBLE_CUDA_VERSIONS_ARCHITECTURES_set,
     _check_compatible_set,
     _make_cuda_arch_option,
     _make_cuda_version_option,
@@ -27,10 +29,10 @@ def test_make_cuda_version_option_gpu_mode():
 
 
 def test_make_cuda_version_option_cpu_mode():
-    """Test _make_cuda_version_option in CPU mode."""
-    with patch("fullwave.solver.solver.retrieve_cuda_version", return_value=11.8):
+    """In CPU mode the driver version is returned unchecked, even with no build for it."""
+    with patch("fullwave.solver.solver.retrieve_cuda_version", return_value=13.2):
         result = _make_cuda_version_option(use_gpu=False, cuda_arch="sm_89")
-        assert result == ("cuda118", 11.8)
+        assert result == ("cuda132", 13.2)
 
 
 def test_make_cuda_version_option_no_cuda():
@@ -89,22 +91,52 @@ def test_make_cuda_version_option_skips_versions_without_a_build_for_the_archite
         assert result == ("cuda129", 12.9)
 
 
-def test_make_cuda_version_option_driver_older_than_every_build():
-    """A driver older than every build for the architecture is refused."""
+@pytest.mark.parametrize("arch", ["sm_100", "sm_101", "sm_103", "sm_120", "sm_121"])
+def test_make_cuda_version_option_blackwell_on_a_12_8_driver(arch):
+    """Blackwell builds start at CUDA 12.9, and a 12.8 driver runs them by minor version."""
     with (
-        patch("fullwave.solver.solver.retrieve_cuda_version", return_value=11.4),
-        pytest.raises(ValueError, match=r"No binary for architecture sm_89 runs on a driver"),
+        patch("fullwave.solver.solver.retrieve_cuda_version", return_value=12.8),
+        patch("fullwave.solver.solver.logger") as mock_logger,
     ):
-        _make_cuda_version_option(use_gpu=True, cuda_arch="sm_89")
+        result = _make_cuda_version_option(use_gpu=True, cuda_arch=arch)
+        assert result == ("cuda129", 12.9)
+        warning_call = str(mock_logger.warning.call_args_list[0])
+        assert "Using the closest compatible version 12.9 instead" in warning_call
+        assert "minor version compatibility" in warning_call
 
 
-def test_make_cuda_version_option_driver_older_than_the_first_build_for_the_architecture():
-    """Blackwell builds start at CUDA 12.9, so a 12.6 driver is refused for sm_120."""
+def test_make_cuda_version_option_prefers_an_older_build_to_minor_version_compatibility():
+    """A 12.6 driver on Ada has the 12.4 build, so the 12.9 build is not taken."""
     with (
         patch("fullwave.solver.solver.retrieve_cuda_version", return_value=12.6),
-        pytest.raises(ValueError, match=r"No binary for architecture sm_120 runs on a driver"),
+        patch("fullwave.solver.solver.logger") as mock_logger,
     ):
-        _make_cuda_version_option(use_gpu=True, cuda_arch="sm_120")
+        result = _make_cuda_version_option(use_gpu=True, cuda_arch="sm_89")
+        assert result == ("cuda124", 12.4)
+        assert "minor version compatibility" not in str(mock_logger.warning.call_args_list[0])
+
+
+def test_make_cuda_version_option_driver_older_than_every_build_of_its_major_version():
+    """An 11.4 driver on Ada has no older build, and it runs the 11.8 build by minor version."""
+    with patch("fullwave.solver.solver.retrieve_cuda_version", return_value=11.4):
+        result = _make_cuda_version_option(use_gpu=True, cuda_arch="sm_89")
+        assert result == ("cuda118", 11.8)
+
+
+@pytest.mark.parametrize(("driver_version", "arch"), [(10.2, "sm_89"), (11.8, "sm_120")])
+def test_make_cuda_version_option_no_build_of_the_driver_major_version(driver_version, arch):
+    """A driver with no build as old as it and none of its major version is refused."""
+    with (
+        patch("fullwave.solver.solver.retrieve_cuda_version", return_value=driver_version),
+        pytest.raises(ValueError, match=rf"No binary for architecture {arch} runs on a driver"),
+    ):
+        _make_cuda_version_option(use_gpu=True, cuda_arch=arch)
+
+
+def test_every_compatible_architecture_has_a_build_and_every_build_is_compatible():
+    """The architecture list and the version and architecture set name the same GPUs."""
+    built_architectures = {arch for _, arch in COMPATIBLE_CUDA_VERSIONS_ARCHITECTURES_set}
+    assert built_architectures == set(COMPATIBLE_CUDA_ARCHITECTURES)
 
 
 def test_retrieve_fullwave_simulation_path_newer_driver_on_hopper():
@@ -115,6 +147,26 @@ def test_retrieve_fullwave_simulation_path_newer_driver_on_hopper():
     ):
         result = _retrieve_fullwave_simulation_path(use_gpu=True, is_3d=True)
     assert result.name == "fullwave2_3d_n_relax_multi_gpu_cuda130"
+
+
+def test_retrieve_fullwave_simulation_path_passes_the_architecture_to_the_version_choice():
+    """Pascal has no CUDA 13.0 build, so a 13.2 driver resolves to the CUDA 12.9 build."""
+    with (
+        patch("fullwave.solver.solver._make_cuda_arch_option", return_value="sm_61"),
+        patch("fullwave.solver.solver.retrieve_cuda_version", return_value=13.2),
+    ):
+        result = _retrieve_fullwave_simulation_path(use_gpu=True, is_3d=True)
+    assert result.name == "fullwave2_3d_n_relax_multi_gpu_cuda129"
+
+
+def test_retrieve_fullwave_simulation_path_blackwell_on_a_12_8_driver():
+    """An RTX 50 series GPU on a CUDA 12.8 driver resolves to the CUDA 12.9 build."""
+    with (
+        patch("fullwave.solver.solver._make_cuda_arch_option", return_value="sm_120"),
+        patch("fullwave.solver.solver.retrieve_cuda_version", return_value=12.8),
+    ):
+        result = _retrieve_fullwave_simulation_path(use_gpu=True, is_3d=False)
+    assert result.name == "fullwave2_2d_n_relax_multi_gpu_cuda129"
 
 
 def test_retrieve_fullwave_simulation_path_refuses_a_pair_without_a_build():
@@ -222,7 +274,7 @@ def test_check_compatible_set_invalid_combinations():
 def test_check_compatible_set_edge_cases():
     """Test _check_compatible_set with edge cases and boundary values."""
     # Test with architectures that exist in some versions but not others
-    assert _check_compatible_set(12.9, "sm_120") is True  # Only available in 12.9
+    assert _check_compatible_set(12.9, "sm_120") is True  # sm_120 builds start at 12.9
     assert _check_compatible_set(12.6, "sm_120") is False  # Not available in 12.6
 
     # Test with older architectures
@@ -299,7 +351,6 @@ def test_retrieve_fullwave_simulation_path_2d_cpu_not_implemented():
     with (
         patch("fullwave.solver.solver._make_cuda_arch_option", return_value="sm_89"),
         patch("fullwave.solver.solver._make_cuda_version_option", return_value=("cuda126", 12.6)),
-        patch("fullwave.solver.solver._check_compatible_set", return_value=True),
         pytest.raises(
             NotImplementedError,
             match="Currently, 2D simulation is not supported in CPU mode",
@@ -313,7 +364,6 @@ def test_retrieve_fullwave_simulation_path_3d_cpu_not_implemented():
     with (
         patch("fullwave.solver.solver._make_cuda_arch_option", return_value="sm_89"),
         patch("fullwave.solver.solver._make_cuda_version_option", return_value=("cuda126", 12.6)),
-        patch("fullwave.solver.solver._check_compatible_set", return_value=True),
         pytest.raises(
             NotImplementedError,
             match="Currently, 3D simulation is not supported in CPU mode",
