@@ -116,6 +116,28 @@ def test_make_cuda_version_option_prefers_an_older_build_to_minor_version_compat
         assert "minor version compatibility" not in str(mock_logger.warning.call_args_list[0])
 
 
+def test_make_cuda_version_option_takes_the_driver_version_where_it_has_a_build():
+    """A 12.9 driver on Ada runs the 12.9 build, not an older one of the same major version."""
+    with (
+        patch("fullwave.solver.solver.retrieve_cuda_version", return_value=12.9),
+        patch("fullwave.solver.solver.logger") as mock_logger,
+    ):
+        result = _make_cuda_version_option(use_gpu=True, cuda_arch="sm_89")
+        assert result == ("cuda129", 12.9)
+        assert "closest compatible version" not in str(mock_logger.warning.call_args_list)
+
+
+def test_make_cuda_version_option_minor_version_takes_the_oldest_newer_build():
+    """Of two newer builds of the driver's major version, the older one is taken."""
+    builds = {(12.4, "sm_89"), (12.9, "sm_89")}
+    with (
+        patch("fullwave.solver.solver.COMPATIBLE_CUDA_VERSIONS_ARCHITECTURES_set", builds),
+        patch("fullwave.solver.solver.retrieve_cuda_version", return_value=12.2),
+    ):
+        result = _make_cuda_version_option(use_gpu=True, cuda_arch="sm_89")
+        assert result == ("cuda124", 12.4)
+
+
 def test_make_cuda_version_option_driver_older_than_every_build_of_its_major_version():
     """An 11.4 driver on Ada has no older build, and it runs the 11.8 build by minor version."""
     with patch("fullwave.solver.solver.retrieve_cuda_version", return_value=11.4):
