@@ -1,9 +1,12 @@
 """fullwave module."""
 
 import logging
+import os
 import platform
 import time
 from importlib.metadata import PackageNotFoundError, version
+
+import numexpr
 
 from .grid import Grid
 from .medium import Medium, MediumExponentialAttenuation, MediumRelaxationMaps
@@ -63,7 +66,17 @@ try:
     __version__ = version("fullwave")
 except PackageNotFoundError:
     # Update via bump-my-version, not manually
-    __version__ = "1.3.0"
+    __version__ = "1.3.2-dev5"
 
 VERSION = __version__  # for convenience
 logger.info("Fullwave version: %s", __version__)
+
+# numexpr keeps 16 threads unless told otherwise, and the medium, the absorbing
+# layer and the coefficients run through it on grids of hundreds of millions of
+# cells. A thread count set in the environment is left alone.
+if not any(
+    os.environ.get(name)
+    for name in ("NUMEXPR_MAX_THREADS", "NUMEXPR_NUM_THREADS", "OMP_NUM_THREADS")
+):
+    numexpr.set_num_threads(min(numexpr.detect_number_of_cores(), numexpr.MAX_THREADS))
+logger.info("numexpr threads: %d", numexpr.get_num_threads())

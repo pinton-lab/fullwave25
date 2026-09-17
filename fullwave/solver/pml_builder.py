@@ -5,6 +5,7 @@ from __future__ import annotations
 import concurrent.futures
 import gc
 import logging
+import os
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from functools import cached_property
@@ -312,12 +313,20 @@ class PMLBuilder:
         logger.debug("building extended medium for pml...")
         medium_as_given = self.medium_org
         if not isinstance(self.medium_org, fullwave.MediumRelaxationMaps):
-            self.medium_org = self.medium_org.build()
+            logger.info(
+                "Building the relaxation maps of %d cells...", int(self.medium_org.sound_speed.size)
+            )
+            self.medium_org = self.medium_org.build(compute_coefficients=False)
         base_attrs = ["sound_speed", "density", "beta"]
         original_alpha_coeff = getattr(self.medium_org, "alpha_coeff", None)
         if original_alpha_coeff is not None and np.ndim(original_alpha_coeff) != 0:
             base_attrs.append("alpha_coeff")
         relax_attrs = list(self.medium_org.relaxation_param_dict.keys())
+        logger.info(
+            "Extending %d maps by %d cells on each side...",
+            len(base_attrs) + len(relax_attrs),
+            self.num_boundary_points,
+        )
 
         if self.xp is not np:
             # Pass CuPy arrays directly — multi-GPU extension uses D2D copy (NVLink)
@@ -366,7 +375,11 @@ class PMLBuilder:
             n_jobs=self.medium_org.n_jobs,
             dtype=getattr(self.medium_org, "dtype", np.float64),
             use_gpu=False,
+            compute_coefficients=False,
         )
+        # The extended maps carry everything the absorbing layer reads, so the
+        # interior maps are released here rather than held through the run.
+        self.medium_org = medium_as_given
         logger.debug("building extended medium for pml...done")
 
         logger.debug("building extended source for pml...")
@@ -861,10 +874,16 @@ class PMLBuilder:
 
         eps = xp.finfo(xp.float64).eps
 
-        rate = d_x / kappa_x + alpha_x
         two_over_dt = 2.0 / dt
-        b = (two_over_dt - rate) / (two_over_dt + rate)
-        a = -(d_x / (kappa_x**2 + eps)) / (rate + two_over_dt)
+        if xp is np:
+            rate = ne.evaluate("d_x / kappa_x + alpha_x")
+            b = ne.evaluate("(two_over_dt - rate) / (two_over_dt + rate)")
+            a = ne.evaluate("-(d_x / (kappa_x ** 2 + eps)) / (rate + two_over_dt)")
+        else:
+            rate = d_x / kappa_x + alpha_x
+            b = (two_over_dt - rate) / (two_over_dt + rate)
+            a = -(d_x / (kappa_x**2 + eps)) / (rate + two_over_dt)
+        del rate
 
         if output_dtype is not None and output_dtype != xp.float64:
             a = a.astype(output_dtype, copy=False)
@@ -886,6 +905,10 @@ class PMLBuilder:
         """
         logger.debug("Running PML builder...")
         if use_pml:
+            logger.info(
+                "Building the absorbing layer on %d cells...",
+                int(self.extended_medium.sound_speed.size),
+            )
             extended_medium: fullwave.MediumRelaxationMaps = self.extended_medium.build()
             if self.is_3d:
                 return self._apply_pml_3d(
@@ -901,30 +924,54 @@ class PMLBuilder:
             )
 
         extended_medium: fullwave.MediumRelaxationMaps = self.extended_medium.build()
+        extended_medium.build_coefficients()
         return extended_medium
 
     def _medium_copy(self, relaxation_param_dict: dict, key: str) -> NDArray[np.float64]:
-        """Return a fresh float64 copy of one medium map."""
-        return self.xp.array(relaxation_param_dict[key], dtype=self.xp.float64, copy=True)
+        """Return a fresh float64 copy of one medium map.
+
+        On the host the copy is split along the first axis across threads,
+        because one thread copying a map of the whole padded grid is the slowest
+        step of the absorbing layer.
+        """
+        source = relaxation_param_dict[key]
+        if self.xp is not np or np.ndim(source) == 0:
+            return self.xp.array(source, dtype=self.xp.float64, copy=True)
+        copied = np.empty(np.shape(source), dtype=np.float64)
+        n_rows = copied.shape[0]
+        n_slabs = max(1, min(n_rows, os.cpu_count() or 1, ne.MAX_THREADS))
+        edges = np.linspace(0, n_rows, n_slabs + 1).astype(int)
+
+        def copy_slab(start: int, stop: int) -> None:
+            np.copyto(copied[start:stop], source[start:stop], casting="unsafe")
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=n_slabs) as pool:
+            list(pool.map(copy_slab, edges[:-1], edges[1:]))
+        return copied
 
     def _ramp_on_every_axis(
-        self, field: NDArray[np.float64], **kwargs: object
+        self, field: NDArray[np.float64], *, in_place: bool = False, **kwargs: object
     ) -> NDArray[np.float64]:
-        """Apply one ramp along each grid axis in turn, in two dimensions or three."""
+        """Apply one ramp along each grid axis in turn, in two dimensions or three.
+
+        The ramp writes only the layers at both ends of each axis. With
+        `in_place` the field is written itself, otherwise one copy is written.
+        """
         is_3d = field.ndim == self.three_dimensions
-        out = field
+        out = field if in_place else self.xp.array(field, copy=True)
         for axis_index in range(field.ndim):
             out = self._apply_transition_and_pml(
-                out, array_shape=field.shape, axis=axis_index, is_3d=is_3d, **kwargs
+                out, array_shape=field.shape, axis=axis_index, is_3d=is_3d, in_place=True, **kwargs
             )
         return out
 
     def _empty_damping_in_transition_layer(
-        self, damping: NDArray[np.float64]
+        self, damping: NDArray[np.float64], *, in_place: bool = False
     ) -> NDArray[np.float64]:
         """Return the damping strength taken to zero across the transition layer."""
         return self._ramp_on_every_axis(
             damping,
+            in_place=in_place,
             value_target=0.0,
             transition_type="cosine",
             transit_within_transition_layer=True,
@@ -935,10 +982,13 @@ class PMLBuilder:
         damping: NDArray[np.float64],
         n_polynomial: float,
         d_target_pml: float,
+        *,
+        in_place: bool = False,
     ) -> NDArray[np.float64]:
         """Return the damping strength raised to the PML target across the PML layer."""
         return self._ramp_on_every_axis(
             damping,
+            in_place=in_place,
             value_target=d_target_pml,
             n_polynomial=n_polynomial,
             transition_type="polynomial",
@@ -949,27 +999,36 @@ class PMLBuilder:
         self,
         relaxation_frequency: NDArray[np.float64],
         entrance: float,
+        *,
+        in_place: bool = False,
     ) -> NDArray[np.float64]:
         """Return the relaxation frequency replaced by the CFS ramp inside the PML layer.
 
         Replaced rather than ramped into, because ramping a relaxation frequency
         through the evaluation frequency is what confines the damping to the
-        outer edge.
+        outer edge. The PML layer is the slab of `edge` cells at both ends of
+        each axis, so only those slabs are copied from the ramp.
         """
         xp = self.xp
         edge = self.m_spatial_order + self.n_pml_layer
         ramp = self._ramp_on_every_axis(
             xp.full_like(relaxation_frequency, entrance),
+            in_place=True,
             value_target=0.0,
             transition_type="linear",
             transit_within_pml_layer=True,
         )
-        inside_pml_layer = xp.zeros(relaxation_frequency.shape, dtype=bool)
-        for axis_index in range(relaxation_frequency.ndim):
-            view = xp.moveaxis(inside_pml_layer, axis_index, 0)
-            view[:edge] = True
-            view[view.shape[0] - edge :] = True
-        return xp.where(inside_pml_layer, xp.asarray(ramp), xp.asarray(relaxation_frequency))
+        spliced = (
+            xp.asarray(relaxation_frequency)
+            if in_place
+            else xp.array(relaxation_frequency, copy=True)
+        )
+        for axis_index in range(spliced.ndim):
+            target = xp.moveaxis(spliced, axis_index, 0)
+            source = xp.moveaxis(ramp, axis_index, 0)
+            target[:edge] = source[:edge]
+            target[target.shape[0] - edge :] = source[source.shape[0] - edge :]
+        return spliced
 
     def _build_decoupled(
         self,
@@ -1002,16 +1061,16 @@ class PMLBuilder:
                 relaxation_frequency = self._medium_copy(
                     relaxation_param_dict, rename_dict[f"alpha_{letter}_nu{nu}"]
                 )
-                emptied = self._empty_damping_in_transition_layer(damping)
+                emptied = self._empty_damping_in_transition_layer(damping, in_place=True)
                 if nu > 1:
                     out_dict[f"d_{letter}_nu{nu}"] = emptied
                     out_dict[f"alpha_{letter}_nu{nu}"] = relaxation_frequency
                     continue
                 out_dict[f"d_{letter}_nu{nu}"] = self._raise_damping_in_pml_layer(
-                    emptied, n_polynomial, d_target_pml
+                    emptied, n_polynomial, d_target_pml, in_place=True
                 )
                 out_dict[f"alpha_{letter}_nu{nu}"] = self._splice_entrance_frequency_into_pml_layer(
-                    relaxation_frequency, entrance
+                    relaxation_frequency, entrance, in_place=True
                 )
         return out_dict
 
@@ -1124,9 +1183,11 @@ class PMLBuilder:
             found = np.asarray(relaxation_param_dict[key], dtype=np.float64)
             if found.ndim == 0 or np.allclose(found, 1.0):
                 continue
+            found = self.xp.array(found, copy=True)
             for axis in range(3 if is_3d else 2):
                 found = self._apply_transition_and_pml(
                     found,
+                    in_place=True,
                     value_target=1.0,
                     array_shape=found.shape,
                     axis=axis,
@@ -1213,13 +1274,9 @@ class PMLBuilder:
             # Return keys + values so parent can update dict safely
             return (f"a_pml_{axis}{nu}", a, f"b_pml_{axis}{nu}", b)
 
-        if self.xp is not np:
-            # GPU path: run sequentially
-            results = [_worker(nu, axis) for nu, axis in tasks]
-        else:
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                futures = [executor.submit(_worker, nu, axis) for nu, axis in tasks]
-                results = [f.result() for f in futures]
+        # One task at a time. numexpr threads each expression, and a pool of
+        # tasks held every task's temporaries of the whole grid at once.
+        results = [_worker(nu, axis) for nu, axis in tasks]
 
         for a_key, a_val, b_key, b_val in results:
             out_dict[a_key] = a_val
@@ -1312,13 +1369,9 @@ class PMLBuilder:
             # Return keys + values so parent can update dict safely
             return (f"a_pml_{axis}{nu}", a, f"b_pml_{axis}{nu}", b)
 
-        if self.xp is not np:
-            # GPU path: run sequentially
-            results = [_worker(nu, axis) for nu, axis in tasks]
-        else:
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                futures = [executor.submit(_worker, nu, axis) for nu, axis in tasks]
-                results = [f.result() for f in futures]
+        # One task at a time. numexpr threads each expression, and a pool of
+        # tasks held every task's temporaries of the whole grid at once.
+        results = [_worker(nu, axis) for nu, axis in tasks]
 
         for a_key, a_val, b_key, b_val in results:
             out_dict[a_key] = a_val
@@ -1347,6 +1400,7 @@ class PMLBuilder:
         transit_within_pml_layer: bool = False,
         disable_the_transition_and_pml: bool = False,
         is_3d: bool = False,
+        in_place: bool = False,
     ) -> NDArray[np.float64]:
         if transit_within_transition_layer and transit_within_pml_layer:
             error_msg = (
@@ -1428,8 +1482,11 @@ class PMLBuilder:
         if use_gpu:
             input_array = xp.asarray(input_array)
 
-        # Move axis to 0 for uniform processing
-        working_array = xp.moveaxis(input_array, axis, 0).copy()
+        # Move axis to 0 for uniform processing. Only the layers at both ends
+        # are written, so an array the caller owns needs no copy.
+        working_array = xp.moveaxis(input_array, axis, 0)
+        if not in_place:
+            working_array = working_array.copy()
 
         # Apply boundary conditions
         working_array[: m_offset + layer_thickness] = value_target

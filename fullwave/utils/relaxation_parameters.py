@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 import numba as nb
+import numexpr as ne
 import numpy as np
 from numpy.typing import NDArray
 from scipy.io import loadmat
@@ -128,10 +129,17 @@ def _first_order_attenuation(
     exceeds one and the recursion grows without bound, so that is refused.
     """
     scaled = dict(relaxation_param_dict)
+    on_the_host = xp is np
     for direction in ("x1", "x2"):
         stretching = f"kappa_{direction}"
-        moved = 1.0 + ratio * (relaxation_param_dict[stretching] - 1.0)
-        if bool(xp.any(moved <= 0.0)):
+        kappa = relaxation_param_dict[stretching]
+        if on_the_host:
+            moved = ne.evaluate("1.0 + ratio * (kappa - 1.0)")
+            collapsed = bool(ne.evaluate("moved <= 0.0").any())
+        else:
+            moved = 1.0 + ratio * (kappa - 1.0)
+            collapsed = bool(xp.any(moved <= 0.0))
+        if collapsed:
             error_msg = (
                 f"scaling the attenuation by this factor carries {stretching} to "
                 f"{float(xp.min(moved)):.6g}, at or below zero, which makes the memory "
@@ -143,7 +151,8 @@ def _first_order_attenuation(
         scaled[stretching] = moved
         for i_relax in range(n_relaxation_mechanisms):
             strength = f"d_{direction}_nu{i_relax + 1}"
-            scaled[strength] = ratio * relaxation_param_dict[strength]
+            values = relaxation_param_dict[strength]
+            scaled[strength] = ne.evaluate("ratio * values") if on_the_host else ratio * values
     return scaled
 
 
