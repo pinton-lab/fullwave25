@@ -18,18 +18,18 @@ def test_make_cuda_version_option_gpu_mode():
     """Test _make_cuda_version_option in GPU mode with compatible versions."""
     # Test with compatible version
     with patch("fullwave.solver.solver.retrieve_cuda_version", return_value=11.8):
-        result = _make_cuda_version_option(use_gpu=True)
+        result = _make_cuda_version_option(use_gpu=True, cuda_arch="sm_89")
         assert result == ("cuda118", 11.8)
 
     with patch("fullwave.solver.solver.retrieve_cuda_version", return_value=12.4):
-        result = _make_cuda_version_option(use_gpu=True)
+        result = _make_cuda_version_option(use_gpu=True, cuda_arch="sm_89")
         assert result == ("cuda124", 12.4)
 
 
 def test_make_cuda_version_option_cpu_mode():
     """Test _make_cuda_version_option in CPU mode."""
     with patch("fullwave.solver.solver.retrieve_cuda_version", return_value=11.8):
-        result = _make_cuda_version_option(use_gpu=False)
+        result = _make_cuda_version_option(use_gpu=False, cuda_arch="sm_89")
         assert result == ("cuda118", 11.8)
 
 
@@ -39,7 +39,7 @@ def test_make_cuda_version_option_no_cuda():
         patch("fullwave.solver.solver.retrieve_cuda_version", return_value=-1),
         pytest.raises(ValueError, match="Could not retrieve CUDA version"),
     ):
-        _make_cuda_version_option(use_gpu=True)
+        _make_cuda_version_option(use_gpu=True, cuda_arch="sm_89")
 
 
 def test_make_cuda_version_option_unverified_version_warning():
@@ -48,7 +48,7 @@ def test_make_cuda_version_option_unverified_version_warning():
         patch("fullwave.solver.solver.retrieve_cuda_version", return_value=11.8),
         patch("fullwave.solver.solver.logger") as mock_logger,
     ):
-        result = _make_cuda_version_option(use_gpu=True)
+        result = _make_cuda_version_option(use_gpu=True, cuda_arch="sm_89")
         assert result == ("cuda118", 11.8)
         mock_logger.warning.assert_called_once()
         assert "is not in the verified versions" in str(mock_logger.warning.call_args)
@@ -62,20 +62,71 @@ def test_make_cuda_version_option_fallback_to_compatible():
             "fullwave.solver.solver.logger",
         ) as mock_logger,
     ):
-        result = _make_cuda_version_option(use_gpu=True)
-        assert result == ("cuda124", 12.4)  # Should fall back to 12.6
+        result = _make_cuda_version_option(use_gpu=True, cuda_arch="sm_89")
+        assert result == ("cuda124", 12.4)
         mock_logger.warning.assert_called()
         warning_call = str(mock_logger.warning.call_args)
         assert "Using the closest compatible version 12.4 instead" in warning_call
 
 
-def test_make_cuda_version_option_out_of_range():
-    """Test _make_cuda_version_option with CUDA version outside compatible ranges."""
+def test_make_cuda_version_option_newer_driver_takes_the_newest_build():
+    """A driver newer than every build runs the newest build for its architecture."""
+    for driver_version, arch in ((13.2, "sm_90"), (14.0, "sm_89")):
+        with (
+            patch("fullwave.solver.solver.retrieve_cuda_version", return_value=driver_version),
+            patch("fullwave.solver.solver.logger") as mock_logger,
+        ):
+            result = _make_cuda_version_option(use_gpu=True, cuda_arch=arch)
+            assert result == ("cuda130", 13.0)
+            warning_call = str(mock_logger.warning.call_args_list[0])
+            assert "Using the closest compatible version 13.0 instead" in warning_call
+
+
+def test_make_cuda_version_option_skips_versions_without_a_build_for_the_architecture():
+    """Pascal has no CUDA 13.0 build, so a newer driver runs the 12.9 build."""
+    with patch("fullwave.solver.solver.retrieve_cuda_version", return_value=13.2):
+        result = _make_cuda_version_option(use_gpu=True, cuda_arch="sm_61")
+        assert result == ("cuda129", 12.9)
+
+
+def test_make_cuda_version_option_driver_older_than_every_build():
+    """A driver older than every build for the architecture is refused."""
     with (
-        patch("fullwave.solver.solver.retrieve_cuda_version", return_value=14.0),
-        pytest.raises(ValueError, match=r"CUDA version 14.0 is not in the compatible ranges"),
+        patch("fullwave.solver.solver.retrieve_cuda_version", return_value=11.4),
+        pytest.raises(ValueError, match=r"No binary for architecture sm_89 runs on a driver"),
     ):
-        _make_cuda_version_option(use_gpu=True)
+        _make_cuda_version_option(use_gpu=True, cuda_arch="sm_89")
+
+
+def test_make_cuda_version_option_driver_older_than_the_first_build_for_the_architecture():
+    """Blackwell builds start at CUDA 12.9, so a 12.6 driver is refused for sm_120."""
+    with (
+        patch("fullwave.solver.solver.retrieve_cuda_version", return_value=12.6),
+        pytest.raises(ValueError, match=r"No binary for architecture sm_120 runs on a driver"),
+    ):
+        _make_cuda_version_option(use_gpu=True, cuda_arch="sm_120")
+
+
+def test_retrieve_fullwave_simulation_path_newer_driver_on_hopper():
+    """A driver that supports CUDA 13.2 on an H100 resolves to the CUDA 13.0 build."""
+    with (
+        patch("fullwave.solver.solver._make_cuda_arch_option", return_value="sm_90"),
+        patch("fullwave.solver.solver.retrieve_cuda_version", return_value=13.2),
+    ):
+        result = _retrieve_fullwave_simulation_path(use_gpu=True, is_3d=True)
+    assert result.name == "fullwave2_3d_n_relax_multi_gpu_cuda130"
+
+
+def test_retrieve_fullwave_simulation_path_refuses_a_pair_without_a_build():
+    """A CUDA version and architecture pair with no build is refused."""
+    with (
+        patch("fullwave.solver.solver._make_cuda_arch_option", return_value="sm_89"),
+        patch("fullwave.solver.solver._make_cuda_version_option", return_value=("cuda131", 13.1)),
+        pytest.raises(
+            ValueError, match=r"No binary is built with CUDA 13.1 for architecture sm_89"
+        ),
+    ):
+        _retrieve_fullwave_simulation_path(use_gpu=True, is_3d=True)
 
 
 def test_make_cuda_arch_option_gpu_mode_compatible():
@@ -289,7 +340,7 @@ def test_retrieve_fullwave_simulation_path_calls_helper_functions():
         )
 
         mock_arch.assert_called_once_with(use_gpu=True)
-        mock_version.assert_called_once_with(use_gpu=True)
+        mock_version.assert_called_once_with(use_gpu=True, cuda_arch="sm_89")
         mock_check.assert_called_once_with(cuda_version=12.4, cuda_arch="sm_89")
 
 
