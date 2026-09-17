@@ -56,18 +56,6 @@ VERIFIED_CUDA_ARCHITECTURES = [
 ]
 
 
-COMPATIBLE_CUDA_VERSIONS = [
-    11.8,
-    12.4,
-    12.9,
-    13.0,
-    13.1,
-]
-
-COMPATIBLE_CUDA_RANGES = [
-    (11.8, 13.1),
-]
-
 VERIFIED_CUDA_VERSIONS = [
     12.4,
     12.9,
@@ -149,7 +137,33 @@ def _make_cuda_arch_option(*, use_gpu: bool = True) -> str:
     return arch_option
 
 
-def _make_cuda_version_option(*, use_gpu: bool = True) -> tuple[str, float]:
+def _make_cuda_version_option(*, cuda_arch: str, use_gpu: bool = True) -> tuple[str, float]:
+    """Return the CUDA tag of the binary to run on this driver and architecture.
+
+    The driver reports the newest CUDA version it supports, and it also runs a binary
+    built with an older CUDA version. The choice is therefore the newest CUDA version
+    with a build for the architecture that is not newer than the driver.
+
+    Parameters
+    ----------
+    cuda_arch : str
+        The architecture option of the first GPU, such as "sm_90".
+    use_gpu : bool, optional
+        Whether the simulation runs on the GPU. Without it, the driver version is
+        returned unchecked.
+
+    Returns
+    -------
+    tuple[str, float]
+        The tag the binary name ends with, such as "cuda129", and its CUDA version.
+
+    Raises
+    ------
+    ValueError
+        If the driver version cannot be read, or no build for the architecture is
+        as old as the driver or older.
+
+    """
     cuda_version: float = retrieve_cuda_version()
     if use_gpu and cuda_version == -1:
         error_msg = (
@@ -159,34 +173,30 @@ def _make_cuda_version_option(*, use_gpu: bool = True) -> tuple[str, float]:
         logger.error(error_msg)
         raise ValueError(error_msg)
 
-    # range check
-    if use_gpu and not any(start <= cuda_version <= end for start, end in COMPATIBLE_CUDA_RANGES):
-        error_msg = (
-            f"CUDA version {cuda_version} is not in the compatible ranges: "
-            f"{COMPATIBLE_CUDA_RANGES}. Please install a compatible CUDA version."
+    if use_gpu:
+        built_versions = sorted(
+            version
+            for version, arch in COMPATIBLE_CUDA_VERSIONS_ARCHITECTURES_set
+            if arch == cuda_arch
         )
-        logger.error(error_msg)
-        raise ValueError(error_msg)
-
-    # find the a compatible cuda version below the system cuda
-    if use_gpu and cuda_version not in COMPATIBLE_CUDA_VERSIONS:
-        compatible_versions_below = [v for v in COMPATIBLE_CUDA_VERSIONS if v < cuda_version]
-        if compatible_versions_below:
-            closest_version = max(compatible_versions_below)
+        runnable_versions = [version for version in built_versions if version <= cuda_version]
+        if not runnable_versions:
+            error_msg = (
+                f"No binary for architecture {cuda_arch} runs on a driver that supports "
+                f"CUDA {cuda_version}. The binaries for this architecture are built with "
+                f"CUDA {built_versions}. Please update the NVIDIA driver."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        closest_version = runnable_versions[-1]
+        if closest_version != cuda_version:
             message = (
-                f"Warning: CUDA version {cuda_version} is not in the compatible versions: "
-                f"{COMPATIBLE_CUDA_VERSIONS}. "
+                f"Warning: CUDA version {cuda_version} of the driver has no binary for "
+                f"architecture {cuda_arch}. "
                 f"Using the closest compatible version {closest_version} instead."
             )
             logger.warning(message)
             cuda_version = closest_version
-        else:
-            error_msg = (
-                f"No compatible CUDA versions found below {cuda_version}. "
-                "Please install a compatible CUDA version."
-            )
-            logger.error(error_msg)
-            raise ValueError(error_msg)
 
     if use_gpu and cuda_version not in VERIFIED_CUDA_VERSIONS:
         warning_msg = (
@@ -240,7 +250,10 @@ def _retrieve_fullwave_simulation_path(
     use_isotropic_relaxation: bool = True,
 ) -> Path:
     arch_option = _make_cuda_arch_option(use_gpu=use_gpu)
-    cuda_version_option, cuda_version = _make_cuda_version_option(use_gpu=use_gpu)
+    cuda_version_option, cuda_version = _make_cuda_version_option(
+        use_gpu=use_gpu,
+        cuda_arch=arch_option,
+    )
     if use_isotropic_relaxation is False:
         error_msg = (
             "Currently, only isotropic relaxation is supported. "
@@ -251,10 +264,13 @@ def _retrieve_fullwave_simulation_path(
     # isotropic_str = "_isotropic" if use_isotropic_relaxation else ""
     isotropic_str = ""
 
-    _check_compatible_set(
+    if use_gpu and not _check_compatible_set(
         cuda_version=cuda_version,
         cuda_arch=arch_option,
-    )
+    ):
+        error_msg = f"No binary is built with CUDA {cuda_version} for architecture {arch_option}."
+        logger.error(error_msg)
+        raise ValueError(error_msg)
     if use_exponential_attenuation:
         if is_3d and use_gpu:
             path_fullwave_simulation_bin = (
