@@ -754,15 +754,22 @@ class Solver:
         CuPy arrays, then drain both the device and pinned memory pools.
         This prevents stale allocations from causing memory pressure when
         subsequent operations allocate large GPU arrays.
+
+        The release is best effort. It does nothing when CuPy is absent, and
+        it does nothing when CuPy is present without a usable CUDA driver,
+        which is the case on a machine with no GPU.
         """
         gc.collect()
         try:
             import cupy as cp  # noqa: PLC0415
+        except ImportError:
+            return
 
+        try:
             cp.get_default_memory_pool().free_all_blocks()
             cp.get_default_pinned_memory_pool().free_all_blocks()
-        except ImportError:
-            pass
+        except cp.cuda.runtime.CUDARuntimeError as error:
+            logger.debug("GPU memory pools were not released: %s", error)
 
     @staticmethod
     def _check_input(
