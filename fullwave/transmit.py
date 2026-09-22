@@ -272,12 +272,28 @@ def signal_of(
     layers = layer_of_each_pixel(coords, identifiers)
     center_hertz = grid.f0 if pulse.center_hertz is None else pulse.center_hertz
 
-    signal = np.zeros((len(identifiers), grid.nt))
-    for index, element in enumerate(identifiers):
+    # Pixels whose element weight, element delay, pixel delay and layer carry the
+    # same bits get the same row, so each row is built once, from one of its
+    # pixels, with the arguments that pixel gives.
+    element_index = identifiers - 1
+    columns = [
+        np.asarray(weights, dtype=np.float64)[element_index].view(np.uint64),
+        np.asarray(delays_s, dtype=np.float64)[element_index].view(np.uint64),
+        np.asarray(layers, dtype=np.uint64),
+    ]
+    if pixel_delays_s is not None:
+        columns.append(np.ascontiguousarray(pixel_delays_s, dtype=np.float64).view(np.uint64))
+    _, first_pixel, row_of_pixel = np.unique(
+        np.stack(columns, axis=1), axis=0, return_index=True, return_inverse=True
+    )
+
+    rows = np.zeros((len(first_pixel), grid.nt))
+    for row, index in enumerate(first_pixel):
+        element = identifiers[index]
         weight = float(weights[element - 1])
         if weight == 0.0:
             continue
-        signal[index] = pulse_utils.gaussian_modulated_sinusoidal_signal(
+        rows[row] = pulse_utils.gaussian_modulated_sinusoidal_signal(
             nt=grid.nt,
             f0=center_hertz,
             duration=grid.duration,
@@ -290,4 +306,4 @@ def signal_of(
             delay_sec=float(delays_s[element - 1])
             + (0.0 if pixel_delays_s is None else float(pixel_delays_s[index])),
         )
-    return signal
+    return rows[row_of_pixel.reshape(-1)]
