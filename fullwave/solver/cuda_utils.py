@@ -213,6 +213,42 @@ def cuCtxDetach(ctx):  # noqa: ANN001, ANN201, D103, N802
     return cuda.cuCtxDetach(ctx)
 
 
+@cuda_api_call
+def cuDeviceCanAccessPeer(can_access, dev, peer_dev):  # noqa: ANN001, ANN201, D103, N802
+    return cuda.cuDeviceCanAccessPeer(can_access, dev, peer_dev)
+
+
+def find_consecutive_gpus_without_peer_access(ordinals: list[int]) -> list[tuple[int, int]]:
+    """Return the consecutive GPU pairs that cannot access each other's memory directly.
+
+    Parameters
+    ----------
+    ordinals : list[int]
+        CUDA device ordinals as this process sees them, in the requested order.
+
+    Returns
+    -------
+    list[tuple[int, int]]
+        Each consecutive pair (a, b) of ``ordinals`` where a cannot access b or b
+        cannot access a.
+
+    """
+    cuInit(0)
+    pairs = []
+    for first, second in zip(ordinals, ordinals[1:], strict=False):
+        device_first = ctypes.c_int()
+        device_second = ctypes.c_int()
+        cuDeviceGet(ctypes.byref(device_first), first)
+        cuDeviceGet(ctypes.byref(device_second), second)
+        forward = ctypes.c_int()
+        backward = ctypes.c_int()
+        cuDeviceCanAccessPeer(ctypes.byref(forward), device_first, device_second)
+        cuDeviceCanAccessPeer(ctypes.byref(backward), device_second, device_first)
+        if not forward.value or not backward.value:
+            pairs.append((first, second))
+    return pairs
+
+
 # Main function to get CUDA device specs
 @lru_cache(maxsize=1)
 def get_cuda_device_specs() -> list[dict[str, Any]]:

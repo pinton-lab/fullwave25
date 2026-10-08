@@ -1,5 +1,6 @@
 """Module for launching Fullwave simulation."""
 
+import ctypes
 import logging
 import os
 import re
@@ -79,6 +80,8 @@ class Launcher:
             cuda_device_id,
             verify_gpu=verify_gpu,
         )
+        if use_gpu and verify_gpu:
+            self._warn_if_gpus_lack_peer_access(self.cuda_device_id)
         self.save_gpu_memory = save_gpu_memory
         logger.debug("Launcher instance created.")
 
@@ -159,6 +162,49 @@ class Launcher:
             if device_id not in gpu_ids:
                 message = f"CUDA device ID {device_id} does not exist."
                 raise ValueError(message)
+
+    @staticmethod
+    def _warn_if_gpus_lack_peer_access(device_id_str: str) -> None:
+        """Warn when consecutive GPUs of a multi-GPU run have no peer-to-peer access.
+
+        Without peer access (no NVLink, and a PCIe chipset or GPU that refuses it,
+        as on GeForce cards), a multi-GPU run is much slower than with peer access.
+
+        The binary runs with ``CUDA_VISIBLE_DEVICES`` set to ``device_id_str``. The
+        CUDA ordinals of this process name the same GPUs only when this process has
+        no ``CUDA_VISIBLE_DEVICES`` of its own, so the check is skipped otherwise.
+        It never raises: if the CUDA driver cannot answer, it logs at debug level.
+
+        Parameters
+        ----------
+        device_id_str : str
+            The CUDA device ID(s) in string format, for example "0,1,2,3".
+
+        """
+        device_ids = [int(device_id) for device_id in device_id_str.split(",")]
+        if len(device_ids) < 2:
+            return
+        if "CUDA_VISIBLE_DEVICES" in os.environ:
+            logger.debug(
+                "Peer access check skipped: CUDA_VISIBLE_DEVICES is set in this process.",
+            )
+            return
+        try:
+            from .cuda_utils import find_consecutive_gpus_without_peer_access  # noqa: PLC0415
+
+            pairs = find_consecutive_gpus_without_peer_access(device_ids)
+        except (AttributeError, NameError, OSError, RuntimeError, ctypes.ArgumentError) as error:
+            logger.debug("Peer access check skipped: %s", error)
+            return
+        if not pairs:
+            return
+        pair_text = ", ".join(f"GPU {first} <-> GPU {second}" for first, second in pairs)
+        logger.warning(
+            "No peer-to-peer access between %s. A multi-GPU run on these GPUs is much "
+            "slower than on GPUs with NVLink or PCIe peer access. Check with a short "
+            "run whether fewer GPUs give a faster simulation.",
+            pair_text,
+        )
 
     @staticmethod
     def _configure_cuda_device_id(
