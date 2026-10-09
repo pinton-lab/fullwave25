@@ -1,0 +1,25 @@
+# Dependabot version updates. Security alerts are raised without this file; this file makes
+# Dependabot also open pull requests that keep the locked versions and the CI actions current.
+version: 2
+updates:
+  # uv.lock and pyproject.toml. One grouped pull request per week, into develop.
+  - package-ecosystem: "uv"
+    directory: "/"
+    target-branch: "develop"
+    schedule:
+      interval: "weekly"
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
+
+  # The actions used in .github/workflows. One grouped pull request per week, into develop.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "develop"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
