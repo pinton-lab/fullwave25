@@ -1,0 +1,10 @@
+# Only the files needed to install the package go into the build context.
+*
+!fullwave
+!pyproject.toml
+!README.md
+!LICENSE
+fullwave/solver/bins/gpu
+fullwave/solver/bins/exponential_attenuation
+fullwave/solver/bins/_*
+**/__pycache__
