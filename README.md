@@ -56,6 +56,34 @@ Fullwave 2.5 is developed and maintained by [Pinton Lab](https://github.com/pint
 If you use Fullwave 2.5 in your research, please cite this repository as:
 
 ```bibtex
+@ARTICLE{Sode2026-rd,
+  title        = {Spatially heterogeneous power-law attenuation with multiple
+                  relaxation mechanisms for ultrasound modeling},
+  author       = {Sode, Masashi and Pinton, Gianmarco},
+  journaltitle = {arXiv [physics.med-ph]},
+  date         = {2026},
+  eprint       = {2606.11103},
+  eprinttype   = {arXiv},
+  eprintclass  = {physics.med-ph},
+  url          = {http://arxiv.org/abs/2606.11103},
+}
+
+@ARTICLE{Sode2026-fullwave2,
+  title     = "{A fullwave model of the nonlinear wave equation with multiple
+               relaxations and relaxing perfectly matched layers for high-order
+               numerical finite difference solutions}",
+  author    = "Sode, Masashi and Pinton, Gianmarco",
+  journal   = "Phys. Med. Biol.",
+  publisher = "IOP Publishing",
+  month     =  "27~" # jul,
+  year      =  2026,
+  url       = "http://dx.doi.org/10.1088/1361-6560/ae9116",
+  doi       = "10.1088/1361-6560/ae9116",
+  issn      = "0031-9155,1361-6560",
+  language  = "en"
+}
+
+
 @software{Sode2025-fullwave25,
   author = {Sode, Masashi and Pinton, Gianmarco},
   title = {{Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities}},
@@ -65,16 +93,6 @@ If you use Fullwave 2.5 in your research, please cite this repository as:
   url = {https://github.com/pinton-lab/fullwave25},
 }
 
-@ARTICLE{Pinton2021-fullwave2,
-  title = "A fullwave model of the nonlinear wave equation with multiple relaxations and relaxing perfectly matched layers for high-order numerical finite-difference solutions",
-  author = "Pinton, Gianmarco",
-  month = jun,
-  year = 2021,
-  copyright = "http://creativecommons.org/licenses/by/4.0/",
-  archivePrefix = "arXiv",
-  primaryClass = "physics.med-ph",
-  eprint = "2106.11476"
-}
 ```
 
 ---
