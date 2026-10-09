@@ -14,6 +14,8 @@ dependencies = [
     "numba>=0.63.1",
     "numexpr>=2.14.1",
     "cupy-cuda12x>=13.6.0",
+    # Pillow comes in through matplotlib; releases before 12.3.0 have known security advisories.
+    "pillow>=12.3.0",
 ]
 authors = [{ name = "Masashi Sode" }, { name = "Gianmarco Pinton" }]
 maintainers = [{ name = "Masashi Sode" }]
