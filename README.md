@@ -241,7 +241,7 @@ A transmit sequence on one medium, such as plane wave angles, focused lines or s
 sources = []
 for angle in (-10, -5, 0, 5, 10):
     transducer.plane_wave(angle_deg=angle)
-    sources.append(copy.deepcopy(transducer.source))
+    sources.append(transducer.source)
 
 solver = fullwave.Solver(
     work_dir="./outputs/my_batch", grid=grid, medium=medium, transducer=transducer,
@@ -250,7 +250,7 @@ solver = fullwave.Solver(
 recorded = solver.run_batch(sources)  # [n_transmits, n_sensors, n_t]
 ```
 
-A batch needs a 2D batch solver binary, passed as `path_fullwave_simulation_bin`; its file name contains `batch`. `max_members_per_run` limits the number of transmits in one simulation. By default the limit is 32, or less when the GPU memory estimate does not fit that many into the free GPU memory, and a long sequence runs as several simulations of nearly equal size. In a 2D L7-4 test the time per transmit stopped falling at 16 to 32 transmits.
+A batch needs a 2D batch solver binary, passed as `path_fullwave_simulation_bin`; its file name contains `batch`. `max_members_per_run` limits the number of transmits in one simulation. By default the limit is 32, or less when the GPU memory estimate does not fit that many into the free GPU memory, and a long sequence runs as several simulations of nearly equal size. In a 2D L7-4 test the time per transmit stopped falling at 16 to 32 transmits. [transmit_batch_basics.py](examples/transmit_batch/transmit_batch_basics.py) shows plane waves and focused lines as batches, and [plane_wave_compounding_batch.py](examples/linear_transducer/plane_wave_compounding_batch.py) makes a compounded B-mode from one batch.
 
 ### Which example to read
 
@@ -259,6 +259,8 @@ A batch needs a 2D batch solver binary, passed as `path_fullwave_simulation_bin`
 | send one plane wave                | [simple_plane_wave.py](examples/simple_plane_wave/simple_plane_wave.py)                                     |
 | do the same in 3D                  | [simple_plane_wave_3d.py](examples/wave_3d/simple_plane_wave_3d.py)                                         |
 | compound plane waves into a B-mode | [plane_wave_compounding.py](examples/linear_transducer/plane_wave_compounding.py)                           |
+| run a transmit sequence as batches | [transmit_batch_basics.py](examples/transmit_batch/transmit_batch_basics.py)                                |
+| compound plane waves in one batch  | [plane_wave_compounding_batch.py](examples/linear_transducer/plane_wave_compounding_batch.py)               |
 | focus and watch the beam           | [linear_transducer_focused_animation.py](examples/linear_transducer/linear_transducer_focused_animation.py) |
 | run a full synthetic aperture      | [full_synthetic_aperture.py](examples/linear_transducer/full_synthetic_aperture.py)                         |
 | do the same on a curved array      | [convex_transducer_fsa.py](examples/convex_transducer/convex_transducer_fsa.py)                             |
