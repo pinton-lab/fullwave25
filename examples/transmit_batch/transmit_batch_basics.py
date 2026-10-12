@@ -14,18 +14,10 @@ This example:
 5. plots the element traces of one plane wave and one focused line in dB, where the
    echoes of 3 point targets show as hyperbolas.
 
-A batch needs a 2D batch solver binary, whose file name contains "batch". Until the
-batch binaries are in a binary release, pass its path:
-
-    uv run python examples/transmit_batch/transmit_batch_basics.py \
-        --batch-binary /path/to/fullwave2_2d_n_relax_multi_gpu_batch
-
-or set FULLWAVE25_BATCH_BINARY to that path.
+run_batch downloads the batch solver binary on first use, like the other binaries.
 """
 
-import argparse
 import logging
-import os
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -34,31 +26,8 @@ import numpy as np
 import fullwave
 
 
-def parse_arguments() -> argparse.Namespace:
-    """Read the path of the batch binary from the command line or the environment.
-
-    Returns
-    -------
-    argparse.Namespace
-        The arguments, with ``batch_binary`` as a Path.
-
-    """
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "--batch-binary",
-        type=Path,
-        default=os.environ.get("FULLWAVE25_BATCH_BINARY"),
-        help="the 2D batch solver binary (default: $FULLWAVE25_BATCH_BINARY)",
-    )
-    arguments = parser.parse_args()
-    if arguments.batch_binary is None:
-        parser.error("pass --batch-binary or set FULLWAVE25_BATCH_BINARY")
-    return arguments
-
-
 def main() -> None:
     """Run the transmit batch example."""
-    arguments = parse_arguments()
     logging.getLogger("__main__").setLevel(logging.INFO)
 
     work_dir = Path("./outputs/") / "transmit_batch_basics"
@@ -129,7 +98,7 @@ def main() -> None:
         focused_lines.append(transducer.source)
 
     #
-    # --- the solver: the same as for one transmit, with a batch binary ---
+    # --- the solver: the same as for one transmit ---
     #
     # The Solver's own source (here the transducer's last transmit) sets the source
     # positions; run_batch takes the signals of each transmit from its list.
@@ -138,7 +107,6 @@ def main() -> None:
         grid=grid,
         medium=medium,
         transducer=transducer,
-        path_fullwave_simulation_bin=arguments.batch_binary,
     )
 
     # All 5 plane waves in one simulation. The result is [transmits, sensors, time].
@@ -165,7 +133,6 @@ def main() -> None:
         grid=grid,
         medium=medium,
         transducer=transducer,
-        path_fullwave_simulation_bin=arguments.batch_binary,
     ).run(simulation_dir_name="plane_wave_alone")
     identical = np.array_equal(single, plane_output[2])
     print(f"plane wave {angles[2]} deg: batch output equals the single run: {identical}")

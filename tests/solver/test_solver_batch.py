@@ -32,7 +32,8 @@ def _transmit(grid: fullwave.Grid, scale: float) -> fullwave.Source:
     return fullwave.Source(scale * signals, mask)
 
 
-def _build_solver(tmp_path: Path, binary_name: str) -> fullwave.Solver:
+def _build_solver(tmp_path: Path, binary_name: str | None) -> fullwave.Solver:
+    """Return a Solver on a fake binary, or on the released binaries for None."""
     grid = _grid()
     shape = (grid.nx, grid.ny)
     medium = fullwave.Medium(
@@ -45,8 +46,10 @@ def _build_solver(tmp_path: Path, binary_name: str) -> fullwave.Solver:
         use_isotropic_relaxation=True,
     )
     sensor = fullwave.Sensor(mask=np.ones(shape, dtype=bool), sampling_modulus_time=2)
-    binary = tmp_path / binary_name
-    binary.touch()
+    binary = None
+    if binary_name is not None:
+        binary = tmp_path / binary_name
+        binary.touch()
     return fullwave.Solver(
         work_dir=tmp_path / "work",
         grid=grid,
@@ -252,3 +255,75 @@ def test_run_batch_refuses_an_empty_list_and_a_run_size_below_one(batch_solver):
             max_members_per_run=0,
             generate_input_only=True,
         )
+
+
+@pytest.mark.parametrize(
+    ("use_exponential_attenuation", "expected"),
+    [
+        (False, "fullwave2_2d_n_relax_multi_gpu_batch_cuda124"),
+        (True, "fullwave2_2d_exponential_attenuation_multi_gpu_batch_cuda124"),
+    ],
+)
+def test_the_batch_binary_name_carries_batch_before_the_cuda_version(
+    use_exponential_attenuation,
+    expected,
+):
+    with (
+        patch.object(solver_module, "_make_cuda_arch_option", return_value="sm_89"),
+        patch.object(solver_module, "retrieve_cuda_version", return_value=12.4),
+    ):
+        path = solver_module._retrieve_fullwave_simulation_path(
+            use_exponential_attenuation=use_exponential_attenuation,
+            batch=True,
+        )
+    assert path.name == expected
+
+
+def test_there_is_no_3d_batch_binary():
+    with (
+        patch.object(solver_module, "_make_cuda_arch_option", return_value="sm_89"),
+        patch.object(solver_module, "retrieve_cuda_version", return_value=12.4),
+        pytest.raises(NotImplementedError, match="2D GPU simulations only"),
+    ):
+        solver_module._retrieve_fullwave_simulation_path(is_3d=True, batch=True)
+
+
+@pytest.fixture
+def default_binary_solver(tmp_path, monkeypatch):
+    """Return a Solver built without a binary path, with a fake binary lookup."""
+    requested = []
+
+    def fake_path(*, batch=False, **_):
+        name = f"fullwave2_2d_n_relax_multi_gpu{'_batch' if batch else ''}_cuda124"
+        binary = tmp_path / "bins" / name
+        binary.parent.mkdir(exist_ok=True)
+        binary.touch()
+        requested.append(name)
+        return binary
+
+    monkeypatch.setattr(solver_module, "_retrieve_fullwave_simulation_path", fake_path)
+    monkeypatch.setattr(solver_module, "ensure_binary", lambda path: path)
+    return _build_solver(tmp_path, None), requested
+
+
+def test_run_batch_uses_the_batch_binary_when_the_user_passed_no_binary(default_binary_solver):
+    solver, requested = default_binary_solver
+    transmits = [_transmit(solver.grid, scale) for scale in (1.0, 2.0)]
+
+    (simulation_dir,) = solver.run_batch(transmits, generate_input_only=True)
+
+    assert (simulation_dir / "fullwave2_2d_n_relax_multi_gpu_batch_cuda124").is_symlink()
+    assert requested[-1] == "fullwave2_2d_n_relax_multi_gpu_batch_cuda124"
+    # A later single run uses the normal binary again.
+    assert solver.path_fullwave_simulation_bin.name == "fullwave2_2d_n_relax_multi_gpu_cuda124"
+    single_dir = solver.run("single", generate_input_only=True)
+    assert (single_dir / "fullwave2_2d_n_relax_multi_gpu_cuda124").is_symlink()
+
+
+def test_run_batch_needs_no_batch_binary_for_one_transmit_per_run(default_binary_solver):
+    solver, requested = default_binary_solver
+    transmits = [_transmit(solver.grid, scale) for scale in (1.0, 2.0)]
+
+    solver.run_batch(transmits, max_members_per_run=1, generate_input_only=True)
+
+    assert "fullwave2_2d_n_relax_multi_gpu_batch_cuda124" not in requested

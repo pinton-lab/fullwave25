@@ -1,12 +1,13 @@
 """solver module."""
 
+import contextlib
 import gc
 import logging
 import os
 import shutil
 import subprocess
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -309,6 +310,7 @@ def _relaxation_binary_path(
     dimension: str,
     cuda_version_option: str,
     isotropic_str: str = "",
+    batch_str: str = "",
 ) -> Path:
     """Return where the relaxation solver binary sits.
 
@@ -323,6 +325,9 @@ def _relaxation_binary_path(
         The CUDA tag the binary name ends with, such as "cuda124".
     isotropic_str : str, optional
         The anisotropy tag the name carries, empty for the isotropic solver.
+    batch_str : str, optional
+        "_batch" for the binary that runs several transmits in one simulation,
+        empty otherwise.
 
     Returns
     -------
@@ -331,7 +336,40 @@ def _relaxation_binary_path(
 
     """
     root = Path(__file__).parent / "bins" / "gpu" / dimension
-    return root / f"fullwave2_{dimension}_n_relax{isotropic_str}_multi_gpu_{cuda_version_option}"
+    model = f"n_relax{isotropic_str}_multi_gpu{batch_str}"
+    return root / f"fullwave2_{dimension}_{model}_{cuda_version_option}"
+
+
+def _batch_suffix(*, batch: bool, is_3d: bool, use_gpu: bool) -> str:
+    """Return the tag that the name of a batch binary carries, or "" for other binaries.
+
+    Parameters
+    ----------
+    batch : bool
+        Whether the binary runs several transmits in one simulation.
+    is_3d : bool
+        Whether the simulation is 3D.
+    use_gpu : bool
+        Whether the simulation runs on GPUs.
+
+    Returns
+    -------
+    str
+        "_batch" or "".
+
+    Raises
+    ------
+    NotImplementedError
+        For a batch binary of a 3D or CPU simulation, which does not exist.
+
+    """
+    if not batch:
+        return ""
+    if is_3d or not use_gpu:
+        error_msg = "The batch binaries support 2D GPU simulations only."
+        logger.error(error_msg)
+        raise NotImplementedError(error_msg)
+    return "_batch"
 
 
 def _retrieve_fullwave_simulation_path(
@@ -340,6 +378,7 @@ def _retrieve_fullwave_simulation_path(
     is_3d: bool = False,
     use_exponential_attenuation: bool = False,
     use_isotropic_relaxation: bool = True,
+    batch: bool = False,
 ) -> Path:
     arch_option = _make_cuda_arch_option(use_gpu=use_gpu)
     cuda_version_option, cuda_version = _make_cuda_version_option(
@@ -355,6 +394,7 @@ def _retrieve_fullwave_simulation_path(
 
     # isotropic_str = "_isotropic" if use_isotropic_relaxation else ""
     isotropic_str = ""
+    batch_str = _batch_suffix(batch=batch, is_3d=is_3d, use_gpu=use_gpu)
 
     if use_gpu and not _check_compatible_set(
         cuda_version=cuda_version,
@@ -380,7 +420,7 @@ def _retrieve_fullwave_simulation_path(
                 / "exponential_attenuation"
                 / "gpu"
                 / "2d"
-                / f"fullwave2_2d_exponential_attenuation_multi_gpu_{cuda_version_option}"
+                / f"fullwave2_2d_exponential_attenuation_multi_gpu{batch_str}_{cuda_version_option}"
             )
         else:
             error_msg = (
@@ -412,6 +452,7 @@ def _retrieve_fullwave_simulation_path(
                 dimension="2d",
                 cuda_version_option=cuda_version_option,
                 isotropic_str=isotropic_str,
+                batch_str=batch_str,
             )
         else:
             path_fullwave_simulation_bin = (
@@ -661,6 +702,8 @@ class Solver:
 
         self.n_relax_mechanisms = medium.n_relaxation_mechanisms
 
+        # run_batch picks the batch binary itself only when the user did not pick one.
+        self._uses_default_binary = path_fullwave_simulation_bin is None
         if path_fullwave_simulation_bin is None:
             local_path = _retrieve_fullwave_simulation_path(
                 use_gpu=use_gpu,
@@ -1427,9 +1470,10 @@ class Solver:
         (``plane_wave``, ``focus``, ``synthetic_aperture`` ...)
         and take ``transducer.source`` for each one.
 
-        A batch needs a 2D batch solver binary,
-        passed as ``path_fullwave_simulation_bin``.
-        Its file name must contain "batch".
+        A simulation of several transmits runs on a 2D batch solver binary.
+        Without ``path_fullwave_simulation_bin``, run_batch downloads it like the
+        other binaries. A binary passed as ``path_fullwave_simulation_bin`` must be
+        a batch binary, whose file name contains "batch".
 
         Parameters
         ----------
@@ -1493,8 +1537,7 @@ class Solver:
             sampling_modulus_time_whole_domain=sampling_modulus_time_whole_domain,
         )
         per_run = self._members_per_run(len(members), max_members_per_run, sensor)
-        if per_run > 1:
-            self._check_batch_binary()
+        binary = self._batch_binary() if per_run > 1 else self.path_fullwave_simulation_bin
         runs = _split_evenly(members, per_run)
         logger.info(
             "Running %d transmits as %d simulation(s) of up to %d transmits.",
@@ -1504,24 +1547,25 @@ class Solver:
         )
 
         outputs = []
-        for index, run_members in enumerate(runs):
-            name = simulation_dir_name if len(runs) == 1 else f"{simulation_dir_name}_{index}"
-            outputs.append(
-                self._run_one(
-                    name,
-                    members=run_members,
-                    is_static_map=is_static_map,
-                    recalculate_pml=index == 0 or not is_static_map,
-                    record_whole_domain=record_whole_domain,
-                    sampling_modulus_time_whole_domain=sampling_modulus_time_whole_domain,
-                    load_results=load_results,
-                    generate_input_only=generate_input_only,
-                    release_after_write=release_after_write,
-                    highpass_cutoff_mhz=highpass_cutoff_mhz,
-                    bandpass_cutoff_mhz=bandpass_cutoff_mhz,
-                    gpu_memory_estimate=gpu_memory_estimate,
-                ),
-            )
+        with self._binary_in_use(binary):
+            for index, run_members in enumerate(runs):
+                name = simulation_dir_name if len(runs) == 1 else f"{simulation_dir_name}_{index}"
+                outputs.append(
+                    self._run_one(
+                        name,
+                        members=run_members,
+                        is_static_map=is_static_map,
+                        recalculate_pml=index == 0 or not is_static_map,
+                        record_whole_domain=record_whole_domain,
+                        sampling_modulus_time_whole_domain=sampling_modulus_time_whole_domain,
+                        load_results=load_results,
+                        generate_input_only=generate_input_only,
+                        release_after_write=release_after_write,
+                        highpass_cutoff_mhz=highpass_cutoff_mhz,
+                        bandpass_cutoff_mhz=bandpass_cutoff_mhz,
+                        gpu_memory_estimate=gpu_memory_estimate,
+                    ),
+                )
         if generate_input_only:
             return outputs
         if not load_results:
@@ -1622,20 +1666,43 @@ class Solver:
                 return f"the {kind} coordinates differ"
         return None
 
-    def _check_batch_binary(self) -> None:
-        """Refuse a binary that cannot run several transmits in one simulation.
+    def _batch_binary(self) -> Path:
+        """Return the binary for a simulation of several transmits.
 
+        Without a binary from the user, this is the batch binary of the same model and
+        CUDA version as the Solver's binary, downloaded on first use.
         A binary without batch support reads only the first transmit's signals,
         so its output would look valid and be wrong for every other transmit.
+
+        Returns
+        -------
+        Path
+            The batch binary.
 
         Raises
         ------
         ValueError
-            If the binary's file name does not contain "batch".
+            If the user's binary file name does not contain "batch".
         NotImplementedError
             If velocity output is requested (OUTPUT_VELOCITY=1).
 
         """
+        if os.environ.get("OUTPUT_VELOCITY") == "1":
+            error_msg = (
+                "velocity output (OUTPUT_VELOCITY=1) is not supported for several "
+                "transmits in one simulation. Set max_members_per_run=1."
+            )
+            logger.error(error_msg)
+            raise NotImplementedError(error_msg)
+        if self._uses_default_binary:
+            local_path = _retrieve_fullwave_simulation_path(
+                use_gpu=self.use_gpu,
+                is_3d=self.is_3d,
+                use_exponential_attenuation=self.use_exponential_attenuation,
+                use_isotropic_relaxation=self.use_isotropic_relaxation,
+                batch=True,
+            )
+            return ensure_binary(local_path)
         name = Path(self.path_fullwave_simulation_bin).name
         if "batch" not in name:
             error_msg = (
@@ -1645,13 +1712,31 @@ class Solver:
             )
             logger.error(error_msg)
             raise ValueError(error_msg)
-        if os.environ.get("OUTPUT_VELOCITY") == "1":
-            error_msg = (
-                "velocity output (OUTPUT_VELOCITY=1) is not supported for several "
-                "transmits in one simulation. Set max_members_per_run=1."
-            )
-            logger.error(error_msg)
-            raise NotImplementedError(error_msg)
+        return Path(self.path_fullwave_simulation_bin)
+
+    @contextlib.contextmanager
+    def _binary_in_use(self, binary: Path) -> Iterator[None]:
+        """Run the simulations of the block on ``binary``, then restore the Solver's binary.
+
+        Parameters
+        ----------
+        binary : Path
+            The binary for the simulations of the block.
+
+        Yields
+        ------
+        None
+            Control to the block.
+
+        """
+        previous = self.path_fullwave_simulation_bin, self.fullwave_launcher
+        if binary != self.path_fullwave_simulation_bin:
+            self.path_fullwave_simulation_bin = binary
+            self.fullwave_launcher = self.fullwave_launcher.with_binary(binary)
+        try:
+            yield
+        finally:
+            self.path_fullwave_simulation_bin, self.fullwave_launcher = previous
 
     def _members_per_run(
         self,

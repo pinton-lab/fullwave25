@@ -3,19 +3,9 @@
 This is plane_wave_compounding.py with the loop of one `Solver.run` per angle replaced by
 one `Solver.run_batch` over all angles. The medium, the transducer and the beamforming
 are the same.
-
-A batch needs a 2D batch solver binary, whose file name contains "batch". Until the
-batch binaries are in a binary release, pass its path:
-
-    uv run python examples/linear_transducer/plane_wave_compounding_batch.py \
-        --batch-binary /path/to/fullwave2_2d_n_relax_multi_gpu_batch
-
-or set FULLWAVE25_BATCH_BINARY to that path.
 """
 
-import argparse
 import logging
-import os
 from pathlib import Path
 
 import cupy
@@ -35,31 +25,8 @@ from fullwave.utils import plot_utils
 from fullwave.utils.signal_filter import apply_filter
 
 
-def parse_arguments() -> argparse.Namespace:
-    """Read the path of the batch binary from the command line or the environment.
-
-    Returns
-    -------
-    argparse.Namespace
-        The arguments, with ``batch_binary`` as a Path.
-
-    """
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "--batch-binary",
-        type=Path,
-        default=os.environ.get("FULLWAVE25_BATCH_BINARY"),
-        help="the 2D batch solver binary (default: $FULLWAVE25_BATCH_BINARY)",
-    )
-    arguments = parser.parse_args()
-    if arguments.batch_binary is None:
-        parser.error("pass --batch-binary or set FULLWAVE25_BATCH_BINARY")
-    return arguments
-
-
 def main() -> None:
     """Run the plane wave compounding example as one transmit batch."""
-    arguments = parse_arguments()
     # overwrite the logging level, DEBUG, INFO, WARNING, ERROR
     logging.getLogger("__main__").setLevel(logging.INFO)
 
@@ -173,7 +140,6 @@ def main() -> None:
         grid=grid,
         medium=medium,
         transducer=transducer,
-        path_fullwave_simulation_bin=arguments.batch_binary,
     )
     # [angles, sensor points, time samples]; all 5 angles run in one simulation.
     batch_output = fw_solver.run_batch(sources, simulation_dir_name="plane_waves")

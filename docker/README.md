@@ -12,7 +12,7 @@ The image contains:
 
 - Ubuntu 22.04
 - Python 3.12 and fullwave25, installed from this repository checkout, with the CUDA 12 libraries that CuPy needs
-- the solver binaries of the release `fullwave_bin_v1.5.2`, for CUDA 11.8, 12.4, 12.9 and 13.0
+- the solver binaries of the release `fullwave_bin_v1.6`, for CUDA 11.8, 12.4, 12.9 and 13.0, with the 2D batch binaries for `Solver.run_batch`
 - `ffmpeg`, for the video export of the plotting functions
 
 ## Build
