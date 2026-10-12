@@ -245,12 +245,11 @@ for angle in (-10, -5, 0, 5, 10):
 
 solver = fullwave.Solver(
     work_dir="./outputs/my_batch", grid=grid, medium=medium, transducer=transducer,
-    path_fullwave_simulation_bin=Path("path/to/a/2d/batch/binary"),
 )
 recorded = solver.run_batch(sources)  # [n_transmits, n_sensors, n_t]
 ```
 
-A batch needs a 2D batch solver binary, passed as `path_fullwave_simulation_bin`; its file name contains `batch`. `max_members_per_run` limits the number of transmits in one simulation. By default the limit is 32, or less when the GPU memory estimate does not fit that many into the free GPU memory, and a long sequence runs as several simulations of nearly equal size. In a 2D L7-4 test the time per transmit stopped falling at 16 to 32 transmits. [transmit_batch_basics.py](examples/transmit_batch/transmit_batch_basics.py) shows plane waves and focused lines as batches, and [plane_wave_compounding_batch.py](examples/linear_transducer/plane_wave_compounding_batch.py) makes a compounded B-mode from one batch.
+`max_members_per_run` limits the number of transmits in one simulation. By default the limit is 32, or less when the GPU memory estimate does not fit that many into the free GPU memory, and a long sequence runs as several simulations of nearly equal size. In a 2D L7-4 test the time per transmit stopped falling at 16 to 32 transmits. [transmit_batch_basics.py](examples/transmit_batch/transmit_batch_basics.py) shows plane waves and focused lines as batches, and [plane_wave_compounding_batch.py](examples/linear_transducer/plane_wave_compounding_batch.py) makes a compounded B-mode from one batch.
 
 ### Which example to read
 
