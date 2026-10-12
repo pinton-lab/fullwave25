@@ -249,7 +249,7 @@ solver = fullwave.Solver(
 recorded = solver.run_batch(sources)  # [n_transmits, n_sensors, n_t]
 ```
 
-`max_members_per_run` limits the number of transmits in one simulation. By default the limit is 32, or less when the GPU memory estimate does not fit that many into the free GPU memory, and a long sequence runs as several simulations of nearly equal size. In a 2D L7-4 test the time per transmit stopped falling at 16 to 32 transmits. [transmit_batch_basics.py](examples/transmit_batch/transmit_batch_basics.py) shows plane waves and focused lines as batches, and [plane_wave_compounding_batch.py](examples/linear_transducer/plane_wave_compounding_batch.py) makes a compounded B-mode from one batch.
+`run_batch` runs all transmits of the list. It puts at most `max_members_per_run` transmits in one simulation: by default 32, or fewer when the GPU memory estimate does not fit that many into the free GPU memory. A longer sequence runs as several simulations of nearly equal size, so 128 transmits run as 4 simulations of 32. In a 2D L7-4 test the time per transmit stopped falling at 16 to 32 transmits. [transmit_batch_basics.py](examples/transmit_batch/transmit_batch_basics.py) shows plane waves and focused lines as batches, and [plane_wave_compounding_batch.py](examples/linear_transducer/plane_wave_compounding_batch.py) makes a compounded B-mode from one batch.
 
 ### Which example to read
 

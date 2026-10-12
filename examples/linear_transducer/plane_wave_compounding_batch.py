@@ -175,7 +175,7 @@ def main() -> None:
         transducer=transducer,
         path_fullwave_simulation_bin=arguments.batch_binary,
     )
-    # [angles, sensor points, time samples]; at most 32 transmits run in one simulation.
+    # [angles, sensor points, time samples]; all 5 angles run in one simulation.
     batch_output = fw_solver.run_batch(sources, simulation_dir_name="plane_waves")
 
     use_filter = True

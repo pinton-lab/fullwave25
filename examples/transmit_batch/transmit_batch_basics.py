@@ -9,7 +9,7 @@ This example:
 
 1. builds a small speckle medium and an L7-4 transducer,
 2. runs 5 plane waves as one batch,
-3. runs 16 focused lines in runs of at most 8 transmits,
+3. runs 16 focused lines, with at most 8 transmits in one simulation,
 4. checks that a transmit of the batch equals the same transmit run alone,
 5. plots the element traces of one plane wave and one focused line in dB, where the
    echoes of 3 point targets show as hyperbolas.
@@ -145,9 +145,10 @@ def main() -> None:
     plane_output = solver.run_batch(plane_waves, simulation_dir_name="plane_waves")
     print(f"plane waves: {plane_output.shape} [transmits, sensor points, time samples]")
 
-    # The 16 focused lines in runs of at most 8 transmits (here 2 runs of 8).
-    # Without max_members_per_run, run_batch uses at most 32 transmits per run, or fewer
-    # when the GPU memory estimate does not fit them, and splits the sequence evenly.
+    # run_batch runs all 16 focused lines, with at most 8 transmits in one simulation
+    # (here 2 simulations of 8). Without max_members_per_run, it puts at most 32 transmits
+    # in one simulation, or fewer when the GPU memory estimate does not fit them, so 128
+    # transmits run as 4 simulations of 32.
     focus_output = solver.run_batch(
         focused_lines,
         simulation_dir_name="focused_lines",
