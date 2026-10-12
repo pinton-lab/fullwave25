@@ -2,7 +2,11 @@
 
 import gc
 import logging
+import os
+import shutil
+import subprocess
 import time
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -26,8 +30,83 @@ from fullwave.utils.signal_filter import apply_filter
 
 from .binary_manager import ensure_binary
 from .cuda_utils import get_cuda_architecture, retrieve_cuda_version
+from .utils import load_dat_data
 
 logger = logging.getLogger("__main__." + __name__)
+
+# The default largest number of transmits in one batch simulation. In a 2D L7-4 abdomen test
+# (2489 x 1136 cells) the time per transmit stopped falling at 16 to 32 transmits and rose above
+# that, so a larger run only costs memory.
+DEFAULT_MAX_MEMBERS_PER_RUN = 32
+
+
+def _split_evenly(members: list, largest: int) -> list[list]:
+    """Split the transmits into the fewest runs of at most ``largest``, of nearly equal size.
+
+    Parameters
+    ----------
+    members : list
+        The transmits, in order.
+    largest : int
+        The largest number of transmits in one run.
+
+    Returns
+    -------
+    list[list]
+        The runs, in order. Their sizes differ by at most one, the larger ones first.
+
+    """
+    n_runs = -(-len(members) // largest)
+    base, extra = divmod(len(members), n_runs)
+    runs, first = [], 0
+    for index in range(n_runs):
+        size = base + (1 if index < extra else 0)
+        runs.append(members[first : first + size])
+        first += size
+    return runs
+
+
+def _free_gpu_memory_bytes(device_ids: Sequence[str]) -> dict[str, int] | None:
+    """Return the free memory of each GPU in bytes, as nvidia-smi reports it.
+
+    Parameters
+    ----------
+    device_ids : Sequence[str]
+        The GPU indices, as nvidia-smi counts them.
+
+    Returns
+    -------
+    dict[str, int] | None
+        The free bytes of each GPU, or None when nvidia-smi cannot be run or does not
+        report every GPU.
+
+    """
+    wanted = [device.strip() for device in device_ids]
+    nvidia_smi_path = shutil.which("nvidia-smi")
+    if nvidia_smi_path is None:
+        return None
+    try:
+        found = subprocess.run(  # noqa: S603
+            [nvidia_smi_path, "--query-gpu=index,memory.free", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    free = {}
+    for line in found.splitlines():
+        index, _, mebibytes = line.partition(",")
+        if index.strip() in wanted:
+            try:
+                free[index.strip()] = int(float(mebibytes)) * 1024**2
+            except ValueError:
+                return None
+    if set(free) != set(wanted):
+        return None
+    return free
+
 
 COMPATIBLE_CUDA_ARCHITECTURES = [
     "sm_50",  # Maxwell: GTX 750, GTX 750 Ti
@@ -657,6 +736,7 @@ class Solver:
             error_msg = f"source_type {source_type!r} is not one of {SOURCE_TYPES}"
             logger.error(error_msg)
             raise ValueError(error_msg)
+        self.source_type = source_type
         if is_soft(source_type) and self.source.p0_additive is not None:
             error_msg = (
                 "this source already carries an additive signal. source_type='soft' "
@@ -1047,6 +1127,43 @@ class Solver:
             or if either filter option is set but ``load_results=False``.
 
         """
+        return self._run_one(
+            simulation_dir_name,
+            members=None,
+            is_static_map=is_static_map,
+            recalculate_pml=recalculate_pml,
+            record_whole_domain=record_whole_domain,
+            sampling_modulus_time_whole_domain=sampling_modulus_time_whole_domain,
+            load_results=load_results,
+            generate_input_only=generate_input_only,
+            release_after_write=release_after_write,
+            highpass_cutoff_mhz=highpass_cutoff_mhz,
+            bandpass_cutoff_mhz=bandpass_cutoff_mhz,
+            gpu_memory_estimate=gpu_memory_estimate,
+        )
+
+    def _run_one(
+        self,
+        simulation_dir_name: str | Path,
+        *,
+        members: list[fullwave.Source] | None,
+        is_static_map: bool,
+        recalculate_pml: bool,
+        record_whole_domain: bool,
+        sampling_modulus_time_whole_domain: int,
+        load_results: bool,
+        generate_input_only: bool,
+        release_after_write: bool,
+        highpass_cutoff_mhz: float | None,
+        bandpass_cutoff_mhz: tuple[float, float] | None,
+        gpu_memory_estimate: bool,
+    ) -> NDArray[np.float64] | Path | list[Path]:
+        """Write the inputs of one simulation, run it, and return its output.
+
+        ``members`` None runs the single transmit of ``self.source``, as ``run`` documents.
+        A list runs those transmits in one simulation and returns
+        [n_members, n_sensors, n_t] (or the output paths, in member order).
+        """
         # self._save_data_for_beamforming()
 
         # pml setup
@@ -1099,20 +1216,10 @@ class Solver:
             )
             logger.warning(warning_msg)
 
-        if record_whole_domain:
-            mod_x = 1
-            mod_y = 1
-            # Sensor reads mod_z as a count and treats 0 as two dimensions.
-            mod_z = 1 if self.is_3d else 0
-
-            sensor = fullwave.Sensor(
-                mod_x=mod_x,
-                mod_y=mod_y,
-                mod_z=mod_z,
-                sampling_modulus_time=sampling_modulus_time_whole_domain,
-            )
-        else:
-            sensor = self.pml_builder.extended_sensor
+        sensor = self._output_sensor(
+            record_whole_domain=record_whole_domain,
+            sampling_modulus_time_whole_domain=sampling_modulus_time_whole_domain,
+        )
 
         # pml_thickness = PML + transition layers on each side, excluding ghost cells.
         # Used by the binary to locate the interior domain when building a sparse sensor grid.
@@ -1143,6 +1250,7 @@ class Solver:
             simulation_dir_name,
             is_static_map=is_static_map,
             recalculate_pml=recalculate_pml,
+            members=members,
         )
         end_input_file_writer_time = time.time()
         message = (
@@ -1152,7 +1260,7 @@ class Solver:
         logger.debug(message)
 
         if gpu_memory_estimate:
-            self._estimate_gpu_memory(sensor)
+            self._estimate_gpu_memory(sensor, n_members=1 if members is None else len(members))
 
         if generate_input_only:
             logger.info(
@@ -1163,6 +1271,16 @@ class Solver:
             return simulation_dir
 
         self._release_gpu_memory_pools()
+
+        if members is not None:
+            return self._run_members(
+                simulation_dir,
+                len(members),
+                sensor,
+                load_results=load_results,
+                highpass_cutoff_mhz=highpass_cutoff_mhz,
+                bandpass_cutoff_mhz=bandpass_cutoff_mhz,
+            )
 
         sim_result = self.fullwave_launcher.run(
             simulation_dir,
@@ -1195,9 +1313,433 @@ class Solver:
         # which is a list of file names
         return sim_result
 
+    def _output_sensor(
+        self,
+        *,
+        record_whole_domain: bool,
+        sampling_modulus_time_whole_domain: int,
+    ) -> fullwave.Sensor:
+        """Return the sensor written to the input files.
+
+        Parameters
+        ----------
+        record_whole_domain : bool
+            True records the whole domain on a sparse grid instead of the sensor.
+        sampling_modulus_time_whole_domain : int
+            The time sampling modulus of the whole-domain recording.
+
+        Returns
+        -------
+        fullwave.Sensor
+            The whole-domain sensor, or the sensor on the extended grid.
+
+        """
+        if record_whole_domain:
+            # Sensor reads mod_z as a count and treats 0 as two dimensions.
+            return fullwave.Sensor(
+                mod_x=1,
+                mod_y=1,
+                mod_z=1 if self.is_3d else 0,
+                sampling_modulus_time=sampling_modulus_time_whole_domain,
+            )
+        return self.pml_builder.extended_sensor
+
+    def _run_members(
+        self,
+        simulation_dir: Path,
+        n_members: int,
+        sensor: fullwave.Sensor,
+        *,
+        load_results: bool,
+        highpass_cutoff_mhz: float | None,
+        bandpass_cutoff_mhz: tuple[float, float] | None,
+    ) -> NDArray[np.float64] | list[Path]:
+        """Run one batch simulation and return the output of each member.
+
+        Parameters
+        ----------
+        simulation_dir : Path
+            The simulation directory with the input files.
+        n_members : int
+            The number of transmits in this simulation.
+        sensor : fullwave.Sensor
+            The sensor written to the input files.
+        load_results : bool
+            True loads the outputs, False returns their paths.
+        highpass_cutoff_mhz : float | None
+            See ``run``.
+        bandpass_cutoff_mhz : tuple[float, float] | None
+            See ``run``.
+
+        Returns
+        -------
+        NDArray[np.float64] | list[Path]
+            [n_members, n_sensors, n_t], or the output file of each member in order.
+
+        """
+        first_output = self.fullwave_launcher.run(simulation_dir, load_results=False)
+        paths = [first_output] + [
+            first_output.parent / f"genout_s{member}.dat" for member in range(1, n_members)
+        ]
+        if not load_results:
+            return paths
+        outputs = []
+        for path in paths:
+            result = self._reshape_sensor_data(
+                load_dat_data(path),
+                sensor=sensor,
+                n_t=self.pml_builder.extended_grid.nt,
+            )
+            outputs.append(
+                self._apply_output_filter(
+                    result,
+                    self.grid.dt,
+                    highpass_cutoff_mhz,
+                    bandpass_cutoff_mhz,
+                ),
+            )
+        return np.stack(outputs)
+
+    def run_batch(
+        self,
+        sources: Sequence[fullwave.Source],
+        simulation_dir_name: str | Path = "txrx_batch",
+        *,
+        max_members_per_run: int | None = None,
+        is_static_map: bool = False,
+        record_whole_domain: bool = False,
+        sampling_modulus_time_whole_domain: int = 1,
+        load_results: bool = True,
+        generate_input_only: bool = False,
+        release_after_write: bool = False,
+        highpass_cutoff_mhz: float | None = None,
+        bandpass_cutoff_mhz: tuple[float, float] | None = None,
+        gpu_memory_estimate: bool = True,
+    ) -> NDArray[np.float64] | list[Path]:
+        r"""Run several transmits on the same medium as one batch and return every output.
+
+        A batch runs a transmit sequence, such as the angles of a plane wave sequence,
+        the lines of a focused sequence or the elements of a synthetic aperture sequence,
+        in fewer and faster simulations than one ``run`` per transmit.
+        The transmits of a batch share the medium, the sensor and the source coordinates,
+        and differ only in their signals.
+        A Transducer gives such transmits: set the transmit
+        (``plane_wave``, ``focus``, ``synthetic_aperture`` ...)
+        and take ``transducer.source`` for each one.
+
+        A batch needs a 2D batch solver binary,
+        passed as ``path_fullwave_simulation_bin``.
+        Its file name must contain "batch".
+
+        Parameters
+        ----------
+        sources : Sequence[fullwave.Source]
+            The transmits, in order. Each one must have the same source coordinates,
+            the same signal kinds and the same signal length as the Solver's source.
+            The Solver's ``source_type`` applies to every transmit.
+        simulation_dir_name : str | Path
+            The directory name of the simulation under the work directory.
+            When the batch runs as several simulations,
+            simulation k uses ``<simulation_dir_name>_<k>``.
+        max_members_per_run : int | None
+            The largest number of transmits in one simulation.
+            None, the default, takes the smaller of DEFAULT_MAX_MEMBERS_PER_RUN (32) and the
+            number that the GPU memory estimate fits into the free memory of every GPU.
+            The transmits are split into simulations of nearly equal size,
+            for example 128 transmits into 4 of 32, and 7 into 3, 2 and 2.
+        is_static_map : bool
+            See ``run``.
+            The medium files are written by the first simulation and shared by the others.
+        record_whole_domain : bool
+            See ``run``.
+        sampling_modulus_time_whole_domain : int
+            See ``run``.
+        load_results : bool
+            True returns the outputs. False returns the output file of every transmit.
+        generate_input_only : bool
+            True writes the input files and returns the simulation directories.
+        release_after_write : bool
+            See ``run``.
+        highpass_cutoff_mhz : float | None
+            See ``run``.
+        bandpass_cutoff_mhz : tuple[float, float] | None
+            See ``run``.
+        gpu_memory_estimate : bool
+            See ``run``.
+
+        Returns
+        -------
+        NDArray[np.float64] | list[Path]
+            [n_transmits, n_sensors, n_t] in transmit order when load_results is True.
+            Otherwise the output file of each transmit in order, or the simulation
+            directories when generate_input_only is True.
+
+        Raises
+        ------
+        ValueError
+            If ``sources`` is empty, if a transmit does not match the Solver's source,
+            if ``max_members_per_run`` is smaller than 1, or if a simulation of more than
+            one transmit would run on a binary that is not a batch binary.
+        NotImplementedError
+            For a 3D grid, or for velocity output (OUTPUT_VELOCITY) of more than one
+            transmit in one simulation.
+
+        """
+        members = self._batch_members(sources)
+        # The sensor and the sizing below need the extended grid and medium.
+        self.pml_builder.run(use_pml=self.use_pml)
+        sensor = self._output_sensor(
+            record_whole_domain=record_whole_domain,
+            sampling_modulus_time_whole_domain=sampling_modulus_time_whole_domain,
+        )
+        per_run = self._members_per_run(len(members), max_members_per_run, sensor)
+        if per_run > 1:
+            self._check_batch_binary()
+        runs = _split_evenly(members, per_run)
+        logger.info(
+            "Running %d transmits as %d simulation(s) of up to %d transmits.",
+            len(members),
+            len(runs),
+            per_run,
+        )
+
+        outputs = []
+        for index, run_members in enumerate(runs):
+            name = simulation_dir_name if len(runs) == 1 else f"{simulation_dir_name}_{index}"
+            outputs.append(
+                self._run_one(
+                    name,
+                    members=run_members,
+                    is_static_map=is_static_map,
+                    recalculate_pml=index == 0 or not is_static_map,
+                    record_whole_domain=record_whole_domain,
+                    sampling_modulus_time_whole_domain=sampling_modulus_time_whole_domain,
+                    load_results=load_results,
+                    generate_input_only=generate_input_only,
+                    release_after_write=release_after_write,
+                    highpass_cutoff_mhz=highpass_cutoff_mhz,
+                    bandpass_cutoff_mhz=bandpass_cutoff_mhz,
+                    gpu_memory_estimate=gpu_memory_estimate,
+                ),
+            )
+        if generate_input_only:
+            return outputs
+        if not load_results:
+            return [path for run_paths in outputs for path in run_paths]
+        return np.concatenate(outputs, axis=0)
+
+    def _batch_members(self, sources: Sequence[fullwave.Source]) -> list[fullwave.Source]:
+        """Check the transmits of a batch against the Solver's source and return them.
+
+        The Solver's source_type is applied to every transmit, as it is to the Solver's
+        source.
+
+        Parameters
+        ----------
+        sources : Sequence[fullwave.Source]
+            The transmits, in order.
+
+        Returns
+        -------
+        list[fullwave.Source]
+            The transmits, converted to the Solver's source type.
+
+        Raises
+        ------
+        ValueError
+            If there is no transmit, or a transmit does not match the Solver's source.
+        NotImplementedError
+            For a 3D grid.
+
+        """
+        if self.is_3d:
+            error_msg = "run_batch supports 2D simulations only."
+            logger.error(error_msg)
+            raise NotImplementedError(error_msg)
+        if len(sources) == 0:
+            error_msg = "run_batch needs at least one source."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        members = []
+        for index, source in enumerate(sources):
+            member = source
+            if is_soft(self.source_type):
+                member = as_additive_source(
+                    source,
+                    self.grid,
+                    self.medium,
+                    use_exponential_attenuation=self.use_exponential_attenuation,
+                )
+            mismatch = self._batch_member_mismatch(member)
+            if mismatch is not None:
+                error_msg = (
+                    f"source {index} of the batch does not match the Solver's source: "
+                    f"{mismatch}. The transmits of a batch share the source coordinates and "
+                    "differ only in their signals."
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            members.append(member)
+        return members
+
+    def _batch_member_mismatch(self, member: fullwave.Source) -> str | None:
+        """Return how a transmit differs from the Solver's source, or None if it matches.
+
+        Parameters
+        ----------
+        member : fullwave.Source
+            One transmit of a batch.
+
+        Returns
+        -------
+        str | None
+            A description of the first difference, or None.
+
+        """
+        if tuple(member.grid_shape) != tuple(self.source.grid_shape):
+            return f"grid shape {member.grid_shape} != {self.source.grid_shape}"
+        for kind, signal, coords in (
+            ("pressure", "icmat", "incoords"),
+            ("additive pressure", "p0_additive", "incoords_add"),
+            ("u velocity", "u0", "incoords_u"),
+            ("v velocity", "v0", "incoords_v"),
+            ("w velocity", "w0", "incoords_w"),
+        ):
+            expected = getattr(self.source, signal, None)
+            found = getattr(member, signal, None)
+            if (expected is None) != (found is None):
+                return f"the {kind} signal is present in only one of them"
+            if expected is None:
+                continue
+            if np.shape(found) != np.shape(expected):
+                return f"the {kind} signal shape {np.shape(found)} != {np.shape(expected)}"
+            expected_coords = getattr(self.source, coords, None)
+            found_coords = getattr(member, coords, None)
+            if (expected_coords is None) != (found_coords is None) or (
+                expected_coords is not None
+                and not np.array_equal(np.asarray(found_coords), np.asarray(expected_coords))
+            ):
+                return f"the {kind} coordinates differ"
+        return None
+
+    def _check_batch_binary(self) -> None:
+        """Refuse a binary that cannot run several transmits in one simulation.
+
+        A binary without batch support reads only the first transmit's signals,
+        so its output would look valid and be wrong for every other transmit.
+
+        Raises
+        ------
+        ValueError
+            If the binary's file name does not contain "batch".
+        NotImplementedError
+            If velocity output is requested (OUTPUT_VELOCITY=1).
+
+        """
+        name = Path(self.path_fullwave_simulation_bin).name
+        if "batch" not in name:
+            error_msg = (
+                f"the binary {name} cannot run several transmits in one simulation. "
+                "Pass a batch binary (its file name contains 'batch') as "
+                "path_fullwave_simulation_bin, or set max_members_per_run=1."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        if os.environ.get("OUTPUT_VELOCITY") == "1":
+            error_msg = (
+                "velocity output (OUTPUT_VELOCITY=1) is not supported for several "
+                "transmits in one simulation. Set max_members_per_run=1."
+            )
+            logger.error(error_msg)
+            raise NotImplementedError(error_msg)
+
+    def _members_per_run(
+        self,
+        n_members: int,
+        max_members_per_run: int | None,
+        sensor: fullwave.Sensor,
+    ) -> int:
+        """Return the number of transmits in one simulation of a batch.
+
+        Parameters
+        ----------
+        n_members : int
+            The number of transmits in the batch.
+        max_members_per_run : int | None
+            The user's limit, or None to size from the GPU memory estimate.
+        sensor : fullwave.Sensor
+            The sensor written to the input files.
+
+        Returns
+        -------
+        int
+            Between 1 and n_members.
+
+        Raises
+        ------
+        ValueError
+            If max_members_per_run is smaller than 1.
+
+        """
+        if max_members_per_run is not None:
+            if max_members_per_run < 1:
+                error_msg = f"max_members_per_run must be 1 or more, not {max_members_per_run}"
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            return min(n_members, max_members_per_run)
+        fit = self._members_that_fit(sensor)
+        if fit is None:
+            logger.warning(
+                "The free GPU memory could not be read, so up to %d transmits run in one "
+                "simulation. Set max_members_per_run to limit it.",
+                DEFAULT_MAX_MEMBERS_PER_RUN,
+            )
+            return min(n_members, DEFAULT_MAX_MEMBERS_PER_RUN)
+        if fit < 1:
+            logger.warning(
+                "The GPU memory estimate of one transmit exceeds the free GPU memory. "
+                "The transmits run one per simulation.",
+            )
+            return 1
+        logger.info("The free GPU memory fits about %d transmits per simulation.", fit)
+        return min(n_members, fit, DEFAULT_MAX_MEMBERS_PER_RUN)
+
+    def _members_that_fit(self, sensor: fullwave.Sensor) -> int | None:
+        """Return how many transmits the GPU memory estimate fits into the free memory.
+
+        The estimate of one GPU grows by the same amount for each transmit. The count
+        keeps 10 % of the free memory and 512 MiB free for the CUDA context and for
+        what the estimate does not count, and takes the smallest count over the GPUs.
+
+        Parameters
+        ----------
+        sensor : fullwave.Sensor
+            The sensor written to the input files.
+
+        Returns
+        -------
+        int | None
+            The count, or None when the free memory cannot be read.
+
+        """
+        free = _free_gpu_memory_bytes(self.fullwave_launcher.cuda_device_id.split(","))
+        if free is None:
+            return None
+        one = self._gpu_memory_bytes(sensor, n_members=1)
+        two = self._gpu_memory_bytes(sensor, n_members=2)
+        reserve = 512 * 1024**2
+        counts = []
+        for (device, one_bytes, *_), (_, two_bytes, *_) in zip(one, two, strict=True):
+            per_member = max(two_bytes - one_bytes, 1)
+            shared = one_bytes - per_member
+            usable = 0.9 * free.get(device, 0) - reserve - shared
+            counts.append(int(usable // per_member))
+        return min(counts)
+
     def _estimate_gpu_memory(
         self,
         sensor: fullwave.Sensor,
+        n_members: int = 1,
     ) -> None:
         """Estimate and log GPU memory usage per device.
 
@@ -1209,10 +1751,54 @@ class Solver:
         sensor : fullwave.Sensor
             The sensor that will actually be written to the input files (may
             differ from ``self.sensor`` when ``record_whole_domain=True``).
+        n_members : int
+            The number of transmits in the simulation (a batch has more than one).
 
         """
         # show that this is an experimental feature
         logger.info("Estimating GPU memory usage... (experimental feature, may be inaccurate)")
+        gib = 1024.0**3
+        mode = "exponential" if self.use_exponential_attenuation else "relaxation"
+        saving = ", save_gpu_memory=True" if self.save_gpu_memory else ""
+        if n_members > 1:
+            saving += f", batch of {n_members} transmits"
+        for dev_id, total, depth_this, halo, lateral in self._gpu_memory_bytes(
+            sensor,
+            n_members=n_members,
+        ):
+            logger.info(
+                "GPU memory estimate [GPU %s] (%s mode%s): "
+                "%.2f GiB  (depth=%d +%d halo, lateral=%d)",
+                dev_id,
+                mode,
+                saving,
+                total / gib,
+                depth_this,
+                halo,
+                lateral,
+            )
+
+    def _gpu_memory_bytes(
+        self,
+        sensor: fullwave.Sensor,
+        n_members: int = 1,
+    ) -> list[tuple[str, int, int, int, int]]:
+        """Return the estimated GPU memory of each device.
+
+        Parameters
+        ----------
+        sensor : fullwave.Sensor
+            The sensor written to the input files.
+        n_members : int
+            The number of transmits in the simulation.
+
+        Returns
+        -------
+        list[tuple[str, int, int, int, int]]
+            For each device: its id, the estimated bytes, its depth, its halo depth
+            and the lateral size.
+
+        """
         device_ids = self.fullwave_launcher.cuda_device_id.split(",")
         n_gpus = len(device_ids)
 
@@ -1233,8 +1819,6 @@ class Solver:
 
         n_source_timesteps = source.icmat.shape[1]
 
-        gib = 1024.0**3
-
         base_depth = depth // n_gpus
         remainder = depth % n_gpus
 
@@ -1247,6 +1831,7 @@ class Solver:
             for name in ("n_sources", "n_sources_add", "n_sources_u", "n_sources_v", "n_sources_w")
         )
         body_start = 0
+        estimates = []
 
         for rank, dev_id in enumerate(device_ids):
             depth_this = base_depth + (1 if rank < remainder else 0)
@@ -1277,6 +1862,7 @@ class Solver:
                     float_bytes=float_bytes,
                     int_bytes=int_bytes,
                     is_3d=self.is_3d,
+                    n_members=n_members,
                 )
             else:
                 band, interior = self._band_and_interior(low, high, grid.shape, box, hole)
@@ -1294,21 +1880,13 @@ class Solver:
                     is_3d=self.is_3d,
                     band=band,
                     interior=interior,
+                    n_members=n_members,
                 )
 
-            mode = "exponential" if self.use_exponential_attenuation else "relaxation"
-            saving = ", save_gpu_memory=True" if self.save_gpu_memory else ""
-            logger.info(
-                "GPU memory estimate [GPU %s] (%s mode%s): "
-                "%.2f GiB  (depth=%d +%d halo, lateral=%d)",
-                dev_id.strip(),
-                mode,
-                saving,
-                total / gib,
-                depth_this,
-                n_halo_sides * halo_depth,
-                lateral,
+            estimates.append(
+                (dev_id.strip(), total, depth_this, n_halo_sides * halo_depth, lateral),
             )
+        return estimates
 
     @staticmethod
     def _mem_exponential(
@@ -1322,6 +1900,7 @@ class Solver:
         float_bytes: int,
         int_bytes: int,
         is_3d: bool,
+        n_members: int = 1,
     ) -> int:
         """Return estimated GPU bytes for exponential-attenuation solver.
 
@@ -1345,6 +1924,9 @@ class Solver:
             Bytes per int (4).
         is_3d: bool,
             Whether the simulation is 3D (affects sensor memory).
+        n_members : int
+            The number of transmits in the simulation. Each one holds its own wave fields,
+            source signals and recorded frame.
 
         Returns
         -------
@@ -1358,18 +1940,19 @@ class Solver:
         n_fields = 4 if is_3d else 3  # p, u, [v], w
 
         # wave fields: n_fields pairs x 2 time levels
-        mem = n_fields * 2 * slab * fb
+        mem = n_fields * 2 * slab * fb * n_members
         # material: rho + K + beta + a_exp
         mem += 4 * slab * fb
         # derivative maps (dmap + dcmap)
         mem += 9 * 2 * n_deriv_levels * fb + slab * ib
         # source (icmat + coords)
         if n_sources > 0:
-            mem += n_sources * fb if save_gpu_memory else n_sources * n_source_timesteps * fb
+            samples = n_sources if save_gpu_memory else n_sources * n_source_timesteps
+            mem += samples * fb * n_members
             mem += ndim * n_sources * ib
         # sensor (genoutframe + coordsout_local + p_idx_array)
         if n_sensors > 0:
-            mem += n_sensors * fb
+            mem += n_sensors * fb * n_members
             mem += (ndim + 1) * n_sensors * ib
             mem += n_sensors * ib
         return mem
@@ -1390,6 +1973,7 @@ class Solver:
         is_3d: bool,
         band: int | None = None,
         interior: int | None = None,
+        n_members: int = 1,
     ) -> int:
         """Return estimated GPU bytes for the relaxation (power-law) solver.
 
@@ -1432,6 +2016,10 @@ class Solver:
         interior : int | None
             Grid points of this GPU's share of the interior box of the mechanisms
             above the first. None takes the slab.
+        n_members : int
+            The number of transmits in the simulation. Each one holds its own wave fields,
+            memory variables, source signals and recorded frame; the medium and the
+            coefficients are held once.
 
         Returns
         -------
@@ -1444,22 +2032,22 @@ class Solver:
         axes = 3 if is_3d else 2
         band = slab if band is None else band
         interior = slab if interior is None else interior
-        per_mechanism = 2 + axes
+        # Each mechanism holds a and b (shared) and one memory variable per axis (per member).
+        per_mechanism = 2 + axes * n_members
+        mechanism_cells = slab + max(n_relax - 1, 0) * interior + band
 
-        mem = 2 * (axes + 1) * slab * fb
+        mem = 2 * (axes + 1) * slab * fb * n_members
         mem += 5 * slab * fb
         mem += slab * ib
-        mem += per_mechanism * slab * fb
-        mem += per_mechanism * max(n_relax - 1, 0) * interior * fb
-        mem += per_mechanism * band * fb
+        mem += per_mechanism * mechanism_cells * fb
         mem += 9 * 2 * n_deriv_levels * fb
         if n_sources > 0:
             samples = n_sources if save_gpu_memory else n_sources * n_source_timesteps
-            mem += samples * fb + axes * n_sources * ib
+            mem += samples * fb * n_members + axes * n_sources * ib
         if n_air > 0:
             mem += axes * n_air * ib
         if n_sensors > 0:
-            mem += n_sensors * (fb + (axes + 2) * ib)
+            mem += n_sensors * (fb * n_members + (axes + 2) * ib)
         return mem
 
     @staticmethod

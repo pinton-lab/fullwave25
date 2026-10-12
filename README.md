@@ -233,6 +233,25 @@ Every transducer is additive by default, which is what the calibrated setups use
 
 `transducer.apply_transducer_stack(...)` paints a probe's backing, matching layer, lens and standoff onto the medium maps before the `Medium` is built. `fullwave.TransducerStack` holds the values.
 
+### Transmit batches
+
+A transmit sequence on one medium, such as plane wave angles, focused lines or synthetic aperture elements, can run as a batch: several transmits in one simulation, which is faster than one `run` per transmit. The transmits of a batch share the medium, the sensor and the source positions, and differ only in their signals. The transmits of one transducer satisfy this.
+
+```python
+sources = []
+for angle in (-10, -5, 0, 5, 10):
+    transducer.plane_wave(angle_deg=angle)
+    sources.append(copy.deepcopy(transducer.source))
+
+solver = fullwave.Solver(
+    work_dir="./outputs/my_batch", grid=grid, medium=medium, transducer=transducer,
+    path_fullwave_simulation_bin=Path("path/to/a/2d/batch/binary"),
+)
+recorded = solver.run_batch(sources)  # [n_transmits, n_sensors, n_t]
+```
+
+A batch needs a 2D batch solver binary, passed as `path_fullwave_simulation_bin`; its file name contains `batch`. `max_members_per_run` limits the number of transmits in one simulation. By default the limit is 32, or less when the GPU memory estimate does not fit that many into the free GPU memory, and a long sequence runs as several simulations of nearly equal size. In a 2D L7-4 test the time per transmit stopped falling at 16 to 32 transmits.
+
 ### Which example to read
 
 | I want to                          | example                                                                                                     |
