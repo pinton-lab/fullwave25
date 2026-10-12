@@ -337,3 +337,59 @@ def test_run_changes_directory_back_on_success(tmp_path, monkeypatch):
     original_cwd = Path.cwd()
     launcher.run(sim_dir)
     assert Path.cwd() == original_cwd
+
+
+def _replace_peer_check(monkeypatch, result):
+    from fullwave.solver import cuda_utils
+
+    asked = []
+
+    def fake_check(ordinals):
+        asked.append(list(ordinals))
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(cuda_utils, "find_consecutive_gpus_without_peer_access", fake_check)
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    return asked
+
+
+def test_warn_if_gpus_lack_peer_access_warns_for_each_pair(monkeypatch, caplog):
+    asked = _replace_peer_check(monkeypatch, [(0, 1), (2, 3)])
+    with caplog.at_level("WARNING"):
+        Launcher._warn_if_gpus_lack_peer_access("0,1,2,3")
+    assert asked == [[0, 1, 2, 3]]
+    assert "GPU 0 <-> GPU 1, GPU 2 <-> GPU 3" in caplog.text
+    assert "much slower" in caplog.text
+
+
+def test_warn_if_gpus_lack_peer_access_is_silent_with_peer_access(monkeypatch, caplog):
+    _replace_peer_check(monkeypatch, [])
+    with caplog.at_level("WARNING"):
+        Launcher._warn_if_gpus_lack_peer_access("0,1")
+    assert caplog.text == ""
+
+
+def test_warn_if_gpus_lack_peer_access_skips_one_gpu(monkeypatch, caplog):
+    asked = _replace_peer_check(monkeypatch, [(0, 1)])
+    with caplog.at_level("WARNING"):
+        Launcher._warn_if_gpus_lack_peer_access("2")
+    assert asked == []
+    assert caplog.text == ""
+
+
+def test_warn_if_gpus_lack_peer_access_skips_when_visible_devices_is_set(monkeypatch, caplog):
+    asked = _replace_peer_check(monkeypatch, [(0, 1)])
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1,0")
+    with caplog.at_level("WARNING"):
+        Launcher._warn_if_gpus_lack_peer_access("0,1")
+    assert asked == []
+    assert caplog.text == ""
+
+
+def test_warn_if_gpus_lack_peer_access_never_raises(monkeypatch, caplog):
+    _replace_peer_check(monkeypatch, RuntimeError("cuDeviceGet failed with error code 101"))
+    with caplog.at_level("WARNING"):
+        Launcher._warn_if_gpus_lack_peer_access("0,1")
+    assert caplog.text == ""
