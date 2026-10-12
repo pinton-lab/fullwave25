@@ -806,7 +806,7 @@ wheels = [
 
 [[package]]
 name = "fullwave25"
-version = "1.4.1"
+version = "1.4.2.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "cupy-cuda12x" },
