@@ -4,6 +4,7 @@ import concurrent.futures
 import logging
 import os
 import time
+from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -202,6 +203,7 @@ class InputFileWriter:
         *,
         is_static_map: bool = False,
         recalculate_pml: bool = True,
+        members: Sequence[fullwave.Source] | None = None,
     ) -> Path:
         r"""Run the input data generation and return the simulation directory path.
 
@@ -230,6 +232,11 @@ class InputFileWriter:
             set False if you are using the same PML parameters for each transmit event
             such as plane wave
             AND this is the second or later transmit event.
+        members : Sequence[fullwave.Source] | None
+            The transmits of a batch run, in order. Each member gives its own signals and
+            shares the coordinates of ``source``. The signals of all members are written one
+            after another, and nsims.dat holds the member count. None writes a single
+            transmit from ``source``.
 
         Returns
         -------
@@ -243,11 +250,19 @@ class InputFileWriter:
 
         self._init_pending_writes()
 
+        member_count_file = simulation_dir / "nsims.dat"
+        if members is None:
+            # A file left by an earlier batch run in this directory would turn this run into
+            # a batch.
+            member_count_file.unlink(missing_ok=True)
+        else:
+            self._queue_v_abs_write(np.int32, member_count_file, len(members))
+
         self._queue_ic_write(
             simulation_dir / "icmat.dat",
-            np.transpose(self.source.icmat),
+            np.transpose(self._signals("icmat", members)),
         )
-        p0_additive = getattr(self.source, "p0_additive", None)
+        p0_additive = self._signals("p0_additive", members)
         incoords_add = getattr(self.source, "incoords_add", None)
         if p0_additive is not None:
             self._queue_ic_write(
@@ -257,7 +272,7 @@ class InputFileWriter:
         if incoords_add is not None:
             self._queue_coords_write(simulation_dir / "icc_add.dat", incoords_add)
         for _vel_suffix, _vel_attr in (("u", "u0"), ("v", "v0"), ("w", "w0")):
-            _signal_vel = getattr(self.source, _vel_attr, None)
+            _signal_vel = self._signals(_vel_attr, members)
             _incoords_vel = getattr(self.source, f"incoords_{_vel_suffix}", None)
             if _signal_vel is not None:
                 self._queue_ic_write(
@@ -309,6 +324,33 @@ class InputFileWriter:
         message = f"Input files generated in {end_file_writer_time - time_start:.2e} seconds."
         logger.info(message)
         return simulation_dir
+
+    def _signals(
+        self,
+        name: str,
+        members: Sequence[fullwave.Source] | None,
+    ) -> np.ndarray | None:
+        """Return one source signal matrix, with the rows of every member stacked in order.
+
+        Parameters
+        ----------
+        name : str
+            The signal attribute of fullwave.Source: icmat, p0_additive, u0, v0 or w0.
+        members : Sequence[fullwave.Source] | None
+            The transmits of a batch run, or None for the single transmit of ``source``.
+
+        Returns
+        -------
+        np.ndarray | None
+            [n_points, n_t] for a single transmit, [n_members * n_points, n_t] for a batch,
+            or None when the source has no signal of this kind.
+
+        """
+        if members is None:
+            return getattr(self.source, name, None)
+        if getattr(self.source, name, None) is None:
+            return None
+        return np.concatenate([getattr(member, name) for member in members], axis=0)
 
     # --- constructor utils ---
 
