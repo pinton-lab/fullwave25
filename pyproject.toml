@@ -32,7 +32,7 @@ classifiers = [
 [project.optional-dependencies] # --extra
 test = ["pytest", "tomli>=2.3.0"]
 dev = [
-    "pre-commit==4.1.0",
+    "pre-commit==4.6.2",
     "pytest>=8.3.5",
     "ruff>=0.12.9",
     "line-profiler>=5.0.1",
