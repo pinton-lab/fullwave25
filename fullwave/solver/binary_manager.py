@@ -21,6 +21,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from tqdm import tqdm
+
 logger = logging.getLogger("__main__." + __name__)
 
 GITHUB_REPO = "pinton-lab/fullwave25"
@@ -28,7 +30,7 @@ CACHE_DIR = Path.home() / ".cache" / "fullwave25" / "bins"
 
 # Pinned release tag for the solver binaries.
 # Update this only when new binaries are uploaded to a GitHub release.
-BINARY_RELEASE_TAG = "fullwave_bin_v1.6"
+BINARY_RELEASE_TAG = "fullwave_bin_v1.7"
 
 
 def _download_url(filename: str, tag: str) -> str:
@@ -36,39 +38,34 @@ def _download_url(filename: str, tag: str) -> str:
 
 
 def _download_binary(url: str, dest: Path) -> None:
-    """Download *url* to *dest*, showing a tqdm progress bar when available."""
+    """Download *url* to *dest*, showing a tqdm progress bar."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(".download_tmp")
     try:
+
+        class _Hook:
+            def __init__(self) -> None:
+                self._bar: tqdm | None = None
+
+            def __call__(self, block: int, block_size: int, total: int) -> None:  # noqa: ARG002
+                if self._bar is None:
+                    self._bar = tqdm(
+                        total=total if total > 0 else None,
+                        unit="B",
+                        unit_scale=True,
+                        desc=dest.name,
+                    )
+                self._bar.update(block_size)
+
+            def close(self) -> None:
+                if self._bar is not None:
+                    self._bar.close()
+
+        hook = _Hook()
         try:
-            from tqdm import tqdm  # noqa: PLC0415
-
-            class _Hook:
-                def __init__(self) -> None:
-                    self._bar: tqdm | None = None
-
-                def __call__(self, block: int, block_size: int, total: int) -> None:  # noqa: ARG002
-                    if self._bar is None:
-                        self._bar = tqdm(
-                            total=total if total > 0 else None,
-                            unit="B",
-                            unit_scale=True,
-                            desc=dest.name,
-                        )
-                    self._bar.update(block_size)
-
-                def close(self) -> None:
-                    if self._bar is not None:
-                        self._bar.close()
-
-            hook = _Hook()
-            try:
-                urllib.request.urlretrieve(url, tmp, reporthook=hook)  # noqa: S310
-            finally:
-                hook.close()
-
-        except ImportError:
-            urllib.request.urlretrieve(url, tmp)  # noqa: S310
+            urllib.request.urlretrieve(url, tmp, reporthook=hook)  # noqa: S310
+        finally:
+            hook.close()
 
         tmp.rename(dest)
         dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)

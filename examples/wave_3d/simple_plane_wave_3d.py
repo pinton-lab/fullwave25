@@ -97,7 +97,8 @@ def main() -> None:
 
     # define where to put the pressure source [nx, ny, nz].
     # source_type="soft" needs exactly one row. A thicker source needs the
-    # hard source, source_type="hard", and each row takes its own delay below.
+    # hard source, source_type="hard_released_after" or "hard", and each row
+    # takes its own delay below.
     p_mask = np.zeros((grid.nx, grid.ny, grid.nz), dtype=bool)
     element_thickness_px = 1
     p_mask[0:element_thickness_px] = True
