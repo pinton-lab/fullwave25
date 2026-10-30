@@ -35,6 +35,44 @@ def _on_the_host(array: NDArray) -> NDArray:
     return _array_module(array).asnumpy(array)
 
 
+# float32 stores 1.2 as 1.2000000477 (about 6e-8 relative); table nodes are 1e-2 or more apart.
+_FLOAT32_NOISE_RTOL = 1e-6
+
+
+def _snap_to_nearby_node(
+    *,
+    values: NDArray[np.float64],
+    nodes: NDArray[np.float64],
+    xp: object,
+) -> NDArray[np.float64]:
+    """Replace each value that is float32 noise away from a table node by that node.
+
+    Parameters
+    ----------
+    values : NDArray[np.float64]
+        Requested values.
+    nodes : NDArray[np.float64]
+        Sorted table nodes.
+    xp : object
+        Array module of ``values``, numpy or cupy.
+
+    Returns
+    -------
+    NDArray[np.float64]
+        The values, with near-node values replaced by the node.
+
+    """
+    if nodes.size < 2:
+        return values
+    values = xp.asarray(values)
+    upper_index = xp.clip(xp.searchsorted(nodes, values, side="left"), 1, nodes.size - 1)
+    lower_node = nodes[upper_index - 1]
+    upper_node = nodes[upper_index]
+    is_near_lower = xp.abs(values - lower_node) <= _FLOAT32_NOISE_RTOL * xp.abs(lower_node)
+    is_near_upper = xp.abs(values - upper_node) <= _FLOAT32_NOISE_RTOL * xp.abs(upper_node)
+    return xp.where(is_near_lower, lower_node, xp.where(is_near_upper, upper_node, values))
+
+
 def scale_relaxation_attenuation(
     relaxation_param_dict: dict[str, NDArray[np.float64]],
     factor: NDArray[np.float64] | float,
@@ -938,6 +976,8 @@ class RelaxationParametersGenerator:
 
         """
         alpha_coeff = band_scaled_alpha_coeff(alpha_coeff, alpha_power, band_scale)
+        alpha_coeff = self._snap_to_table(alpha_coeff, table_axis=self.alpha_list)
+        alpha_power = self._snap_to_table(alpha_power, table_axis=self.power_list)
         self._warn_invalid(alpha_coeff, alpha_power)
 
         use_gpu = not isinstance(alpha_coeff, np.ndarray)
@@ -991,6 +1031,7 @@ class RelaxationParametersGenerator:
 
         """
         xp = np if isinstance(alpha_coeff, np.ndarray) else _array_module(alpha_coeff)
+        alpha_coeff = self._snap_to_table(alpha_coeff, table_axis=self.alpha_list)
         axis = xp.asarray(np.asarray(self.alpha_list).ravel().round(10))
         return (
             alpha_coeff / axis[self._axis_index(alpha_coeff, axis, self.alpha_min, self.alpha_max)]
@@ -1114,6 +1155,15 @@ class RelaxationParametersGenerator:
         )
 
     @staticmethod
+    def _snap_to_table(
+        values: NDArray[np.float64], *, table_axis: NDArray[np.float64]
+    ) -> NDArray[np.float64]:
+        """Replace each value that is float32 noise away from a node of one table axis."""
+        xp = np if isinstance(values, np.ndarray) else _array_module(values)
+        nodes = xp.asarray(np.asarray(table_axis).ravel().round(10))
+        return _snap_to_nearby_node(values=values, nodes=nodes, xp=xp)
+
+    @staticmethod
     def _axis_index(
         value: NDArray[np.float64],
         axis: NDArray[np.float64],
@@ -1122,6 +1172,7 @@ class RelaxationParametersGenerator:
     ) -> NDArray[np.int64]:
         """Return the axis index the lookup kernel selects, which clips at both ends."""
         xp = np if isinstance(value, np.ndarray) else _array_module(value)
+        value = _snap_to_nearby_node(values=value, nodes=axis, xp=xp)
         clipped = xp.clip(value, lowest, highest)
         return xp.minimum(xp.searchsorted(axis, clipped, side="left"), axis.size - 1)
 
