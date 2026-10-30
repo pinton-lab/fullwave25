@@ -1729,6 +1729,18 @@ class Transducer:
         return out
 
     @property
+    def element_id_to_receiver_center(self) -> dict[int, NDArray[np.int64]]:
+        """Return the mapping from element IDs to the mean receiver coordinate in grid points."""
+        ndim = 3 if self.is_3d else 2
+        out: dict[int, NDArray[np.int64]] = {}
+        for eid, coords in self.element_id_to_element_surface.items():
+            if len(coords) == 0:
+                out[eid] = np.full(ndim, -1, dtype=np.int64)
+            else:
+                out[eid] = np.rint(coords.mean(axis=0)).astype(np.int64)
+        return out
+
+    @property
     def sensor(self) -> fullwave.sensor.Sensor:
         """Return the Sensor object with active sensor coordinates.
 

@@ -14,6 +14,13 @@ class Beamformer:
     For faster implementations, consider using libraries such as
     mach beamformer: https://github.com/Forest-Neurotech/mach
 
+    Conventions: ``axial_position_m`` is measured from the top of the grid
+    (row 0), not from the array. ``transducer_coordinates`` must be the
+    receiver positions in grid points (for example from
+    ``Transducer.element_id_to_receiver_center``). The time origin is the
+    mean receiver row, so the array depth is subtracted from the two-way
+    travel time.
+
     References
     ----------
     - Fullwave2 BMME890 implementation
@@ -46,11 +53,11 @@ class Beamformer:
         lateral_position_m : np.ndarray
             Lateral positions (m) where the beamformed image will be computed.
         axial_position_m : np.ndarray
-            Axial positions (m) where the beamformed image will be computed.
+            Axial positions (m) from the top of the grid where the image is computed.
         num_elements : int
             Number of transducer elements.
         transducer_coordinates : np.ndarray
-            Coordinates of the transducer elements (m).
+            Receiver coordinates [n_elements, 2] in grid points (row, column).
         f_number : float, optional
             F-number for aperture calculation, by default 1.0.
 
@@ -83,6 +90,8 @@ class Beamformer:
         if signals.ndim == 2:
             signals = signals[:, :, np.newaxis]
         n_transmit = signals.shape[2]
+        # idt_0 is the pulse arrival at the receivers, so time is measured from the array.
+        z_array = np.mean(self.transducer_coordinates[:, 0]) * self.dx
 
         hilbert_signals = hilbert(signals, axis=1)
         beamformed_image = np.zeros(
@@ -133,7 +142,7 @@ class Beamformer:
                     dd = np.round(dd / (self.dt / self.dx * self.c0)).astype(int)
                     dd = dd - dd.min()
 
-                    idt = idt_0 + int(2 * axial / self.c0 / self.dt)
+                    idt = idt_0 + int(2 * (axial - z_array) / self.c0 / self.dt)
 
                     # idp: 1D indices into signals flattened array
                     # we convert 2D indices to 1D indices
