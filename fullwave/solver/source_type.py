@@ -1,4 +1,11 @@
-"""Drive the source by addition rather than by assignment.
+"""Source types: hard, hard released after the drive, and soft.
+
+``"hard"`` assigns the source pressure for the whole run, so the source cells stay at
+zero pressure after the drive signal ends. ``"hard_released_after"`` assigns the
+pressure while the drive signal plays, then lets the cells evolve freely.
+``"soft"`` adds the signal to the field, as described below.
+
+A soft source drives the source by addition rather than by assignment.
 
 A hard source sets the pressure of one grid row on every step, while the
 staggered derivative spans `2 * m_spatial_order` pressure points. One hard source row
@@ -25,8 +32,9 @@ if TYPE_CHECKING:
     import fullwave
 
 HARD = "hard"
+HARD_RELEASED_AFTER = "hard_released_after"
 SOFT = "soft"
-SOURCE_TYPES = (HARD, SOFT)
+SOURCE_TYPES = (HARD, HARD_RELEASED_AFTER, SOFT)
 
 
 def _is_on_the_device(array: object) -> bool:
@@ -60,6 +68,11 @@ def _at_the_source(array: NDArray, index: tuple[NDArray, ...]) -> NDArray:
 def is_soft(source_type: str) -> bool:
     """Return whether this source type adds to the field rather than assigning it."""
     return source_type == SOFT
+
+
+def is_hard_held(source_type: str) -> bool:
+    """Return whether the source cells stay at zero pressure after the drive ends."""
+    return source_type == HARD
 
 
 def source_row(coords: NDArray[np.int64], grid_shape: tuple[int, ...]) -> int:

@@ -908,10 +908,12 @@ class Transducer:
             Changing this value to n will record the pressure every n time steps.
             It reduces the size of the output data.
         source_type: str
-            "soft" adds the signal to the field and is the default. The signal
-            is scaled so the aperture radiates the pressure it is given, at the
-            grid's reference sound speed. "hard" is a hard source, which
-            assigns the signal to the pressure of each source pixel instead.
+            "hard_released_after" assigns the signal to the pressure of each
+            source pixel while it plays, then lets the cells evolve freely.
+            "hard" assigns it for the whole run, so the cells stay at zero
+            pressure after the signal ends. "soft" adds the signal to the field,
+            scaled so the aperture radiates the pressure it is given, at the
+            grid's reference sound speed.
 
         """
         if validate_input:
@@ -955,7 +957,7 @@ class Transducer:
         element_layer_px: int = 2,
         face_depth_m: float = 0.0,
         sampling_modulus_time: int = 1,
-        source_type: str = source_type_module.HARD,
+        source_type: str = source_type_module.HARD_RELEASED_AFTER,
     ) -> "Transducer":
         """Return an ATL Philips L7-4 linear array on one grid.
 
@@ -978,8 +980,10 @@ class Transducer:
         sampling_modulus_time : int
             How many time steps separate two recorded samples.
         source_type : str
-            "soft" adds the signal to the field, which is the default and what
-            the calibrated setups use. "hard" is a hard source and assigns it.
+            "hard_released_after", the default, assigns the signal while it plays,
+            then lets the source cells evolve freely. "hard" assigns it for the
+            whole run, so the cells stay at zero pressure after the signal ends.
+            "soft" adds the signal to the field.
 
         Returns
         -------
@@ -1010,7 +1014,7 @@ class Transducer:
         element_layer_px: int | None = None,
         face_depth_m: float = 0.0,
         sampling_modulus_time: int = 1,
-        source_type: str = source_type_module.HARD,
+        source_type: str = source_type_module.HARD_RELEASED_AFTER,
     ) -> "Transducer":
         """Return a curved array of 49.57 mm radius on one grid.
 
@@ -1032,8 +1036,10 @@ class Transducer:
         sampling_modulus_time : int
             How many time steps separate two recorded samples.
         source_type : str
-            "soft" adds the signal to the field, which is the default and what
-            the calibrated setups use. "hard" is a hard source and assigns it.
+            "hard_released_after", the default, assigns the signal while it plays,
+            then lets the source cells evolve freely. "hard" assigns it for the
+            whole run, so the cells stay at zero pressure after the signal ends.
+            "soft" adds the signal to the field.
 
         Returns
         -------
@@ -1064,7 +1070,7 @@ class Transducer:
         element_layer_px: int = 4,
         face_depth_m: float = 0.0,
         sampling_modulus_time: int = 1,
-        source_type: str = source_type_module.HARD,
+        source_type: str = source_type_module.HARD_RELEASED_AFTER,
     ) -> "Transducer":
         """Return a 64 element phased array of 27 mm aperture on one grid.
 
@@ -1082,8 +1088,10 @@ class Transducer:
         sampling_modulus_time : int
             How many time steps separate two recorded samples.
         source_type : str
-            "soft" adds the signal to the field, which is the default and what
-            the calibrated setups use. "hard" is a hard source and assigns it.
+            "hard_released_after", the default, assigns the signal while it plays,
+            then lets the source cells evolve freely. "hard" assigns it for the
+            whole run, so the cells stay at zero pressure after the signal ends.
+            "soft" adds the signal to the field.
 
         Returns
         -------
@@ -1900,7 +1908,7 @@ class LinearTransducer(Transducer):
         active_source_elements: tuple[bool] | None = None,
         active_sensor_elements: tuple[bool] | None = None,
         *,
-        source_type: str = source_type_module.HARD,
+        source_type: str = source_type_module.HARD_RELEASED_AFTER,
     ) -> None:
         """Initialize a LinearTransducer instance.
 
@@ -1980,5 +1988,5 @@ def make_p4_1c_trasnducer(
     return fullwave.Transducer(
         transducer_geometry=transducer_geometry,
         grid=grid,
-        source_type=source_type_module.HARD,
+        source_type=source_type_module.HARD_RELEASED_AFTER,
     )

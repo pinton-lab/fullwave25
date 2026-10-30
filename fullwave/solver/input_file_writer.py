@@ -65,6 +65,7 @@ class InputFileWriter:
         exponential_attenuation_pml_interior_offset_px: int = 0,
         use_gpu: bool = False,
         write_maps_the_solver_does_not_read: bool = False,
+        hold_hard_source: bool = False,
     ) -> None:
         """Initialize the InputGeneratorBase instance.
 
@@ -125,6 +126,11 @@ class InputFileWriter:
             which an older solver binary needs. The record the skipped maps
             replace is impedance_constraint.dat, and this writer always writes it
             on the relaxation path.
+        hold_hard_source : bool, optional
+            Whether the hard source cells stay at zero pressure after the drive ends.
+            True writes the flag file ``hold_source.dat``, which the solver reads to keep
+            the cells at zero for the rest of the run; the signals are written as given.
+            False, the default, lets the solver release the cells when the signal ends.
 
         """
         logger.debug("Initializing InputFileWriter instance.")
@@ -140,6 +146,7 @@ class InputFileWriter:
         self.use_isotropic_relaxation = use_isotropic_relaxation
         self.write_maps_the_solver_does_not_read = write_maps_the_solver_does_not_read
         self.use_gpu = use_gpu
+        self.hold_hard_source = hold_hard_source
 
         if validate_input:
             check_functions.check_path_exists(self.path_fullwave_simulation_bin)
@@ -348,10 +355,21 @@ class InputFileWriter:
 
         """
         if members is None:
-            return getattr(self.source, name, None)
-        if getattr(self.source, name, None) is None:
+            signal = getattr(self.source, name, None)
+        elif getattr(self.source, name, None) is None:
             return None
-        return np.concatenate([getattr(member, name) for member in members], axis=0)
+        else:
+            signal = np.concatenate([getattr(member, name) for member in members], axis=0)
+        return signal
+
+    @property
+    def _holds_the_source(self) -> bool:
+        """Whether the solver keeps the hard source cells at zero after the drive ends."""
+        return (
+            self.hold_hard_source
+            and self.source.n_sources > 0
+            and self.source.icmat.shape[1] < self.grid.nt
+        )
 
     # --- constructor utils ---
 
@@ -1258,6 +1276,7 @@ class InputFileWriter:
             "ncoordsout",
             "ncoordszero",
             "nTic",
+            "hold_source",
             "modT",
             "modX",
             "modY",
@@ -1356,7 +1375,6 @@ class InputFileWriter:
             self._queue_v_abs_write(np.float32, save_path, var)
 
     def _save_coords_params(self, simulation_dir: Path) -> None:
-        nt_ic = self.source.icmat.shape[1]
         var_list = [
             ("nX", self.grid.nx),
             ("nY", self.grid.ny),
@@ -1364,9 +1382,11 @@ class InputFileWriter:
             ("ncoords", self.source.n_sources),
             ("ncoordsout", self.sensor.n_sensors),
             ("ncoordszero", self.medium.n_air),
-            ("nTic", nt_ic),
+            ("nTic", self.source.icmat.shape[1]),
             ("modT", self.sensor.sampling_modulus_time),
         ]
+        if self._holds_the_source:
+            var_list.append(("hold_source", 1))
         n_sources_add = getattr(self.source, "n_sources_add", 0)
         if n_sources_add > 0:
             var_list.append(("ncoords_add", n_sources_add))

@@ -229,7 +229,7 @@ The arrays are `l7_4` (linear, 128 elements, 5.208 MHz), `c5_2v` (curved, 49.57 
 
 The transmits are `plane_wave(angle_deg=...)`, `focus(focus_m=...)`, `diverging(virtual_source_m=...)` and `synthetic_aperture(element)`. Each takes `apodization` and `pulse`. Set `transducer.active_source_elements` first to use part of the aperture.
 
-Every transducer is additive by default, which is what the calibrated setups use. Pass `source_type="clamped"` for a hard source.
+The source type is `"hard_released_after"` by default: the transducer assigns its pressure while the drive signal plays, then the source cells evolve freely. `"hard"` assigns it for the whole run, so the cells stay at zero pressure after the drive ends. `"soft"` adds the signal to the field, and is what the calibrated setups use. Pass `source_type=` to `Transducer.l7_4`, `c5_2v`, `p4_1c` or `fullwave.Solver`.
 
 `transducer.apply_transducer_stack(...)` paints a probe's backing, matching layer, lens and standoff onto the medium maps before the `Medium` is built. `fullwave.TransducerStack` holds the values.
 

@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 import time
+import warnings
 from collections.abc import Iterator, Sequence
 from pathlib import Path
 
@@ -18,9 +19,10 @@ from fullwave.solver.input_file_writer import InputFileWriter
 from fullwave.solver.launcher import Launcher
 from fullwave.solver.pml_builder import PMLBuilder, PMLBuilderExponentialAttenuation
 from fullwave.solver.source_type import (
-    HARD,
+    HARD_RELEASED_AFTER,
     SOURCE_TYPES,
     as_additive_source,
+    is_hard_held,
     is_soft,
 )
 from fullwave.utils import (
@@ -30,6 +32,7 @@ from fullwave.utils import (
 from fullwave.utils.signal_filter import apply_filter
 
 from .binary_manager import ensure_binary
+from .binary_markers import check_binary_holds_source
 from .cuda_utils import get_cuda_architecture, retrieve_cuda_version
 from .utils import load_dat_data
 
@@ -39,6 +42,9 @@ logger = logging.getLogger("__main__." + __name__)
 # (2489 x 1136 cells) the time per transmit stopped falling at 16 to 32 transmits and rose above
 # that, so a larger run only costs memory.
 DEFAULT_MAX_MEMBERS_PER_RUN = 32
+
+# The smallest points per wavelength (ppw) the relaxation attenuation model is validated for.
+MIN_VALIDATED_PPW_RELAXATION = 8
 
 
 def _split_evenly(members: list, largest: int) -> list[list]:
@@ -500,7 +506,7 @@ class Solver:
         verify_gpu: bool = True,
         use_gpu_pml: bool = False,
         pml_alpha_entrance: float | None = None,
-        source_type: str = HARD,
+        source_type: str = HARD_RELEASED_AFTER,
         write_maps_the_solver_does_not_read: bool = False,
     ) -> None:
         """Initialize a Solver instance for the fullwave simulation.
@@ -627,6 +633,12 @@ class Solver:
             relaxation path. Set it to True for a solver binary that predates
             that record. Such a binary stops with an error on kappax.dat rather
             than returning a wrong answer.
+        source_type : str, optional
+            How the source drives the field. "hard_released_after", the default,
+            assigns the source pressure while the drive signal plays, then lets the
+            source cells evolve freely. "hard" assigns it for the whole run, so the
+            cells stay at zero pressure after the signal ends. "soft" adds the signal
+            to the field.
 
         Raises
         ------
@@ -645,6 +657,14 @@ class Solver:
                 "pml_layer_thickness_px."
             )
             raise ValueError(error_msg)
+
+        if not use_exponential_attenuation and grid.ppw < MIN_VALIDATED_PPW_RELAXATION:
+            warnings.warn(
+                f"ppw={grid.ppw} is below {MIN_VALIDATED_PPW_RELAXATION}. "
+                f"The relaxation model is validated for ppw >= {MIN_VALIDATED_PPW_RELAXATION}.",
+                UserWarning,
+                stacklevel=2,
+            )
 
         # type hints
         self.source: fullwave.Source
@@ -799,6 +819,7 @@ class Solver:
                 use_exponential_attenuation=use_exponential_attenuation,
             )
             logger.info("source_type=%s, the source is driven by addition", source_type)
+        self._check_binary_holds_source(path_fullwave_simulation_bin)
 
         if sensor is not None:
             self.sensor = sensor
@@ -1288,6 +1309,7 @@ class Solver:
             exponential_attenuation_pml_interior_offset_px=interior_offset,
             use_gpu=self.use_gpu_pml,
             write_maps_the_solver_does_not_read=self.write_maps_the_solver_does_not_read,
+            hold_hard_source=is_hard_held(self.source_type),
         )
         simulation_dir = input_file_writer.run(
             simulation_dir_name,
@@ -1702,7 +1724,9 @@ class Solver:
                 use_isotropic_relaxation=self.use_isotropic_relaxation,
                 batch=True,
             )
-            return ensure_binary(local_path)
+            binary = ensure_binary(local_path)
+            self._check_binary_holds_source(binary)
+            return binary
         name = Path(self.path_fullwave_simulation_bin).name
         if "batch" not in name:
             error_msg = (
@@ -1713,6 +1737,23 @@ class Solver:
             logger.error(error_msg)
             raise ValueError(error_msg)
         return Path(self.path_fullwave_simulation_bin)
+
+    def _check_binary_holds_source(self, binary: Path) -> None:
+        """Refuse a binary that cannot hold the hard source, when the run needs it held.
+
+        Parameters
+        ----------
+        binary : Path
+            The binary that runs the simulation.
+
+        """
+        holds_source = (
+            is_hard_held(self.source_type)
+            and self.source.n_sources > 0
+            and self.source.icmat.shape[1] < self.grid.nt
+        )
+        if holds_source:
+            check_binary_holds_source(binary)
 
     @contextlib.contextmanager
     def _binary_in_use(self, binary: Path) -> Iterator[None]:
