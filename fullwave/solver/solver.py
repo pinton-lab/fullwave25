@@ -667,6 +667,8 @@ class Solver:
                 },
             )
             return
+        if ultra_sponge_thickness_px is not None:
+            backend.warn_sponge_without_ultra()
         if exponential_attenuation_pml_thickness_px is not None and not use_exponential_attenuation:
             error_msg = (
                 "exponential_attenuation_pml_thickness_px belongs to the exponential "

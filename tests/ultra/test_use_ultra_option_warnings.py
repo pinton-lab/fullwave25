@@ -6,6 +6,7 @@ import warnings
 import pytest
 
 import fullwave
+from fullwave.solver.launcher import Launcher
 from fullwave.ultra import backend
 
 NON_DEFAULT_OPTIONS = [
@@ -19,6 +20,11 @@ NON_DEFAULT_OPTIONS = [
     ("use_isotropic_relaxation", False),
 ]
 SPONGE_OPTIONS = ["pml_layer_thickness_px", "n_transition_layer", "pml_alpha_entrance"]
+
+
+@pytest.fixture(autouse=True)
+def _no_gpu_query_for_native_solver(monkeypatch):
+    monkeypatch.setattr(Launcher, "_verify_cuda_devices_exist", lambda _: None)
 
 
 def ultra_messages(caught):
@@ -82,9 +88,15 @@ def test_warning_comes_once_per_process(build_solver):
     assert sum("n_transition_layer is ignored" in m for m in ultra_messages(caught)) == 1
 
 
+def test_sponge_argument_without_use_ultra_warns_and_names_native_options(build_solver):
+    with pytest.warns(UserWarning, match="ultra_sponge_thickness_px is ignored without use_ultra"):
+        build_solver(use_ultra=False)
+
+
 @pytest.mark.parametrize(
     "solver_options",
     [
+        {"use_ultra": False},
         {"n_transition_layer": 3},
         {"cuda_device_id": [1, 0]},
         {"use_exponential_attenuation": False},

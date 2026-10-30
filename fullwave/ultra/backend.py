@@ -63,6 +63,19 @@ def _warn_once(*, name: str, message: str, category: type[Warning]) -> None:
     warnings.warn(message, category, stacklevel=_stacklevel_of_first_caller_outside_package())
 
 
+def warn_sponge_without_ultra() -> None:
+    """Warn once per process that ``ultra_sponge_thickness_px`` needs ``use_ultra=True``."""
+    _warn_once(
+        name="sponge_without_ultra",
+        message=(
+            "ultra_sponge_thickness_px is ignored without use_ultra=True. The native "
+            "absorber is sized by pml_layer_thickness_px (relaxation model) or "
+            "exponential_attenuation_pml_thickness_px (exponential model)."
+        ),
+        category=UserWarning,
+    )
+
+
 def warn_ppw_above_speed_optimum(*, ppw: int) -> None:
     """Warn once per process when ``ppw`` is above the ppw the backend is optimized for."""
     if ppw <= SPEED_OPTIMIZED_PPW:
