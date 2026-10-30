@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -93,8 +93,6 @@ def _upload_arrays_multi_gpu(
     dict mapping name -> CuPy array on *target_device*.
 
     """
-    from concurrent.futures import as_completed  # noqa: PLC0415
-
     import cupy as cp  # noqa: PLC0415
 
     n_gpus = cp.cuda.runtime.getDeviceCount()

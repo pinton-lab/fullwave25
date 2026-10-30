@@ -13,6 +13,7 @@ from time import time
 import numpy as np
 from numpy.typing import NDArray
 
+from .cuda_utils import find_consecutive_gpus_without_peer_access
 from .utils import load_dat_data
 
 logger = logging.getLogger("__main__." + __name__)
@@ -211,8 +212,6 @@ class Launcher:
             )
             return
         try:
-            from .cuda_utils import find_consecutive_gpus_without_peer_access  # noqa: PLC0415
-
             pairs = find_consecutive_gpus_without_peer_access(device_ids)
         except (AttributeError, NameError, OSError, RuntimeError, ctypes.ArgumentError) as error:
             logger.debug("Peer access check skipped: %s", error)

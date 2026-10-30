@@ -8,6 +8,7 @@ import logging
 from functools import cached_property
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 from numpy.typing import NDArray
 
@@ -1781,8 +1782,6 @@ class Transducer:
 
         it plots whole transducer geometry including the inactive/active source and sensor elements.
         """
-        import matplotlib.pyplot as plt  # noqa: PLC0415
-
         fig, ax = plt.subplots(1, 1, figsize=(10, 10))
         plot_mask = np.zeros(self.transducer_geometry.stored_grid_size)
         plot_mask[self.transducer_geometry.element_mask_input] = 1
@@ -1821,8 +1820,6 @@ class Transducer:
 
         it plots whole transducer geometry including the inactive/active source and sensor elements.
         """
-        import matplotlib.pyplot as plt  # noqa: PLC0415
-
         fig, ax = plt.subplots(1, 1, figsize=(10, 10))
         plot_mask = np.zeros(self.transducer_geometry.stored_grid_size)
         plot_mask[self.transducer_geometry.element_mask_input] = 1

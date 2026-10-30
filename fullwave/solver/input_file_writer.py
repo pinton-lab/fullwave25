@@ -5,6 +5,7 @@ import logging
 import os
 import time
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -909,8 +910,6 @@ class InputFileWriter:
             (c_min_val, c_max_val) of the sound speed.
 
         """
-        from concurrent.futures import ThreadPoolExecutor, as_completed  # noqa: PLC0415
-
         import cupy as cp  # noqa: PLC0415
 
         sound_speed_np = self.medium.sound_speed

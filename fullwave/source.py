@@ -18,6 +18,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger("__main__." + __name__)
 
 
+def additive_signal_scale(
+    sound_speed: NDArray[np.float64] | float,
+    dt: float,
+    dx: float,
+) -> NDArray[np.float64] | float:
+    """Return the factor that makes an additive source radiate its nominal pressure."""
+    return 2.0 * sound_speed * dt / dx
+
+
 @dataclass
 class Source:
     """Source class for Fullwave."""
@@ -272,8 +281,6 @@ class Source:
             A source with no assigned positions and a scaled additive signal.
 
         """
-        from fullwave.solver.source_type import additive_signal_scale  # noqa: PLC0415
-
         speed = float(grid.c0) if sound_speed is None else sound_speed
         scale = additive_signal_scale(speed, float(grid.dt), float(grid.dx))
         scale = np.atleast_1d(np.asarray(scale, dtype=float))

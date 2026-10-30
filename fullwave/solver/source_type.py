@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numpy.typing import NDArray
 
-from fullwave.source import Source
+from fullwave.source import Source, additive_signal_scale
 
 if TYPE_CHECKING:
     import fullwave
@@ -99,15 +99,6 @@ def source_row(coords: NDArray[np.int64], grid_shape: tuple[int, ...]) -> int:
         )
         raise ValueError(error_msg)
     return int(rows[0])
-
-
-def additive_signal_scale(
-    sound_speed: NDArray[np.float64] | float,
-    dt: float,
-    dx: float,
-) -> NDArray[np.float64] | float:
-    """Return the factor that makes an additive source radiate its nominal pressure."""
-    return 2.0 * sound_speed * dt / dx
 
 
 def node_sound_speeds(
