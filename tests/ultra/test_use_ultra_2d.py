@@ -8,7 +8,7 @@ import pytest
 
 import fullwave
 from fullwave.ultra import binary
-from fullwave.ultra.errors import UltraUnsupportedError
+from fullwave.ultra.errors import UltraBinaryError, UltraUnsupportedError
 
 SHAPE = (40, 32)
 N_TIC = 30
@@ -240,6 +240,37 @@ def test_run_batch_splits_into_runs_and_returns_traces_in_order(tmp_path, fake_b
     assert traces[0, 0, 1] == 25.0
     assert traces[1, 0, 1] == 1000.0 + 25.0
     assert traces[2, 0, 0] == 0.0
+
+
+def test_an_empty_output_file_with_exit_code_0_raises_with_the_binary_output(
+    tmp_path, fake_binary, monkeypatch
+):
+    inputs = make_inputs()
+    solver = make_solver(tmp_path, fake_binary, inputs=inputs)
+
+    def fake_run(binary_path, rundir, **_kwargs):
+        (Path(rundir) / "genout.dat").touch()
+        return "genbuf alloc failed (out of memory); aborting"
+
+    monkeypatch.setattr(binary, "run_binary", fake_run)
+    with pytest.raises(UltraBinaryError, match="genout_s1.dat") as error:
+        solver.run_batch(inputs[2], "batch")
+    assert "out of memory" in str(error.value)
+    assert "genout.dat (0 bytes)" in str(error.value)
+
+
+def test_output_files_of_different_sizes_raise(tmp_path, fake_binary, monkeypatch):
+    inputs = make_inputs()
+    solver = make_solver(tmp_path, fake_binary, inputs=inputs)
+
+    def fake_run(binary_path, rundir, **_kwargs):
+        fake_genout(rundir, N_MEMBERS, n_sensors=25, n_frames=7)
+        np.zeros(25 * 3, dtype=np.float32).tofile(Path(rundir) / "genout_s2.dat")
+        return ""
+
+    monkeypatch.setattr(binary, "run_binary", fake_run)
+    with pytest.raises(UltraBinaryError, match=r"genout_s2.dat \(300 bytes\)"):
+        solver.run_batch(inputs[2], "batch")
 
 
 def test_run_is_a_batch_of_one(tmp_path, fake_binary, monkeypatch):

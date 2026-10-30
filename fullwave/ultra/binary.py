@@ -28,6 +28,8 @@ MARKER_AIR_WINDOW_2D = b"nzero0.dat"
 MARKER_SOURCE_RELEASE_2D = b"nszero0.dat"
 MARKER_HOLD_SOURCE_3D = b"nszero0.dat"
 
+OUTPUT_TAIL_CHARS = 2000
+
 
 class PreflightError(RuntimeError):
     """Raised when no usable CUDA device is visible."""
@@ -146,7 +148,11 @@ def run_binary(
         check=False,
     )
     if result.returncode != 0:
-        tail = (result.stderr or result.stdout)[-2000:]
-        msg = f"{Path(binary).name} failed (returncode={result.returncode}):\n{tail}"
+        stderr_tail = (result.stderr or "")[-OUTPUT_TAIL_CHARS:]
+        stdout_tail = (result.stdout or "")[-OUTPUT_TAIL_CHARS:]
+        msg = (
+            f"{Path(binary).name} failed (returncode={result.returncode}):\n"
+            f"stderr:\n{stderr_tail}\nstdout:\n{stdout_tail}"
+        )
         raise RuntimeError(msg)
     return result.stdout or ""

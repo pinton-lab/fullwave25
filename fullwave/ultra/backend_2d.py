@@ -23,7 +23,8 @@ from .backend import (
     to_host,
     work_directory,
 )
-from .errors import UltraUnsupportedError
+from .binary import OUTPUT_TAIL_CHARS
+from .errors import UltraBinaryError, UltraUnsupportedError
 from .time_axis import check_time_axis, delay_additive_signal
 from .writer_2d import write_run_directory_2d, write_sources_2d
 
@@ -33,6 +34,8 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     import fullwave
+
+FLOAT_BYTES = 4
 
 
 def _members_per_run(n_members: int, max_members_per_run: int | None) -> list[range]:
@@ -46,6 +49,51 @@ def _members_per_run(n_members: int, max_members_per_run: int | None) -> list[ra
     return [
         range(int(part[0]), int(part[-1]) + 1) for part in np.array_split(range(n_members), n_runs)
     ]
+
+
+def check_genout_files(
+    genout_paths: Sequence[Path], *, ncoordsout: int, rundir: Path, stdout: str
+) -> None:
+    """Check that every output file of a run is complete.
+
+    Parameters
+    ----------
+    genout_paths : sequence of Path
+        The output file of each batch member.
+    ncoordsout : int
+        Number of sensor points per frame.
+    rundir : Path
+        The run directory, named in the error message.
+    stdout : str
+        Standard output of the binary, of which the end goes into the error message.
+
+    Raises
+    ------
+    UltraBinaryError
+        If a file is missing or empty, does not hold whole ``float32`` frames, or differs in
+        size from the other files of the run.
+    """
+    frame_bytes = FLOAT_BYTES * ncoordsout
+    sizes = {path.name: path.stat().st_size if path.is_file() else None for path in genout_paths}
+    common_size = max((size for size in sizes.values() if size), default=0)
+    incomplete = [
+        name
+        for name, size in sizes.items()
+        if not size or size % frame_bytes != 0 or size != common_size
+    ]
+    if not incomplete:
+        return
+    descriptions = [
+        f"{name} (missing)" if sizes[name] is None else f"{name} ({sizes[name]} bytes)"
+        for name in incomplete
+    ]
+    msg = (
+        "The fullwave2-ultra binary exited with code 0 but its output is incomplete: "
+        f"{', '.join(descriptions)}. "
+        f"Each output file must be non-empty, a multiple of {frame_bytes} bytes and of equal size. "
+        f"Run directory: {rundir}. Last output of the binary:\n{stdout[-OUTPUT_TAIL_CHARS:]}"
+    )
+    raise UltraBinaryError(msg)
 
 
 class UltraBackend2D:
@@ -66,7 +114,7 @@ class UltraBackend2D:
     cuda_device_id : str | int | list | None
         One CUDA device.
     verify_gpu : bool
-        Check that the device is visible before the launch.
+        Check that the device is visible before the run.
     source_type : str
         ``"hard"`` sets the pressure at the source cells for the whole run.
         ``"hard_released_after"`` sets it while the signal plays, then lets the cells evolve
@@ -357,6 +405,9 @@ class UltraBackend2D:
         )
         self.last_run.update(run_seconds=time.perf_counter() - started, stdout=stdout)
         genout_paths = [rundir / dat_io.genout_name(m) for m in range(len(signals))]
+        check_genout_files(
+            genout_paths, ncoordsout=scalars["ncoordsout"], rundir=rundir, stdout=stdout
+        )
         if not load_results:
             return genout_paths
         traces = np.stack(
