@@ -86,7 +86,7 @@ def make_solver(tmp_path, binary_path, *, inputs=None, **kwargs):
         path_fullwave_simulation_bin=binary_path,
         use_ultra=True,
         run_on_memory=False,
-        exponential_attenuation_pml_thickness_px=SPONGE,
+        ultra_sponge_thickness_px=SPONGE,
         **kwargs,
     )
 
@@ -320,17 +320,10 @@ def test_run_on_memory_removes_each_run_directory_after_reading(tmp_path, fake_b
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"pml_layer_thickness_px": 10},
-        {"n_transition_layer": 3},
-        {"use_gpu_pml": True},
-        {"pml_alpha_entrance": 0.5},
         {"use_pml": False},
         {"m_spatial_order": 4},
         {"use_gpu": False},
-        {"cuda_device_id": [0, 1]},
         {"source_type": "free"},
-        {"save_gpu_memory": True},
-        {"write_maps_the_solver_does_not_read": True},
     ],
 )
 def test_unsupported_solver_options_are_refused(tmp_path, fake_binary, kwargs):

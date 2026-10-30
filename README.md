@@ -391,11 +391,15 @@ Supported now:
 - Velocity sources, and sources that are not pressure sources.
 - Sparse-grid sensors, `is_static_map`, and `record_whole_domain`.
 - Media other than `fullwave.Medium` (exponential attenuation), and `alpha_power` other than 1.
-- `use_pml=False`, the PML settings (set the sponge width with `exponential_attenuation_pml_thickness_px`), `m_spatial_order` other than 8, `use_gpu=False`, `save_gpu_memory`, and more than one GPU.
+- `use_pml=False`, `m_spatial_order` other than 8, `use_gpu=False`, and an invalid `source_type`.
 - In 2D, a binary that does not read the files for air cells, for the additive channel, or for releasing the source (with such a binary, pad `p0` to `grid.nt`).
 - In 3D, air cells with a binary that does not read `icczero.dat` and `nzero0.dat`, and additive sources with a binary that does not read `ncoords_add.dat` and `icmat_add.dat`.
 
 This list will grow as the backend does.
+
+The backend runs the exponential attenuation model (frequency-independent: the same attenuation at every frequency). Set the width of its absorbing sponge, in cells, with `ultra_sponge_thickness_px`; the default is 6 wavelengths in 2D and 4 wavelengths in 3D. `exponential_attenuation_pml_thickness_px` no longer sets this width with `use_ultra=True`; a script that relied on it now gets the default width until it passes `ultra_sponge_thickness_px`.
+
+Options that only tune the native solver are ignored with a warning, once per process: `pml_layer_thickness_px`, `n_transition_layer`, `pml_alpha_entrance`, `exponential_attenuation_pml_thickness_px` (use `ultra_sponge_thickness_px` instead), `use_gpu_pml`, `save_gpu_memory`, `write_maps_the_solver_does_not_read`, `use_isotropic_relaxation=False`, and a `cuda_device_id` that lists more than one device (the run uses the first one listed). `use_exponential_attenuation=False`, the native default, also warns that the backend runs the exponential attenuation model, whose attenuation is frequency-independent, not the relaxation model, whose attenuation is frequency-dependent. Pass `use_exponential_attenuation=True` to silence it.
 
 ---
 
