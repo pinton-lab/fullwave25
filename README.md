@@ -348,6 +348,55 @@ Please see the following examples for more advanced usage.
 
 ---
 
+## Experimental: fullwave2-ultra backend
+
+`Solver(..., use_ultra=True)` runs the simulation with the fullwave2-ultra binary instead of the fullwave25 solver binary. It is experimental and the API may change.
+
+The fullwave2-ultra backend is optimized for speed at ppw = 6 (`Grid.ppw`); a larger ppw runs, but more slowly, and gives a warning.
+
+fullwave25 does not ship the fullwave2-ultra binaries. Get them from <https://github.com/pinton-lab/fullwave2-ultra> or contact the Pinton lab.
+
+Point the solver to the binary with `path_fullwave_simulation_bin` or with the environment variable `FW2U_BATCH_BIN`. Either can be the binary file or the folder that contains it. The binary name is `bench_2d_batch` for a 2D grid and `bench_3d_opt` for a 3D grid.
+
+```python
+from pathlib import Path
+
+import fullwave
+
+solver = fullwave.Solver(
+    work_dir=Path("./outputs/ultra"),
+    grid=grid,  # 2D or 3D fullwave.Grid
+    medium=medium,  # fullwave.Medium with alpha_power == 1 everywhere
+    source=source,
+    sensor=sensor,
+    path_fullwave_simulation_bin=Path("/path/to/fullwave2-ultra/bin"),
+    use_ultra=True,
+)
+traces = solver.run()  # (n_sensors, n_frames)
+# 2D only: traces = solver.run_batch(sources)  # (n_transmits, n_sensors, n_frames)
+```
+
+Supported now:
+
+- 2D grids with `run` and `run_batch`, including air cells.
+- 3D grids with `run`, including air cells.
+- Additive sources (`p0_additive`) and `source_type="soft"` in 2D and 3D.
+- The three source types in 2D and 3D, as on the native path: `"hard"` holds the source cells at zero pressure after `p0` ends, `"hard_released_after"` lets them evolve freely, and `"soft"` (and `p0_additive`) add to the pressure.
+
+`UltraUnsupportedError` is raised for:
+
+- `run_batch` in 3D.
+- Velocity sources, and sources that are not pressure sources.
+- Sparse-grid sensors, `is_static_map`, and `record_whole_domain`.
+- Media other than `fullwave.Medium` (exponential attenuation), and `alpha_power` other than 1.
+- `use_pml=False`, the PML settings (set the sponge width with `exponential_attenuation_pml_thickness_px`), `m_spatial_order` other than 8, `use_gpu=False`, `save_gpu_memory`, and more than one GPU.
+- In 2D, a binary that does not read the files for air cells, for the additive channel, or for releasing the source (with such a binary, pad `p0` to `grid.nt`).
+- In 3D, air cells with a binary that does not read `icczero.dat` and `nzero0.dat`, and additive sources with a binary that does not read `ncoords_add.dat` and `icmat_add.dat`.
+
+This list will grow as the backend does.
+
+---
+
 ## Attention
 
 - The simulation grid is defined as follows:

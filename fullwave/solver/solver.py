@@ -25,9 +25,10 @@ from fullwave.solver.source_type import (
     is_hard_held,
     is_soft,
 )
+from fullwave.ultra import backend, binary, factory
 from fullwave.utils import (
-    MemoryTempfile,
     check_functions,
+    run_directory_in_memory,
 )
 from fullwave.utils.signal_filter import apply_filter
 
@@ -482,6 +483,9 @@ class Solver:
     generates the required input files, and runs the simulation executable.
     """
 
+    #: The experimental fullwave2-ultra backend; set only by ``use_ultra=True``.
+    ultra = None
+
     def __init__(  # noqa: PLR0912
         self,
         work_dir: Path,
@@ -508,6 +512,7 @@ class Solver:
         pml_alpha_entrance: float | None = None,
         source_type: str = HARD_RELEASED_AFTER,
         write_maps_the_solver_does_not_read: bool = False,
+        use_ultra: bool = False,
     ) -> None:
         """Initialize a Solver instance for the fullwave simulation.
 
@@ -638,7 +643,16 @@ class Solver:
             assigns the source pressure while the drive signal plays, then lets the
             source cells evolve freely. "hard" assigns it for the whole run, so the
             cells stay at zero pressure after the signal ends. "soft" adds the signal
-            to the field.
+            to the field. ``use_ultra`` follows the same three values.
+        use_ultra : bool, optional
+            Experimental. Run a user-supplied fullwave2-ultra binary (not shipped; pass it
+            as ``path_fullwave_simulation_bin`` or set ``FW2U_BATCH_BIN``): ``bench_2d_batch``
+            for a 2D grid, ``bench_3d_opt`` for a 3D grid.
+            ``exponential_attenuation_pml_thickness_px`` sets the sponge width in cells.
+            A source with ``p0_additive`` and ``source_type="soft"`` are added to the pressure
+            through the binary's additive channel, which needs a binary that reads
+            ``ncoords_add.dat`` (and ``icmat_add.dat`` on a 3D grid). Unsupported options raise
+            ``UltraUnsupportedError``.
 
         Raises
         ------
@@ -649,6 +663,34 @@ class Solver:
             and transducer) are defined simultaneously.
 
         """
+        self.ultra = None
+        if use_ultra:
+            self._init_ultra(
+                work_dir=work_dir,
+                grid=grid,
+                medium=medium,
+                source=source,
+                sensor=sensor,
+                transducer=transducer,
+                path_fullwave_simulation_bin=path_fullwave_simulation_bin,
+                run_on_memory=run_on_memory,
+                cuda_device_id=cuda_device_id,
+                verify_gpu=verify_gpu,
+                nbdy=exponential_attenuation_pml_thickness_px,
+                options={
+                    "use_pml": use_pml,
+                    "m_spatial_order": m_spatial_order,
+                    "pml_layer_thickness_px": pml_layer_thickness_px,
+                    "n_transition_layer": n_transition_layer,
+                    "use_gpu": use_gpu,
+                    "use_gpu_pml": use_gpu_pml,
+                    "pml_alpha_entrance": pml_alpha_entrance,
+                    "source_type": source_type,
+                    "save_gpu_memory": save_gpu_memory,
+                    "write_maps_the_solver_does_not_read": write_maps_the_solver_does_not_read,
+                },
+            )
+            return
         if exponential_attenuation_pml_thickness_px is not None and not use_exponential_attenuation:
             error_msg = (
                 "exponential_attenuation_pml_thickness_px belongs to the exponential "
@@ -700,14 +742,7 @@ class Solver:
                 "\n"
             )
             logger.info(message)
-            self.tempfile = MemoryTempfile(
-                preferred_paths=["/run/user/{uid}"],
-                remove_paths=["/dev/shm", "/run/shm"],  # noqa: S108
-                additional_paths=["/var/run"],
-                filesystem_types=["tmpfs"],
-                fallback=True,
-            )
-            self.tempdir = self.tempfile.TemporaryDirectory()
+            self.tempdir = run_directory_in_memory()
             self.work_dir = Path(self.tempdir.name)
         else:
             self.work_dir = work_dir
@@ -869,6 +904,49 @@ class Solver:
                 use_gpu=use_gpu_pml,
                 pml_alpha_entrance=pml_alpha_entrance,
             )
+
+    def _init_ultra(
+        self,
+        *,
+        work_dir: Path,
+        grid: fullwave.Grid,
+        medium: fullwave.Medium,
+        source: fullwave.Source | None,
+        sensor: fullwave.Sensor | None,
+        transducer: fullwave.Transducer | None,
+        path_fullwave_simulation_bin: Path | None,
+        run_on_memory: bool | None,
+        cuda_device_id: str | int | list | None,
+        verify_gpu: bool,
+        nbdy: int | None,
+        options: dict,
+    ) -> None:
+        """Set up the experimental fullwave2-ultra backend (see ``fullwave.ultra``)."""
+        backend.warn_experimental()
+        backend.warn_ppw_above_speed_optimum(ppw=grid.ppw)
+        backend.check_solver_options(**options)
+        binary_name = binary.BINARY_NAME_3D if grid.is_3d else binary.BINARY_NAME_2D
+        ultra_binary = binary.resolve_binary(path_fullwave_simulation_bin, name=binary_name)
+        self._check_input(grid, medium, source, sensor, transducer, ultra_binary)
+        if source is None:
+            source = transducer.source
+        if sensor is None:
+            sensor = transducer.sensor
+        self.grid, self.medium, self.source, self.sensor = grid, medium, source, sensor
+        self.is_3d = grid.is_3d
+        self.ultra = factory.make_backend(
+            work_dir=Path(work_dir),
+            grid=grid,
+            medium=medium,
+            source=source,
+            sensor=sensor,
+            binary=ultra_binary,
+            run_on_memory=run_on_memory,
+            nbdy=nbdy,
+            cuda_device_id=cuda_device_id,
+            verify_gpu=verify_gpu,
+            source_type=options["source_type"],
+        )
 
     def _warn_if_the_additive_signal_was_not_scaled(self) -> None:
         """Say so when an additive signal was built by hand and may carry no scale.
@@ -1191,6 +1269,16 @@ class Solver:
             or if either filter option is set but ``load_results=False``.
 
         """
+        if self.ultra is not None:
+            return self.ultra.run(
+                simulation_dir_name,
+                is_static_map=is_static_map,
+                record_whole_domain=record_whole_domain,
+                load_results=load_results,
+                generate_input_only=generate_input_only,
+                highpass_cutoff_mhz=highpass_cutoff_mhz,
+                bandpass_cutoff_mhz=bandpass_cutoff_mhz,
+            )
         return self._run_one(
             simulation_dir_name,
             members=None,
@@ -1551,6 +1639,18 @@ class Solver:
             transmit in one simulation.
 
         """
+        if self.ultra is not None:
+            return self.ultra.run_batch(
+                sources,
+                simulation_dir_name,
+                max_members_per_run=max_members_per_run,
+                is_static_map=is_static_map,
+                record_whole_domain=record_whole_domain,
+                load_results=load_results,
+                generate_input_only=generate_input_only,
+                highpass_cutoff_mhz=highpass_cutoff_mhz,
+                bandpass_cutoff_mhz=bandpass_cutoff_mhz,
+            )
         members = self._batch_members(sources)
         # The sensor and the sizing below need the extended grid and medium.
         self.pml_builder.run(use_pml=self.use_pml)
