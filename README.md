@@ -256,6 +256,7 @@ recorded = solver.run_batch(sources)  # [n_transmits, n_sensors, n_t]
 | I want to                          | example                                                                                                     |
 | ---------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | send one plane wave                | [simple_plane_wave.py](examples/simple_plane_wave/simple_plane_wave.py)                                     |
+| do the same with fullwave2-ultra   | [simple_plane_wave_ultra.py](examples/simple_plane_wave/simple_plane_wave_ultra.py)                         |
 | do the same in 3D                  | [simple_plane_wave_3d.py](examples/wave_3d/simple_plane_wave_3d.py)                                         |
 | compound plane waves into a B-mode | [plane_wave_compounding.py](examples/linear_transducer/plane_wave_compounding.py)                           |
 | run a transmit sequence as batches | [transmit_batch_basics.py](examples/transmit_batch/transmit_batch_basics.py)                                |
