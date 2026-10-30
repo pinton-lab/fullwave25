@@ -441,3 +441,24 @@ class MemoryTempfile:
 
         """
         return tempfile.gettempprefixb()
+
+
+def run_directory_in_memory() -> tempfile.TemporaryDirectory[str]:
+    """Create the temporary run directory, on a tmpfs when the system has one.
+
+    Prefers ``/run/user/{uid}``, then the system temporary directory and ``/var/run``;
+    ``/dev/shm`` and ``/run/shm`` are skipped. Falls back to the system temporary directory.
+
+    Returns
+    -------
+    tempfile.TemporaryDirectory[str]
+        The directory object; the folder is removed when it is cleaned up.
+
+    """
+    return MemoryTempfile(
+        preferred_paths=["/run/user/{uid}"],
+        remove_paths=["/dev/shm", "/run/shm"],  # noqa: S108
+        additional_paths=["/var/run"],
+        filesystem_types=["tmpfs"],
+        fallback=True,
+    ).TemporaryDirectory()

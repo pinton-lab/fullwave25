@@ -89,7 +89,8 @@ def main() -> None:
 
     # set the source location at the top rows of the grid with specified thickness.
     # source_type="soft" needs exactly one row. A thicker source needs the
-    # hard source, source_type="hard", and each row takes its own delay below.
+    # hard source, source_type="hard_released_after" or "hard", and each row
+    # takes its own delay below.
     element_thickness_px = 1
     p_mask[0:element_thickness_px, :] = True
 
