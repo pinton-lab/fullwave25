@@ -1,14 +1,21 @@
 """CPU tests of Solver(use_ultra=True) in 2D: run directories, batches, refusals."""
 
 import hashlib
+import logging
 from pathlib import Path
 
 import numpy as np
 import pytest
 
 import fullwave
-from fullwave.ultra import binary
+from fullwave.ultra import backend_2d, binary
 from fullwave.ultra.errors import UltraBinaryError, UltraUnsupportedError
+from fullwave.ultra.time_axis import check_time_axis
+from fullwave.utils.gpu_memory import (
+    GPU_MEMORY_FRACTION,
+    GPU_MEMORY_RESERVE_BYTES,
+    members_that_fit,
+)
 
 SHAPE = (40, 32)
 N_TIC = 30
@@ -559,3 +566,121 @@ def test_a_2d_binary_is_looked_up_by_name_in_a_folder(tmp_path, fake_binary, mon
         run_on_memory=False,
     )
     assert solver.ultra.binary == fake_binary
+
+
+def test_device_bytes_2d_adds_up_the_named_allocations():
+    shared, per_member = backend_2d.device_bytes_2d(
+        n_x=10,
+        n_y=20,
+        n_t=101,
+        mod_t=10,
+        ncoords=3,
+        n_tic=5,
+        ncoordsout=4,
+        ncoords_add=2,
+        n_tic_add=6,
+        ncoordszero=1,
+    )
+    assert per_member == 24 * 200 + 4 * 3 * 5 + 4 * 2 * 6 + 4 * 10 * 4
+    assert shared == 172 * 200 + 8 * (10 + 20) + 8 * (3 + 1 + 4 + 2) + 4 * 4 + 72
+
+
+def free_memory_for_members(solver, n_members):
+    """Return the smallest free bytes that fit ``n_members`` transmits."""
+    shared_bytes, per_member_bytes = solver.ultra._member_bytes(
+        n_t=check_time_axis(solver.grid), n_tic=N_TIC, n_tic_add=0
+    )
+    needed_bytes = shared_bytes + n_members * per_member_bytes + GPU_MEMORY_RESERVE_BYTES
+    return int(needed_bytes / GPU_MEMORY_FRACTION) + 1
+
+
+def run_batch_and_count_members(solver, inputs, monkeypatch, **kwargs):
+    """Run the batch with a fake binary and return the members of each run and the traces."""
+    members_per_run = []
+
+    def fake_run(binary_path, rundir, **_kwargs):
+        n_members = int(np.fromfile(Path(rundir) / "nsims.dat", dtype=np.int32)[0])
+        members_per_run.append(n_members)
+        fake_genout(rundir, n_members, n_sensors=25, n_frames=7)
+        return "stdout"
+
+    monkeypatch.setattr(binary, "run_binary", fake_run)
+    traces = solver.run_batch(inputs[2], "batch", **kwargs)
+    return members_per_run, traces
+
+
+def test_run_batch_lowers_the_members_per_run_to_the_free_gpu_memory(
+    tmp_path, fake_binary, monkeypatch, caplog
+):
+    inputs = make_inputs()
+    solver = make_solver(tmp_path, fake_binary, inputs=inputs)
+    free = free_memory_for_members(solver, 2)
+    monkeypatch.setattr(backend_2d, "free_gpu_memory_bytes", lambda _: {"0": free})
+
+    with caplog.at_level(logging.WARNING):
+        members_per_run, traces = run_batch_and_count_members(
+            solver, inputs, monkeypatch, max_members_per_run=4
+        )
+
+    assert members_per_run == [2, 2]
+    assert "fits 2 transmits per run, not 4" in caplog.text
+    reference, expected = run_batch_and_count_members(
+        solver, inputs, monkeypatch, max_members_per_run=2
+    )
+    assert reference == [2, 2]
+    np.testing.assert_array_equal(traces, expected)
+
+
+def test_run_batch_runs_one_member_when_not_even_one_fits(tmp_path, fake_binary, monkeypatch):
+    inputs = make_inputs()
+    solver = make_solver(tmp_path, fake_binary, inputs=inputs)
+    monkeypatch.setattr(backend_2d, "free_gpu_memory_bytes", lambda _: {"0": 1024**2})
+    members_per_run, _ = run_batch_and_count_members(solver, inputs, monkeypatch)
+    assert members_per_run == [1] * N_MEMBERS
+
+
+def test_run_batch_keeps_the_request_and_warns_when_the_free_memory_is_unknown(
+    tmp_path, fake_binary, monkeypatch, caplog
+):
+    inputs = make_inputs()
+    solver = make_solver(tmp_path, fake_binary, inputs=inputs)
+    monkeypatch.setattr(backend_2d, "free_gpu_memory_bytes", lambda _: None)
+
+    with caplog.at_level(logging.WARNING):
+        members_per_run, _ = run_batch_and_count_members(
+            solver, inputs, monkeypatch, max_members_per_run=3
+        )
+
+    assert members_per_run == [2, 2]
+    assert "free GPU memory is unknown" in caplog.text
+
+
+def test_run_batch_rejects_a_non_positive_limit_before_reading_the_gpu_memory(
+    tmp_path, fake_binary, monkeypatch
+):
+    inputs = make_inputs()
+    solver = make_solver(tmp_path, fake_binary, inputs=inputs)
+
+    def fail_if_read(_device_ids):
+        raise AssertionError("the GPU memory was read")
+
+    monkeypatch.setattr(backend_2d, "free_gpu_memory_bytes", fail_if_read)
+    with pytest.raises(ValueError, match="1 or more"):
+        solver.run_batch(inputs[2], "batch", max_members_per_run=0)
+
+
+def test_run_batch_writes_the_inputs_without_reading_the_gpu_memory(
+    tmp_path, fake_binary, monkeypatch
+):
+    inputs = make_inputs()
+    solver = make_solver(tmp_path, fake_binary, inputs=inputs)
+    monkeypatch.setattr(backend_2d, "free_gpu_memory_bytes", lambda _: {"0": 1024**2})
+
+    run_directories = solver.run_batch(inputs[2], "batch", generate_input_only=True)
+
+    assert len(run_directories) == 1
+
+
+def test_members_that_fit_keeps_the_reserve_and_the_shared_memory():
+    free_bytes = int((GPU_MEMORY_RESERVE_BYTES + 1000 + 3 * 100) / GPU_MEMORY_FRACTION) + 1
+    assert members_that_fit(free_bytes=free_bytes, shared_bytes=1000, per_member_bytes=100) == 3

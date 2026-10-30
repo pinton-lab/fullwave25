@@ -19,6 +19,27 @@ if TYPE_CHECKING:
 SPONGE_WAVELENGTHS = 6
 
 
+def extension_cells(*, ppw: float, nbdy: int | None, m_stencil: int = 8) -> tuple[int, int]:
+    """Return the sponge width and the cells added on each side of the domain.
+
+    Parameters
+    ----------
+    ppw : float
+        Points per wavelength.
+    nbdy : int | None
+        Sponge width in cells; None gives ``ppw * SPONGE_WAVELENGTHS``.
+    m_stencil : int
+        Stencil half-width.
+
+    Returns
+    -------
+    tuple[int, int]
+        The sponge width ``nbdy`` and the extension ``mext = nbdy + m_stencil``.
+    """
+    nbdy = int(ppw * SPONGE_WAVELENGTHS) if nbdy is None else nbdy
+    return nbdy, nbdy + m_stencil
+
+
 def write_run_directory_2d(
     outdir: str | Path,
     *,
@@ -65,9 +86,8 @@ def write_run_directory_2d(
     """
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
-    nbdy = int(ppw * SPONGE_WAVELENGTHS) if nbdy is None else nbdy
+    nbdy, mext = extension_cells(ppw=ppw, nbdy=nbdy, m_stencil=m_stencil)
     dx, dt, n_t = time_axis(c0=c0, omega0=omega0, dur=dur, ppw=ppw, cfl=cfl)
-    mext = nbdy + m_stencil
 
     c = extend_map(maps["cmap"], mext)
     rho = extend_map(maps["rmap"], mext)
