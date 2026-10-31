@@ -352,6 +352,9 @@ class TransducerGeometry:
     ) -> tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.int64], NDArray[np.int64]]:
         """Build flat coordinate arrays for source and sensor pixels.
 
+        For a flat array the sensor row is the first row in front of the element
+        (``position_px[0] + element_layer_px``), outside the source cells.
+
         Returns
         -------
         source_coords : NDArray[np.int64], shape [N_src, ndim]
@@ -404,7 +407,7 @@ class TransducerGeometry:
                     source_ids_parts.append(np.full(len(src), element_index + 1))
 
                     # Single center pixel for sensor output
-                    sx = element_pos_x + self.element_layer_px - 1
+                    sx = self._flat_sensor_row(element_pos_x=element_pos_x)
                     sy = element_pos_y + self.element_width_px - 1
                     sz = element_pos_z + self.element_height_px // 2 - 1
                     sensor_coords_parts.append(np.array([[sx, sy, sz]]))
@@ -432,7 +435,7 @@ class TransducerGeometry:
                     source_coords_parts.append(src)
                     source_ids_parts.append(np.full(len(src), element_index + 1))
 
-                    sx = element_pos_x + self.element_layer_px - 1
+                    sx = self._flat_sensor_row(element_pos_x=element_pos_x)
                     if self.average_surface_signals:
                         out_ys = np.arange(element_pos_y, element_pos_y + self.element_width_px)
                         out_xs = np.full(len(out_ys), sx)
@@ -451,6 +454,39 @@ class TransducerGeometry:
         sensor_coords = np.concatenate(sensor_coords_parts, axis=0).astype(np.int64)
         sensor_ids = np.concatenate(sensor_ids_parts, axis=0).astype(np.int64)
         return source_coords, source_ids, sensor_coords, sensor_ids
+
+    def _flat_sensor_row(self, *, element_pos_x: int) -> int:
+        """Return the sensor row of a flat-array element.
+
+        The row lies in front of the source cells because a hard source keeps a
+        static pressure after the drive, which a receiver inside it would record.
+
+        Parameters
+        ----------
+        element_pos_x : int
+            First (back) source row of the element.
+
+        Returns
+        -------
+        int
+            The sensor row, ``element_pos_x + element_layer_px``.
+
+        Raises
+        ------
+        ValueError
+            If the sensor row is outside the grid.
+
+        """
+        sensor_row = int(element_pos_x + self.element_layer_px)
+        if sensor_row >= self.stored_grid_size[0]:
+            error_msg = (
+                f"The sensor row {sensor_row} (one row in front of the element) is "
+                f"outside the grid, which has {self.stored_grid_size[0]} rows in x. "
+                "Move the transducer back or enlarge the grid."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        return sensor_row
 
     def _arc_element_coords(
         self,
@@ -1726,6 +1762,18 @@ class Transducer:
                 out[eid] = np.full(ndim, -1, dtype=np.int64)
             else:
                 out[eid] = np.rint(coords[sel].mean(axis=0)).astype(np.int64)
+        return out
+
+    @property
+    def element_id_to_receiver_center(self) -> dict[int, NDArray[np.int64]]:
+        """Return the mapping from element IDs to the mean receiver coordinate in grid points."""
+        ndim = 3 if self.is_3d else 2
+        out: dict[int, NDArray[np.int64]] = {}
+        for eid, coords in self.element_id_to_element_surface.items():
+            if len(coords) == 0:
+                out[eid] = np.full(ndim, -1, dtype=np.int64)
+            else:
+                out[eid] = np.rint(coords.mean(axis=0)).astype(np.int64)
         return out
 
     @property

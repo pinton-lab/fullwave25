@@ -145,9 +145,9 @@ def main() -> None:
     )
     axial_position = np.arange(domain_size[0] * 1 / 100, domain_size[0], grid.wavelength / 8)
 
-    element_id_to_element_center = transducer.element_id_to_element_center
+    element_id_to_receiver_center = transducer.element_id_to_receiver_center
     transducer_coordinates = np.array(
-        [element_id_to_element_center[i] for i in range(1, num_elements + 1)],
+        [element_id_to_receiver_center[i] for i in range(1, num_elements + 1)],
     )
 
     beamformer = Beamformer(
