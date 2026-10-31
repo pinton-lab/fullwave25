@@ -4,10 +4,11 @@ from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
+from scipy import signal
 
 import fullwave
 from fullwave.solver.solver import Solver
-from fullwave.utils.signal_filter import _build_frequency_mask, apply_filter
+from fullwave.utils.signal_filter import apply_filter
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -22,60 +23,127 @@ def _make_signal(dt: float, n_t: int, frequencies_hz: list[float]) -> np.ndarray
 
 
 # ---------------------------------------------------------------------------
-# _build_frequency_mask
-# ---------------------------------------------------------------------------
-
-
-def test_mask_shape():
-    n_fft = 512
-    dt = 1e-8
-    mask = _build_frequency_mask(n_fft, dt)
-    assert mask.shape == (n_fft // 2 + 1,)
-
-
-def test_mask_all_ones_when_no_cutoff():
-    mask = _build_frequency_mask(256, 1e-8)
-    np.testing.assert_array_equal(mask, np.ones(256 // 2 + 1))
-
-
-def test_mask_highpass_dc_zero():
-    """DC bin (index 0) must be zero for any high-pass cutoff > 0."""
-    mask = _build_frequency_mask(256, 1e-8, f_low_hz=1e6)
-    assert mask[0] == 0.0
-
-
-def test_mask_highpass_passband_one():
-    """Bins well above the cutoff should be ≈ 1."""
-    dt = 1e-8
-    n_fft = 1024
-    f_low_hz = 1e6
-    mask = _build_frequency_mask(n_fft, dt, f_low_hz=f_low_hz)
-    freqs = np.fft.rfftfreq(n_fft, d=dt)
-    passband = freqs > f_low_hz * 1.1
-    np.testing.assert_allclose(mask[passband], 1.0, atol=1e-10)
-
-
-def test_mask_bandpass_range():
-    """Bins well inside the band ≈ 1; bins well outside ≈ 0."""
-    dt = 1e-8
-    n_fft = 1024
-    f_low_hz = 1e6
-    f_high_hz = 5e6
-    mask = _build_frequency_mask(n_fft, dt, f_low_hz=f_low_hz, f_high_hz=f_high_hz)
-    freqs = np.fft.rfftfreq(n_fft, d=dt)
-
-    passband = (freqs > f_low_hz * 1.2) & (freqs < f_high_hz * 0.8)
-    stopband_low = freqs < f_low_hz * 0.8
-    stopband_high = freqs > f_high_hz * 1.2
-
-    np.testing.assert_allclose(mask[passband], 1.0, atol=1e-10)
-    np.testing.assert_allclose(mask[stopband_low], 0.0, atol=1e-10)
-    np.testing.assert_allclose(mask[stopband_high], 0.0, atol=1e-10)
-
-
-# ---------------------------------------------------------------------------
 # apply_filter — functional tests (CPU only via use_gpu=False)
 # ---------------------------------------------------------------------------
+
+
+def _middle(x: np.ndarray) -> np.ndarray:
+    n_t = x.shape[-1]
+    return x[..., n_t // 4 : 3 * n_t // 4]
+
+
+def _amplitude(x: np.ndarray) -> float:
+    return float(np.sqrt(2.0) * np.sqrt(np.mean(x**2)))
+
+
+def test_highpass_dc_gives_zero_over_whole_record():
+    """A constant input must give about zero everywhere, with no slow sinusoid."""
+    dt = 1e-8
+    data = 20000.0 * np.ones((2, 4096))
+    result = apply_filter(data, dt, f_low_hz=0.05e6, use_gpu=False)
+    assert np.max(np.abs(result)) < 1e-6 * 20000.0
+
+
+@pytest.mark.parametrize(
+    "kwargs", [{"f_low_hz": 1e6}, {"f_high_hz": 8e6}, {"f_low_hz": 1e6, "f_high_hz": 8e6}]
+)
+def test_passband_tone_changes_less_than_0p1_db_in_middle(kwargs):
+    dt = 1e-8
+    data = _make_signal(dt, 8192, [4e6])
+    result = apply_filter(data, dt, use_gpu=False, **kwargs)
+    gain_db = 20 * np.log10(_amplitude(_middle(result)) / _amplitude(_middle(data)))
+    assert abs(gain_db) < 0.1
+
+
+def test_stopband_tone_is_attenuated():
+    dt = 1e-8
+    n_t = 8192
+    low = apply_filter(_make_signal(dt, n_t, [0.1e6]), dt, f_low_hz=1e6, use_gpu=False)
+    high = apply_filter(_make_signal(dt, n_t, [20e6]), dt, f_high_hz=5e6, use_gpu=False)
+    assert _amplitude(_middle(low)) < 0.01
+    assert _amplitude(_middle(high)) < 0.05
+
+
+def test_no_wraparound_from_end_of_record():
+    """An impulse near the end of the record must leave no energy at the start."""
+    dt = 1e-8
+    n_t = 4096
+    data = np.zeros((1, n_t))
+    data[0, n_t - 20] = 20000.0
+    for kwargs in ({"f_low_hz": 1.3e6}, {"f_high_hz": 5e6}, {"f_low_hz": 1e6, "f_high_hz": 5e6}):
+        result = apply_filter(data, dt, use_gpu=False, **kwargs)
+        assert np.max(np.abs(result[0, : n_t // 4])) < 1e-3 * 20000.0
+
+
+def test_order_keyword_sets_steepness():
+    dt = 1e-8
+    data = _make_signal(dt, 8192, [0.5e6])
+    soft = apply_filter(data, dt, f_low_hz=1e6, order=1, use_gpu=False)
+    steep = apply_filter(data, dt, f_low_hz=1e6, order=6, use_gpu=False)
+    assert _amplitude(_middle(steep)) < _amplitude(_middle(soft))
+
+
+def _low_frequency_floor_db(x: np.ndarray, dt: float, f_max_hz: float) -> float:
+    """Largest spectral amplitude below ``f_max_hz`` in dB re the spectral peak."""
+    freqs = np.fft.rfftfreq(x.shape[-1], d=dt)
+    amp = np.abs(np.fft.rfft(x[0]))
+    return float(20 * np.log10(amp[(freqs > 0) & (freqs < f_max_hz)].max() / amp.max()))
+
+
+def test_pulse_at_first_sample_adds_no_floor_beyond_the_record_truncation():
+    """A large pulse at sample 0 must not raise the low-frequency floor above the ideal filter.
+
+    The ideal output filters a record padded with zeros on both sides and then crops it.
+    Cropping a non-causal filter response already leaves a floor in the spectrum of the
+    record, so the reference is that floor and not -inf.  Odd reflection (the SciPy default)
+    mirrors the pulse into the record and lands about 10 dB above it.
+    """
+    dt = 1e-7
+    n_t = 4096
+    f_low_hz = 0.5e6
+    data = _make_signal(dt, n_t, [2e6]) * 1000.0
+    data[0, 0] += 2e5
+
+    result = apply_filter(data, dt, f_low_hz=f_low_hz, use_gpu=False)
+
+    sos = signal.butter(4, f_low_hz, btype="highpass", fs=1.0 / dt, output="sos")
+    padded = np.pad(data, ((0, 0), (n_t, n_t)))
+    ideal = signal.sosfiltfilt(sos, padded, axis=-1, padtype=None)[:, n_t : 2 * n_t]
+
+    floor = _low_frequency_floor_db(result, dt, 0.4 * f_low_hz)
+    ideal_floor = _low_frequency_floor_db(ideal, dt, 0.4 * f_low_hz)
+    assert floor < ideal_floor + 1.0
+
+
+def test_gpu_matches_cpu_and_takes_the_cupyx_branch(monkeypatch):
+    """With use_gpu=True the cupyx filter runs, and it agrees with SciPy to 1e-9 of the peak."""
+    cp = pytest.importorskip("cupy")
+    cupyx_signal = pytest.importorskip("cupyx.scipy.signal")
+    if not hasattr(cupyx_signal, "sosfiltfilt"):
+        pytest.skip("cupyx.scipy.signal has no sosfiltfilt")
+    try:
+        cp.asarray(np.zeros((1, 8)))
+    except Exception:
+        pytest.skip("no CUDA device")
+
+    rng = np.random.default_rng(1)
+    data_cpu = rng.standard_normal((4, 2048)) * 2e4
+    data = cp.asarray(data_cpu)
+    calls = []
+    original = cupyx_signal.sosfiltfilt
+
+    def recording(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(cupyx_signal, "sosfiltfilt", recording)
+
+    dt = 1e-7
+    gpu = apply_filter(data, dt, f_low_hz=0.5e6, f_high_hz=3e6, use_gpu=True)
+    cpu = apply_filter(data_cpu, dt, f_low_hz=0.5e6, f_high_hz=3e6, use_gpu=False)
+
+    assert len(calls) == 1
+    np.testing.assert_allclose(gpu, cpu, rtol=0, atol=1e-9 * np.abs(cpu).max())
 
 
 def test_no_filter_passthrough():
@@ -110,56 +178,15 @@ def test_highpass_removes_dc():
     assert 0.6 < rms < 1.1, f"Expected RMS ~0.7, got {rms}"
 
 
-def test_bandpass_filter_gain_matches_mask():
-    """Gold-standard performance test: measured per-frequency gain must match the mask.
-
-    The mask returned by ``_build_frequency_mask`` is the specification.  We feed
-    pure sinusoids at two frequencies (one well inside the band, one well outside),
-    run the filter, then recover the actual gain at each frequency via FFT.  The
-    measured gain must agree with the mask value at that bin to within 1 %.
-    """
+def test_bandpass_gain_is_half_at_cutoffs():
+    """The forward-backward Butterworth gain is 0.5 at each cut-off frequency."""
     dt = 1e-8
-    n_t = 8192  # large n for clean spectral resolution
-    f_inband_hz = 3e6  # 3 MHz — flat passband, mask ≈ 1
-    f_outband_hz = 0.2e6  # 0.2 MHz — well into stopband, mask ≈ 0
-
-    f_low_hz = 1e6
-    f_high_hz = 5e6
-
-    t = np.arange(n_t) * dt
-    data = (np.sin(2 * np.pi * f_inband_hz * t) + np.sin(2 * np.pi * f_outband_hz * t))[
-        np.newaxis,
-        :,
-    ]
-
-    result = apply_filter(data, dt, f_low_hz=f_low_hz, f_high_hz=f_high_hz, use_gpu=False)
-
-    # --- gold standard: mask values at the exact test frequencies ---
-    freqs = np.fft.rfftfreq(n_t, d=dt)
-    mask = _build_frequency_mask(n_t, dt, f_low_hz=f_low_hz, f_high_hz=f_high_hz)
-
-    idx_inband = int(np.argmin(np.abs(freqs - f_inband_hz)))
-    idx_outband = int(np.argmin(np.abs(freqs - f_outband_hz)))
-
-    expected_gain_inband = mask[idx_inband]  # should be ≈ 1.0
-    expected_gain_outband = mask[idx_outband]  # should be ≈ 0.0
-
-    # --- measured gains via amplitude spectrum ---
-    input_spec = np.abs(np.fft.rfft(data[0]))
-    output_spec = np.abs(np.fft.rfft(result[0]))
-
-    measured_gain_inband = output_spec[idx_inband] / input_spec[idx_inband]
-    measured_gain_outband = output_spec[idx_outband] / input_spec[idx_outband]
-
-    tol = 0.01  # 1 % absolute tolerance on gain
-
-    assert abs(measured_gain_inband - expected_gain_inband) < tol, (
-        f"In-band gain {measured_gain_inband:.4f} deviates from mask {expected_gain_inband:.4f}"
-    )
-    assert abs(measured_gain_outband - expected_gain_outband) < tol, (
-        f"Out-of-band gain {measured_gain_outband:.4f} deviates from mask "
-        f"{expected_gain_outband:.4f}"
-    )
+    f_low_hz, f_high_hz = 1e6, 5e6
+    for f_hz in (f_low_hz, f_high_hz):
+        data = _make_signal(dt, 16384, [f_hz])
+        result = apply_filter(data, dt, f_low_hz=f_low_hz, f_high_hz=f_high_hz, use_gpu=False)
+        gain = _amplitude(_middle(result)) / _amplitude(_middle(data))
+        assert abs(gain - 0.5) < 0.02
 
 
 # ---------------------------------------------------------------------------
