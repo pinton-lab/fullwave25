@@ -1,5 +1,6 @@
 """Unit tests for fullwave.utils.signal_filter — no GPU required."""
 
+import logging
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -8,6 +9,7 @@ from scipy import signal
 
 import fullwave
 from fullwave.solver.solver import Solver
+from fullwave.utils import signal_filter
 from fullwave.utils.signal_filter import apply_filter
 
 # ---------------------------------------------------------------------------
@@ -115,20 +117,29 @@ def test_pulse_at_first_sample_adds_no_floor_beyond_the_record_truncation():
     assert floor < ideal_floor + 1.0
 
 
+def _cupyx_signal_and_gpu_data_or_skip(data_cpu):
+    """Return ``cupyx.scipy.signal`` and ``data_cpu`` on the GPU, or skip the test.
+
+    Any exception counts, because a missing CUDA library raises ImportError (not
+    ModuleNotFoundError) at import or at the first call, and ``importorskip`` lets it through.
+    """
+    try:
+        import cupy as cp
+        from cupyx.scipy import signal as cupyx_signal
+
+        data = cp.asarray(data_cpu)
+        sos = cp.asarray(signal.butter(4, [0.5e6, 3e6], btype="bandpass", fs=1e7, output="sos"))
+        cupyx_signal.sosfiltfilt(sos, data, axis=-1, padtype="even")
+    except Exception as error:
+        pytest.skip(f"GPU filtering is unusable on this machine: {error}")
+    return cupyx_signal, data
+
+
 def test_gpu_matches_cpu_and_takes_the_cupyx_branch(monkeypatch):
     """With use_gpu=True the cupyx filter runs, and it agrees with SciPy to 1e-9 of the peak."""
-    cp = pytest.importorskip("cupy")
-    cupyx_signal = pytest.importorskip("cupyx.scipy.signal")
-    if not hasattr(cupyx_signal, "sosfiltfilt"):
-        pytest.skip("cupyx.scipy.signal has no sosfiltfilt")
-    try:
-        cp.asarray(np.zeros((1, 8)))
-    except Exception:
-        pytest.skip("no CUDA device")
-
-    rng = np.random.default_rng(1)
-    data_cpu = rng.standard_normal((4, 2048)) * 2e4
-    data = cp.asarray(data_cpu)
+    data_cpu = np.random.default_rng(1).standard_normal((4, 2048)) * 2e4
+    cupyx_signal, data = _cupyx_signal_and_gpu_data_or_skip(data_cpu)
+    monkeypatch.setattr(signal_filter, "_check_cupy", lambda: True)
     calls = []
     original = cupyx_signal.sosfiltfilt
 
@@ -144,6 +155,71 @@ def test_gpu_matches_cpu_and_takes_the_cupyx_branch(monkeypatch):
 
     assert len(calls) == 1
     np.testing.assert_allclose(gpu, cpu, rtol=0, atol=1e-9 * np.abs(cpu).max())
+
+
+@pytest.fixture
+def fresh_gpu_probe():
+    """Run the GPU probe again in the test and leave no cached result behind."""
+    signal_filter._check_cupy.cache_clear()
+    yield
+    signal_filter._check_cupy.cache_clear()
+
+
+def test_gpu_probe_import_error_falls_back_to_cpu_and_warns(fresh_gpu_probe, monkeypatch, caplog):
+    """A failing GPU probe (for example missing cuBLAS) gives the CPU result and one warning."""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def failing_import(name, *args, **kwargs):
+        if name == "cupy":
+            msg = "Failure finding libcublasLt.so.13 or libcublasLt.so.12"
+            raise ImportError(msg)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", failing_import)
+
+    data = np.random.default_rng(2).standard_normal((2, 1024))
+    dt = 1e-7
+    with caplog.at_level(logging.WARNING, logger=signal_filter.logger.name):
+        first = apply_filter(data, dt, f_low_hz=0.5e6, use_gpu=True)
+        second = apply_filter(data, dt, f_low_hz=0.5e6, use_gpu=True)
+
+    expected = apply_filter(data, dt, f_low_hz=0.5e6, use_gpu=False)
+    np.testing.assert_array_equal(first, expected)
+    np.testing.assert_array_equal(second, expected)
+    warnings = [r for r in caplog.records if "libcublasLt" in r.getMessage()]
+    assert len(warnings) == 1
+
+
+def test_gpu_call_failing_after_a_passing_probe_falls_back_to_cpu_and_warns(
+    fresh_gpu_probe, monkeypatch, caplog
+):
+    """A GPU call that fails only for arrays larger than the probe still gives the CPU result.
+
+    The probe passes, so every failing call logs its own warning.
+    """
+    data = np.random.default_rng(3).standard_normal((4, 2048))
+    cupyx_signal, _ = _cupyx_signal_and_gpu_data_or_skip(data)
+    original = cupyx_signal.sosfiltfilt
+
+    def failing_for_large_arrays(sos, x, *args, **kwargs):
+        if x.size > 64:
+            msg = "Failure finding libcublasLt.so.13 or libcublasLt.so.12"
+            raise ImportError(msg)
+        return original(sos, x, *args, **kwargs)
+
+    monkeypatch.setattr(cupyx_signal, "sosfiltfilt", failing_for_large_arrays)
+
+    dt = 1e-7
+    with caplog.at_level(logging.WARNING, logger=signal_filter.logger.name):
+        first = apply_filter(data, dt, f_low_hz=0.5e6, use_gpu=True)
+        second = apply_filter(data, dt, f_low_hz=0.5e6, use_gpu=True)
+
+    expected = apply_filter(data, dt, f_low_hz=0.5e6, use_gpu=False)
+    np.testing.assert_array_equal(first, expected)
+    np.testing.assert_array_equal(second, expected)
+    assert len([r for r in caplog.records if "libcublasLt" in r.getMessage()]) == 2
 
 
 def test_no_filter_passthrough():

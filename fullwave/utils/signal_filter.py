@@ -1,11 +1,12 @@
 """Zero-phase Butterworth filtering for sensor data.
 
 GPU backend: ``cupyx.scipy.signal.sosfiltfilt`` when CuPy is available;
-falls back silently to SciPy.
+falls back to SciPy, with a warning, when the GPU path fails.
 """
 
 from __future__ import annotations
 
+import functools
 import logging
 from typing import TYPE_CHECKING
 
@@ -17,25 +18,30 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("__main__." + __name__)
 
-# Module-level cache to avoid repeated import overhead
-_CUPY_AVAILABLE: bool | None = None
+_GPU_UNAVAILABLE_MESSAGE = (
+    "apply_filter: GPU filtering is unavailable (%s: %s); using SciPy on the CPU"
+)
 
 
+@functools.cache
 def _check_cupy() -> bool:
-    """Return True if CuPy and ``cupyx.scipy.signal.sosfiltfilt`` are importable.
+    """Return True if ``cupyx.scipy.signal.sosfiltfilt`` runs on the GPU.
 
-    The result is cached after the first call.
+    CuPy loads the CUDA libraries (for example cuBLAS) at the first call, not at
+    import, so the check runs ``sosfiltfilt`` once on a tiny array.  Any exception
+    gives False and one warning.  The result is cached; ``_check_cupy.cache_clear()``
+    runs the check again.
     """
-    global _CUPY_AVAILABLE  # noqa: PLW0603
-    if _CUPY_AVAILABLE is None:
-        try:
-            import cupy  # noqa: F401, PLC0415
-            from cupyx.scipy import signal as cupy_signal  # noqa: PLC0415
+    try:
+        import cupy as cp  # noqa: PLC0415
+        from cupyx.scipy import signal as cupy_signal  # noqa: PLC0415
 
-            _CUPY_AVAILABLE = hasattr(cupy_signal, "sosfiltfilt")
-        except ImportError:
-            _CUPY_AVAILABLE = False
-    return _CUPY_AVAILABLE
+        sos = cp.asarray(signal.butter(2, 0.2, output="sos"))
+        cupy_signal.sosfiltfilt(sos, cp.zeros((1, 64)), axis=-1, padtype="even")
+    except Exception as error:
+        logger.warning(_GPU_UNAVAILABLE_MESSAGE, type(error).__name__, error)
+        return False
+    return True
 
 
 def _design_sos(
@@ -106,10 +112,15 @@ def apply_filter(
         import cupy as cp  # noqa: PLC0415
         from cupyx.scipy import signal as cupy_signal  # noqa: PLC0415
 
-        logger.debug("apply_filter: using CuPy GPU backend")
-        data_gpu = cp.asarray(data, dtype=cp.float64)
-        filtered = cupy_signal.sosfiltfilt(cp.asarray(sos), data_gpu, axis=-1, padtype="even")
-        return cp.asnumpy(filtered)
+        try:
+            data_gpu = cp.asarray(data, dtype=cp.float64)
+            filtered = cupy_signal.sosfiltfilt(cp.asarray(sos), data_gpu, axis=-1, padtype="even")
+            result = cp.asnumpy(filtered)
+        except Exception as error:
+            logger.warning(_GPU_UNAVAILABLE_MESSAGE, type(error).__name__, error)
+        else:
+            logger.debug("apply_filter: using CuPy GPU backend")
+            return result
 
     logger.debug("apply_filter: using SciPy CPU backend")
     return signal.sosfiltfilt(sos, np.asarray(data, dtype=np.float64), axis=-1, padtype="even")
