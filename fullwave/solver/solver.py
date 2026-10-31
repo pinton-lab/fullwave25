@@ -1,11 +1,8 @@
 """solver module."""
 
 import contextlib
-import gc
 import logging
 import os
-import shutil
-import subprocess
 import time
 import warnings
 from collections.abc import Iterator, Sequence
@@ -29,6 +26,11 @@ from fullwave.ultra import backend, binary, factory
 from fullwave.utils import (
     check_functions,
     run_directory_in_memory,
+)
+from fullwave.utils.gpu_memory import (
+    free_gpu_memory_bytes,
+    members_that_fit,
+    release_gpu_memory_pools,
 )
 from fullwave.utils.signal_filter import apply_filter
 
@@ -72,48 +74,6 @@ def _split_evenly(members: list, largest: int) -> list[list]:
         runs.append(members[first : first + size])
         first += size
     return runs
-
-
-def _free_gpu_memory_bytes(device_ids: Sequence[str]) -> dict[str, int] | None:
-    """Return the free memory of each GPU in bytes, as nvidia-smi reports it.
-
-    Parameters
-    ----------
-    device_ids : Sequence[str]
-        The GPU indices, as nvidia-smi counts them.
-
-    Returns
-    -------
-    dict[str, int] | None
-        The free bytes of each GPU, or None when nvidia-smi cannot be run or does not
-        report every GPU.
-
-    """
-    wanted = [device.strip() for device in device_ids]
-    nvidia_smi_path = shutil.which("nvidia-smi")
-    if nvidia_smi_path is None:
-        return None
-    try:
-        found = subprocess.run(  # noqa: S603
-            [nvidia_smi_path, "--query-gpu=index,memory.free", "--format=csv,noheader,nounits"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=30,
-        ).stdout
-    except (OSError, subprocess.SubprocessError):
-        return None
-    free = {}
-    for line in found.splitlines():
-        index, _, mebibytes = line.partition(",")
-        if index.strip() in wanted:
-            try:
-                free[index.strip()] = int(float(mebibytes)) * 1024**2
-            except ValueError:
-                return None
-    if set(free) != set(wanted):
-        return None
-    return free
 
 
 COMPATIBLE_CUDA_ARCHITECTURES = [
@@ -969,31 +929,6 @@ class Solver:
         logger.warning(message)
 
     @staticmethod
-    def _release_gpu_memory_pools() -> None:
-        """Release all CuPy GPU memory pool blocks back to CUDA.
-
-        Call ``gc.collect()`` first so that Python releases references to
-        CuPy arrays, then drain both the device and pinned memory pools.
-        This prevents stale allocations from causing memory pressure when
-        subsequent operations allocate large GPU arrays.
-
-        The release is best effort. It does nothing when CuPy is absent, and
-        it does nothing when CuPy is present without a usable CUDA driver,
-        which is the case on a machine with no GPU.
-        """
-        gc.collect()
-        try:
-            import cupy as cp  # noqa: PLC0415
-        except ImportError:
-            return
-
-        try:
-            cp.get_default_memory_pool().free_all_blocks()
-            cp.get_default_pinned_memory_pool().free_all_blocks()
-        except cp.cuda.runtime.CUDARuntimeError as error:
-            logger.debug("GPU memory pools were not released: %s", error)
-
-    @staticmethod
     def _check_input(
         grid: fullwave.Grid,
         medium: fullwave.Medium,
@@ -1420,10 +1355,10 @@ class Solver:
                 "Input data generation completed in %s. Skipping simulation execution.",
                 simulation_dir,
             )
-            self._release_gpu_memory_pools()
+            release_gpu_memory_pools()
             return simulation_dir
 
-        self._release_gpu_memory_pools()
+        release_gpu_memory_pools()
 
         if members is not None:
             return self._run_members(
@@ -1933,9 +1868,8 @@ class Solver:
     def _members_that_fit(self, sensor: fullwave.Sensor) -> int | None:
         """Return how many transmits the GPU memory estimate fits into the free memory.
 
-        The estimate of one GPU grows by the same amount for each transmit. The count
-        keeps 10 % of the free memory and 512 MiB free for the CUDA context and for
-        what the estimate does not count, and takes the smallest count over the GPUs.
+        The estimate of one GPU grows by the same amount for each transmit. The count is the
+        smallest over the GPUs.
 
         Parameters
         ----------
@@ -1948,18 +1882,21 @@ class Solver:
             The count, or None when the free memory cannot be read.
 
         """
-        free = _free_gpu_memory_bytes(self.fullwave_launcher.cuda_device_id.split(","))
+        free = free_gpu_memory_bytes(self.fullwave_launcher.cuda_device_id.split(","))
         if free is None:
             return None
         one = self._gpu_memory_bytes(sensor, n_members=1)
         two = self._gpu_memory_bytes(sensor, n_members=2)
-        reserve = 512 * 1024**2
         counts = []
         for (device, one_bytes, *_), (_, two_bytes, *_) in zip(one, two, strict=True):
-            per_member = max(two_bytes - one_bytes, 1)
-            shared = one_bytes - per_member
-            usable = 0.9 * free.get(device, 0) - reserve - shared
-            counts.append(int(usable // per_member))
+            per_member_bytes = max(two_bytes - one_bytes, 1)
+            counts.append(
+                members_that_fit(
+                    free_bytes=free.get(device, 0),
+                    shared_bytes=one_bytes - per_member_bytes,
+                    per_member_bytes=per_member_bytes,
+                )
+            )
         return min(counts)
 
     def _estimate_gpu_memory(

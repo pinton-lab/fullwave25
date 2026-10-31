@@ -376,6 +376,8 @@ traces = solver.run()  # (n_sensors, n_frames)
 # 2D only: traces = solver.run_batch(sources)  # (n_transmits, n_sensors, n_frames)
 ```
 
+In 2D, `run_batch` treats `max_members_per_run` as an upper bound that the free GPU memory can lower, and it keeps the requested value, with a warning, when the free memory cannot be read. The native path uses an explicit `max_members_per_run` as given.
+
 Supported now:
 
 - 2D grids with `run` and `run_batch`, including air cells.

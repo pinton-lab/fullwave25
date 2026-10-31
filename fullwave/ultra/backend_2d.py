@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 import time
 from pathlib import Path
@@ -11,6 +12,11 @@ import numpy as np
 
 from fullwave.solver.binary_markers import check_binary_holds_source
 from fullwave.solver.source_type import HARD_RELEASED_AFTER, is_hard_held
+from fullwave.utils.gpu_memory import (
+    free_gpu_memory_bytes,
+    members_that_fit,
+    release_gpu_memory_pools,
+)
 
 from . import binary as binary_module
 from . import dat_io
@@ -23,9 +29,10 @@ from .backend import (
     to_host,
     work_directory,
 )
-from .errors import UltraUnsupportedError
+from .binary import OUTPUT_TAIL_CHARS
+from .errors import UltraBinaryError, UltraUnsupportedError
 from .time_axis import check_time_axis, delay_additive_signal
-from .writer_2d import write_run_directory_2d, write_sources_2d
+from .writer_2d import extension_cells, write_run_directory_2d, write_sources_2d
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -34,18 +41,123 @@ if TYPE_CHECKING:
 
     import fullwave
 
+logger = logging.getLogger("__main__." + __name__)
+
+FLOAT_BYTES = 4
+BYTES_PER_CELL_PER_MEMBER = 6 * FLOAT_BYTES  # pressure and two velocities at two time levels
+BYTES_PER_CELL_SHARED = 172  # material maps, sponge coefficients and sponge memory variables
+BYTES_PER_AXIS_CELL = 2 * FLOAT_BYTES
+BYTES_PER_COORDINATE = 2 * np.dtype(np.int32).itemsize
+STENCIL_TABLE_BYTES = 9 * 2 * FLOAT_BYTES
+
+
+def device_bytes_2d(
+    *,
+    n_x: int,
+    n_y: int,
+    n_t: int,
+    mod_t: int,
+    ncoords: int,
+    n_tic: int,
+    ncoordsout: int,
+    ncoords_add: int = 0,
+    n_tic_add: int = 0,
+    ncoordszero: int = 0,
+) -> tuple[int, int]:
+    """Return the GPU memory of a 2D batch, in bytes, without the CUDA context.
+
+    Parameters
+    ----------
+    n_x, n_y : int
+        Cells of the extended grid, which includes the sponge and the stencil margin.
+    n_t, mod_t : int
+        Number of time steps and sensor decimation in time.
+    ncoords, n_tic : int
+        Hard source cells and source length in steps.
+    ncoordsout : int
+        Sensor points.
+    ncoords_add, n_tic_add : int
+        Additive source cells and source length in steps.
+    ncoordszero : int
+        Cells held at zero pressure.
+
+    Returns
+    -------
+    tuple[int, int]
+        The bytes shared by all members and the bytes added by each member.
+    """
+    cells = n_x * n_y
+    frames = (n_t - 1) // mod_t
+    n_coordinates = ncoords + ncoordszero + ncoordsout + ncoords_add
+    per_member = (
+        BYTES_PER_CELL_PER_MEMBER * cells
+        + FLOAT_BYTES * ncoords * n_tic
+        + FLOAT_BYTES * ncoords_add * n_tic_add
+        + FLOAT_BYTES * frames * ncoordsout
+    )
+    shared = (
+        BYTES_PER_CELL_SHARED * cells
+        + BYTES_PER_AXIS_CELL * (n_x + n_y)
+        + BYTES_PER_COORDINATE * n_coordinates
+        + FLOAT_BYTES * ncoordsout
+        + STENCIL_TABLE_BYTES
+    )
+    return shared, per_member
+
 
 def _members_per_run(n_members: int, max_members_per_run: int | None) -> list[range]:
     """Split the members into the fewest runs of at most ``max_members_per_run``."""
     if max_members_per_run is None:
         return [range(n_members)]
-    if max_members_per_run < 1:
-        msg = f"max_members_per_run must be 1 or more, not {max_members_per_run}"
-        raise ValueError(msg)
     n_runs = -(-n_members // max_members_per_run)
     return [
         range(int(part[0]), int(part[-1]) + 1) for part in np.array_split(range(n_members), n_runs)
     ]
+
+
+def check_genout_files(
+    genout_paths: Sequence[Path], *, ncoordsout: int, rundir: Path, stdout: str
+) -> None:
+    """Check that every output file of a run is complete.
+
+    Parameters
+    ----------
+    genout_paths : sequence of Path
+        The output file of each batch member.
+    ncoordsout : int
+        Number of sensor points per frame.
+    rundir : Path
+        The run directory, named in the error message.
+    stdout : str
+        Standard output of the binary, of which the end goes into the error message.
+
+    Raises
+    ------
+    UltraBinaryError
+        If a file is missing or empty, does not hold whole ``float32`` frames, or differs in
+        size from the other files of the run.
+    """
+    frame_bytes = FLOAT_BYTES * ncoordsout
+    sizes = {path.name: path.stat().st_size if path.is_file() else None for path in genout_paths}
+    common_size = max((size for size in sizes.values() if size), default=0)
+    incomplete = [
+        name
+        for name, size in sizes.items()
+        if not size or size % frame_bytes != 0 or size != common_size
+    ]
+    if not incomplete:
+        return
+    descriptions = [
+        f"{name} (missing)" if sizes[name] is None else f"{name} ({sizes[name]} bytes)"
+        for name in incomplete
+    ]
+    msg = (
+        "The fullwave2-ultra binary exited with code 0 but its output is incomplete: "
+        f"{', '.join(descriptions)}. "
+        f"Each output file must be non-empty, a multiple of {frame_bytes} bytes and of equal size. "
+        f"Run directory: {rundir}. Last output of the binary:\n{stdout[-OUTPUT_TAIL_CHARS:]}"
+    )
+    raise UltraBinaryError(msg)
 
 
 class UltraBackend2D:
@@ -66,7 +178,7 @@ class UltraBackend2D:
     cuda_device_id : str | int | list | None
         One CUDA device.
     verify_gpu : bool
-        Check that the device is visible before the launch.
+        Check that the device is visible before the run.
     source_type : str
         ``"hard"`` sets the pressure at the source cells for the whole run.
         ``"hard_released_after"`` sets it while the signal plays, then lets the cells evolve
@@ -228,7 +340,10 @@ class UltraBackend2D:
         highpass_cutoff_mhz: float | None = None,
         bandpass_cutoff_mhz: tuple[float, float] | None = None,
     ) -> NDArray | list[Path]:
-        """Run the transmits, split into runs of at most ``max_members_per_run`` (None: one run).
+        """Run the transmits in runs of at most ``max_members_per_run`` (None: one run).
+
+        The free GPU memory can lower the limit, with a warning. The traces do not depend on
+        the split.
 
         Returns
         -------
@@ -272,6 +387,9 @@ class UltraBackend2D:
         if len(sources) == 0:
             msg = "run_batch needs at least one source."
             raise ValueError(msg)
+        if max_members_per_run is not None and max_members_per_run < 1:
+            msg = f"max_members_per_run must be 1 or more, not {max_members_per_run}"
+            raise ValueError(msg)
         n_t = check_time_axis(self.grid)
         transmits = [self._check_member(source, index=i) for i, source in enumerate(sources)]
         signals = [hard for hard, _ in transmits]
@@ -284,7 +402,19 @@ class UltraBackend2D:
             msg = f"the source has {n_steps} steps, more than the {n_t} of the simulation"
             raise ValueError(msg)
 
-        runs = _members_per_run(len(signals), max_members_per_run)
+        has_additive = self.source.n_sources_add > 0
+        if generate_input_only:
+            members_per_run_limit = max_members_per_run
+        else:
+            release_gpu_memory_pools()
+            members_per_run_limit = self._members_per_run_limit(
+                n_members=len(signals),
+                max_members_per_run=max_members_per_run,
+                n_t=n_t,
+                n_tic=signals[0].shape[1],
+                n_tic_add=additive_signals[0].shape[1] if has_additive else 0,
+            )
+        runs = _members_per_run(len(signals), members_per_run_limit)
         outputs = []
         for index, members in enumerate(runs):
             name = simulation_dir_name if len(runs) == 1 else f"{simulation_dir_name}_{index}"
@@ -292,7 +422,7 @@ class UltraBackend2D:
                 self._run_one(
                     name,
                     [signals[m] for m in members],
-                    [additive_signals[m] for m in members] if self.source.n_sources_add else None,
+                    [additive_signals[m] for m in members] if has_additive else None,
                     n_t=n_t,
                     load_results=load_results,
                     generate_input_only=generate_input_only,
@@ -303,6 +433,67 @@ class UltraBackend2D:
         if load_results and not generate_input_only:
             return np.concatenate(outputs, axis=0)
         return [path for run_paths in outputs for path in run_paths]
+
+    def _members_per_run_limit(
+        self,
+        *,
+        n_members: int,
+        max_members_per_run: int | None,
+        n_t: int,
+        n_tic: int,
+        n_tic_add: int,
+    ) -> int | None:
+        """Return the most members one run may hold, or None when nothing limits it.
+
+        A run that does not fit into the free GPU memory ends with empty output files.
+        """
+        wanted = n_members if max_members_per_run is None else min(max_members_per_run, n_members)
+        free = free_gpu_memory_bytes([str(self.device)])
+        if free is None:
+            logger.warning(
+                "The free GPU memory is unknown, so the %d transmits per run are not checked "
+                "against it.",
+                wanted,
+            )
+            return max_members_per_run
+        shared_bytes, per_member_bytes = self._member_bytes(
+            n_t=n_t, n_tic=n_tic, n_tic_add=n_tic_add
+        )
+        fit = max(
+            members_that_fit(
+                free_bytes=free[str(self.device)],
+                shared_bytes=shared_bytes,
+                per_member_bytes=per_member_bytes,
+            ),
+            1,
+        )
+        if fit < wanted:
+            logger.warning(
+                "The free GPU memory fits %d transmits per run, not %d. "
+                "The %d transmits run in runs of at most %d.",
+                fit,
+                wanted,
+                n_members,
+                fit,
+            )
+        return min(wanted, fit)
+
+    def _member_bytes(self, *, n_t: int, n_tic: int, n_tic_add: int) -> tuple[int, int]:
+        """Return the GPU bytes shared by all members and the bytes added by each member."""
+        _, margin = extension_cells(ppw=self.grid.ppw, nbdy=self.nbdy)
+        n_x, n_y = (cells + 2 * margin for cells in self.medium.sound_speed.shape)
+        return device_bytes_2d(
+            n_x=n_x,
+            n_y=n_y,
+            n_t=n_t,
+            mod_t=self.sensor.sampling_modulus_time,
+            ncoords=len(self.source.incoords),
+            n_tic=n_tic,
+            ncoordsout=len(self.sensor.outcoords),
+            ncoords_add=len(self.source.incoords_add) if n_tic_add else 0,
+            n_tic_add=n_tic_add,
+            ncoordszero=len(self.medium.air_coords),
+        )
 
     def _run_one(
         self,
@@ -357,6 +548,9 @@ class UltraBackend2D:
         )
         self.last_run.update(run_seconds=time.perf_counter() - started, stdout=stdout)
         genout_paths = [rundir / dat_io.genout_name(m) for m in range(len(signals))]
+        check_genout_files(
+            genout_paths, ncoordsout=scalars["ncoordsout"], rundir=rundir, stdout=stdout
+        )
         if not load_results:
             return genout_paths
         traces = np.stack(

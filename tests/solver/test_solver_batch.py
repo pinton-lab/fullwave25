@@ -9,8 +9,15 @@ import pytest
 import fullwave
 from fullwave.solver import launcher as launcher_module
 from fullwave.solver import solver as solver_module
+from fullwave.utils.gpu_memory import GPU_MEMORY_FRACTION, GPU_MEMORY_RESERVE_BYTES
 
 N_FRAMES = 3
+
+
+def free_bytes_for_members(n_members: int, *, shared_bytes: int, per_member_bytes: int) -> int:
+    """Return the smallest free memory that fits ``n_members`` members."""
+    needed_bytes = shared_bytes + n_members * per_member_bytes + GPU_MEMORY_RESERVE_BYTES
+    return int(needed_bytes / GPU_MEMORY_FRACTION) + 1
 
 
 def _grid() -> fullwave.Grid:
@@ -65,7 +72,7 @@ def _build_solver(tmp_path: Path, binary_name: str | None) -> fullwave.Solver:
 @pytest.fixture(autouse=True)
 def _no_gpu(monkeypatch):
     monkeypatch.setattr(launcher_module.Launcher, "_verify_cuda_devices_exist", lambda _: "0")
-    monkeypatch.setattr(solver_module, "_free_gpu_memory_bytes", lambda _: None)
+    monkeypatch.setattr(solver_module, "free_gpu_memory_bytes", lambda _: None)
 
 
 @pytest.fixture
@@ -131,9 +138,8 @@ def test_run_batch_sizes_the_runs_from_the_free_gpu_memory(batch_solver, monkeyp
     ((_, two, *_),) = batch_solver._gpu_memory_bytes(sensor, n_members=2)
     per_member = two - one
     shared = one - per_member
-    # Free memory for exactly 3 members after the reserve the sizing keeps.
-    free = (shared + 3 * per_member + 512 * 1024**2) / 0.9 + 1
-    monkeypatch.setattr(solver_module, "_free_gpu_memory_bytes", lambda _: {"0": int(free)})
+    free = free_bytes_for_members(3, shared_bytes=shared, per_member_bytes=per_member)
+    monkeypatch.setattr(solver_module, "free_gpu_memory_bytes", lambda _: {"0": free})
     transmits = [_transmit(batch_solver.grid, scale) for scale in range(1, 8)]
 
     directories = batch_solver.run_batch(transmits, generate_input_only=True)
