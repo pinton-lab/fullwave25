@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
+from scipy import signal
 
 import fullwave
 from fullwave.solver.solver import Solver
@@ -80,6 +81,69 @@ def test_order_keyword_sets_steepness():
     soft = apply_filter(data, dt, f_low_hz=1e6, order=1, use_gpu=False)
     steep = apply_filter(data, dt, f_low_hz=1e6, order=6, use_gpu=False)
     assert _amplitude(_middle(steep)) < _amplitude(_middle(soft))
+
+
+def _low_frequency_floor_db(x: np.ndarray, dt: float, f_max_hz: float) -> float:
+    """Largest spectral amplitude below ``f_max_hz`` in dB re the spectral peak."""
+    freqs = np.fft.rfftfreq(x.shape[-1], d=dt)
+    amp = np.abs(np.fft.rfft(x[0]))
+    return float(20 * np.log10(amp[(freqs > 0) & (freqs < f_max_hz)].max() / amp.max()))
+
+
+def test_pulse_at_first_sample_adds_no_floor_beyond_the_record_truncation():
+    """A large pulse at sample 0 must not raise the low-frequency floor above the ideal filter.
+
+    The ideal output filters a record padded with zeros on both sides and then crops it.
+    Cropping a non-causal filter response already leaves a floor in the spectrum of the
+    record, so the reference is that floor and not -inf.  Odd reflection (the SciPy default)
+    mirrors the pulse into the record and lands about 10 dB above it.
+    """
+    dt = 1e-7
+    n_t = 4096
+    f_low_hz = 0.5e6
+    data = _make_signal(dt, n_t, [2e6]) * 1000.0
+    data[0, 0] += 2e5
+
+    result = apply_filter(data, dt, f_low_hz=f_low_hz, use_gpu=False)
+
+    sos = signal.butter(4, f_low_hz, btype="highpass", fs=1.0 / dt, output="sos")
+    padded = np.pad(data, ((0, 0), (n_t, n_t)))
+    ideal = signal.sosfiltfilt(sos, padded, axis=-1, padtype=None)[:, n_t : 2 * n_t]
+
+    floor = _low_frequency_floor_db(result, dt, 0.4 * f_low_hz)
+    ideal_floor = _low_frequency_floor_db(ideal, dt, 0.4 * f_low_hz)
+    assert floor < ideal_floor + 1.0
+
+
+def test_gpu_matches_cpu_and_takes_the_cupyx_branch(monkeypatch):
+    """With use_gpu=True the cupyx filter runs, and it agrees with SciPy to 1e-9 of the peak."""
+    cp = pytest.importorskip("cupy")
+    cupyx_signal = pytest.importorskip("cupyx.scipy.signal")
+    if not hasattr(cupyx_signal, "sosfiltfilt"):
+        pytest.skip("cupyx.scipy.signal has no sosfiltfilt")
+    try:
+        cp.asarray(np.zeros((1, 8)))
+    except Exception:
+        pytest.skip("no CUDA device")
+
+    rng = np.random.default_rng(1)
+    data_cpu = rng.standard_normal((4, 2048)) * 2e4
+    data = cp.asarray(data_cpu)
+    calls = []
+    original = cupyx_signal.sosfiltfilt
+
+    def recording(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(cupyx_signal, "sosfiltfilt", recording)
+
+    dt = 1e-7
+    gpu = apply_filter(data, dt, f_low_hz=0.5e6, f_high_hz=3e6, use_gpu=True)
+    cpu = apply_filter(data_cpu, dt, f_low_hz=0.5e6, f_high_hz=3e6, use_gpu=False)
+
+    assert len(calls) == 1
+    np.testing.assert_allclose(gpu, cpu, rtol=0, atol=1e-9 * np.abs(cpu).max())
 
 
 def test_no_filter_passthrough():

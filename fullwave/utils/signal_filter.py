@@ -61,7 +61,6 @@ def apply_filter(
     dt: float,
     f_low_hz: float | None = None,
     f_high_hz: float | None = None,
-    taper_ratio: float = 0.1,  # noqa: ARG001
     *,
     order: int = 4,
     use_gpu: bool = True,
@@ -72,7 +71,9 @@ def apply_filter(
     and backward with ``sosfiltfilt``.  It has no phase shift, does not wrap
     around the ends of the record, and does not ring like a brick-wall FFT mask.
     Because of the forward-backward pass, the gain at each cut-off frequency is
-    -6 dB (0.5).
+    -6 dB (0.5).  The ends of the record are extended by even reflection, which
+    keeps a constant input at zero output and, unlike the default odd reflection,
+    does not mirror a large pulse near the first sample into the record.
 
     Parameters
     ----------
@@ -85,8 +86,6 @@ def apply_filter(
     f_high_hz : float | None
         Low-pass cut-off frequency in Hz.  Pass ``None`` to skip low-passing.
         If both are given, the filter is a band-pass.
-    taper_ratio : float
-        Ignored.  Kept for backward compatibility of the signature.
     order : int
         Butterworth order of each pass.  Default 4.
     use_gpu : bool
@@ -109,8 +108,8 @@ def apply_filter(
 
         logger.debug("apply_filter: using CuPy GPU backend")
         data_gpu = cp.asarray(data, dtype=cp.float64)
-        filtered = cupy_signal.sosfiltfilt(cp.asarray(sos), data_gpu, axis=-1)
+        filtered = cupy_signal.sosfiltfilt(cp.asarray(sos), data_gpu, axis=-1, padtype="even")
         return cp.asnumpy(filtered)
 
     logger.debug("apply_filter: using SciPy CPU backend")
-    return signal.sosfiltfilt(sos, np.asarray(data, dtype=np.float64), axis=-1)
+    return signal.sosfiltfilt(sos, np.asarray(data, dtype=np.float64), axis=-1, padtype="even")
