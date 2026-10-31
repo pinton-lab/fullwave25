@@ -17,6 +17,7 @@ from .errors import NO_BINARY_MESSAGE, UltraBinaryError
 ENV_VAR = "FW2U_BATCH_BIN"
 BINARY_NAME_2D = "bench_2d_batch"
 BINARY_NAME_3D = "bench_3d_opt"
+POWER_LAW_SUFFIX = "_power_law"
 
 MARKER_3D = b"nZ.dat"
 MARKER_AIR_CELLS_3D = b"icczero.dat"
@@ -45,6 +46,25 @@ class BinaryFeatures:
     has_additive_signals: bool
     has_air_hold_2d: bool
     has_source_release_2d: bool
+
+
+def binary_name(*, is_3d: bool, power_law: bool = False) -> str:
+    """Return the file name of the binary for the grid dimension.
+
+    Parameters
+    ----------
+    is_3d : bool
+        True for a 3D grid.
+    power_law : bool, optional
+        True for the build that computes the power-law attenuation.
+
+    Returns
+    -------
+    str
+        The file name, for example ``bench_2d_batch``.
+    """
+    name = BINARY_NAME_3D if is_3d else BINARY_NAME_2D
+    return name + POWER_LAW_SUFFIX if power_law else name
 
 
 def resolve_binary(path: str | Path | None, *, name: str) -> Path:
@@ -125,8 +145,12 @@ def run_binary(
     device: int | None = 0,
     verify_gpu: bool = True,
     timeout: float | None = None,
+    unlimited_materials: bool = False,
 ) -> str:
     """Run ``binary`` in ``rundir`` and return its standard output.
+
+    ``unlimited_materials`` passes ``--unlimited-materials``, which makes the binary use the
+    attenuation parameter file of the run directory.
 
     Raises
     ------
@@ -138,8 +162,11 @@ def run_binary(
     env = os.environ.copy()
     if device is not None:
         env["CUDA_VISIBLE_DEVICES"] = str(device)
+    command = [str(binary)]
+    if unlimited_materials:
+        command.append("--unlimited-materials")
     result = subprocess.run(  # noqa: S603
-        [str(binary)],
+        command,
         cwd=str(rundir),
         env=env,
         capture_output=True,

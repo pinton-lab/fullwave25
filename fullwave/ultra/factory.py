@@ -8,14 +8,17 @@ from .backend import UltraBackend3D
 from .backend_2d import UltraBackend2D
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import fullwave
 
 
 def make_backend(
     *,
     grid: fullwave.Grid,
+    attenuation_parameters: str | Path | None = None,
     **inputs: object,
 ) -> UltraBackend3D | UltraBackend2D:
     """Return the 3D backend for a 3D grid and the 2D backend otherwise."""
     backend_class = UltraBackend3D if grid.is_3d else UltraBackend2D
-    return backend_class(grid=grid, **inputs)
+    return backend_class(grid=grid, attenuation_parameters=attenuation_parameters, **inputs)

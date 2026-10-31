@@ -21,18 +21,26 @@ from fullwave.utils.gpu_memory import (
 from . import binary as binary_module
 from . import dat_io
 from .backend import (
+    alpha_coeff_for_binary,
     check_filters,
     driven_source,
     filter_traces,
     refuse,
     single_device,
     to_host,
+    warn_power_converted,
     work_directory,
 )
 from .binary import OUTPUT_TAIL_CHARS
 from .errors import UltraBinaryError, UltraUnsupportedError
+from .medium_to_aexp import back_faces_of_source, face_margins
 from .time_axis import check_time_axis, delay_additive_signal
-from .writer_2d import extension_cells, write_run_directory_2d, write_sources_2d
+from .writer_2d import (
+    extension_cells,
+    frozen_shell_2d,
+    write_run_directory_2d,
+    write_sources_2d,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -184,6 +192,11 @@ class UltraBackend2D:
         ``"hard_released_after"`` sets it while the signal plays, then lets the cells evolve
         freely. ``"soft"`` adds the scaled signal to the pressure of the same cells and leaves
         them transparent.
+    attenuation_parameters : Path | None
+        Parameter file of the power-law attenuation that the binary computes; None runs the
+        exponential attenuation model.
+    unlimited_materials : bool
+        Pass ``--unlimited-materials`` to the binary; needs ``attenuation_parameters``.
     """
 
     def __init__(
@@ -200,7 +213,11 @@ class UltraBackend2D:
         cuda_device_id: str | int | list | None,
         verify_gpu: bool,
         source_type: str = HARD_RELEASED_AFTER,
+        attenuation_parameters: Path | None = None,
+        unlimited_materials: bool = False,
     ) -> None:
+        self.attenuation_parameters = attenuation_parameters
+        self.unlimited_materials = unlimited_materials
         self.grid = grid
         self.medium = medium
         self.source_type = source_type
@@ -229,8 +246,8 @@ class UltraBackend2D:
             refuse("this backend runs a 2D grid")
         if type(self.medium).__name__ != "Medium":
             refuse("use_ultra=True needs fullwave.Medium (exponential attenuation)")
-        if not np.all(to_host(self.medium.alpha_power) == 1.0):
-            refuse("use_ultra=True needs alpha_power == 1 everywhere")
+        if self.attenuation_parameters is None:
+            warn_power_converted(alpha_power=to_host(self.medium.alpha_power), f0=self.grid.f0)
         self._check_source(self.source)
         if getattr(self.sensor, "is_sparse_grid", False):
             refuse("sparse-grid sensors are not supported by use_ultra=True")
@@ -478,10 +495,22 @@ class UltraBackend2D:
             )
         return min(wanted, fit)
 
+    def _back_faces(self) -> frozenset[str]:
+        """Return the faces behind a held source that touches the grid edge."""
+        return back_faces_of_source(
+            incoords=self.source.incoords,
+            shape=tuple(self.medium.sound_speed.shape),
+            held=self.hold and self.source.n_sources > 0,
+        )
+
     def _member_bytes(self, *, n_t: int, n_tic: int, n_tic_add: int) -> tuple[int, int]:
         """Return the GPU bytes shared by all members and the bytes added by each member."""
-        _, margin = extension_cells(ppw=self.grid.ppw, nbdy=self.nbdy)
-        n_x, n_y = (cells + 2 * margin for cells in self.medium.sound_speed.shape)
+        nbdy, mext = extension_cells(ppw=self.grid.ppw, nbdy=self.nbdy)
+        margins = face_margins(
+            ndim=2, mext=mext, shell=frozen_shell_2d(), nbdy=nbdy, back_faces=self._back_faces()
+        )
+        n_x = self.medium.sound_speed.shape[0] + margins["x_low"] + margins["x_high"]
+        n_y = self.medium.sound_speed.shape[1] + margins["y_low"] + margins["y_high"]
         return device_bytes_2d(
             n_x=n_x,
             n_y=n_y,
@@ -520,7 +549,10 @@ class UltraBackend2D:
                 "cmap": to_host(medium.sound_speed),
                 "rmap": to_host(medium.density),
                 "nmap": to_host(medium.beta),
-                "amap": to_host(medium.alpha_coeff),
+                "amap": alpha_coeff_for_binary(
+                    medium=medium, f0=grid.f0, attenuation_parameters=self.attenuation_parameters
+                ),
+                "pmap": to_host(medium.alpha_power),
             },
             incoords=self.source.incoords,
             outcoords=self.sensor.outcoords,
@@ -530,6 +562,8 @@ class UltraBackend2D:
             air_coords=medium.air_coords if len(medium.air_coords) else None,
             additive_incoords=self.source.incoords_add if additive_signals else None,
             n_tic_additive=additive_signals[0].shape[1] if additive_signals else None,
+            back_faces=self._back_faces(),
+            attenuation_parameters=self.attenuation_parameters,
         )
         write_sources_2d(
             rundir,
@@ -544,7 +578,11 @@ class UltraBackend2D:
 
         started = time.perf_counter()
         stdout = binary_module.run_binary(
-            self.binary, rundir, device=self.device, verify_gpu=self.verify_gpu
+            self.binary,
+            rundir,
+            device=self.device,
+            verify_gpu=self.verify_gpu,
+            unlimited_materials=self.unlimited_materials,
         )
         self.last_run.update(run_seconds=time.perf_counter() - started, stdout=stdout)
         genout_paths = [rundir / dat_io.genout_name(m) for m in range(len(signals))]

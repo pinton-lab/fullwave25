@@ -7,14 +7,20 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from . import attenuation_parameters as power_law_attenuation
 from . import dat_io, dat_io_3d
-from .medium_to_aexp import aexp_from_amap, extend_map
+from .medium_to_aexp import aexp_from_amap, extend_map_faces, face_margins
 from .time_axis import time_axis
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 SPONGE_WAVELENGTHS = 4
+
+
+def frozen_shell_3d(*, m_stencil: int = 8) -> int:
+    """Return the frozen shell of the 3D binary: its outer cells that are never updated."""
+    return m_stencil
 
 
 def write_run_directory_3d(
@@ -35,8 +41,14 @@ def write_run_directory_3d(
     air_coords: NDArray | None = None,
     additive_incoords: NDArray | None = None,
     n_tic_additive: int | None = None,
-) -> dict[str, float | int]:
+    back_faces: frozenset[str] = frozenset(),
+    attenuation_parameters: str | Path | None = None,
+) -> dict[str, float | int | dict[str, int]]:
     """Write every input file except the source signals and return the realized scalars.
+
+    A face named in ``back_faces`` is padded by the frozen shell (outermost) and then the
+    sponge of ``nbdy`` cells, which ends on the cell next to the grid; all other faces are
+    padded by ``mext`` cells.
 
     With no hard source cells, ``icc.dat`` is not written: the additive source carries the
     whole source.
@@ -48,7 +60,8 @@ def write_run_directory_3d(
     c0, omega0, dur, ppw, cfl : float
         Sound speed, angular frequency, duration, points per wavelength and Courant number.
     maps : dict[str, NDArray]
-        Interior volumes ``cmap``, ``rmap``, ``nmap`` and ``amap`` [dB/(MHz cm)].
+        Interior volumes ``cmap``, ``rmap``, ``nmap`` and ``amap`` [dB/(MHz cm)]; with
+        ``attenuation_parameters`` also ``pmap``, the attenuation exponent.
     incoords, outcoords : NDArray
         0-based interior ``(N, 3)`` source and sensor cells.
     n_tic, mod_t : int
@@ -64,38 +77,64 @@ def write_run_directory_3d(
         no additive input.
     n_tic_additive : int | None
         Additive signal length in steps; needed with ``additive_incoords``.
+    back_faces : frozenset[str]
+        Faces ``x_low`` ... ``z_high`` behind a held source on the grid edge. The default empty
+        set pads every face by ``mext``.
+    attenuation_parameters : str | Path | None
+        Parameter file of the power-law attenuation. With it, the attenuation maps, the center
+        frequency and a copy of the file are written, and ``Aexp.dat`` holds the sponge only.
     """
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     nbdy = int(ppw * SPONGE_WAVELENGTHS) if nbdy is None else nbdy
     dx, dt, n_t = time_axis(c0=c0, omega0=omega0, dur=dur, ppw=ppw, cfl=cfl)
     mext = nbdy + m_stencil
+    shell = frozen_shell_3d(m_stencil=m_stencil)
+    margins = face_margins(ndim=3, mext=mext, shell=shell, nbdy=nbdy, back_faces=back_faces)
+    offset = np.array([margins["x_low"], margins["y_low"], margins["z_low"]], dtype=np.int64)
 
-    c = extend_map(maps["cmap"], mext)
-    rho = extend_map(maps["rmap"], mext)
-    beta = extend_map(maps["nmap"], mext)
-    aexp = aexp_from_amap(extend_map(maps["amap"], mext), c0=c0, omega0=omega0, dt=dt, nbdy=nbdy)
+    c = extend_map_faces(maps["cmap"], margins)
+    rho = extend_map_faces(maps["rmap"], margins)
+    beta = extend_map_faces(maps["nmap"], margins)
+    alpha_coeff = extend_map_faces(maps["amap"], margins)
+    aexp = aexp_from_amap(
+        np.zeros_like(alpha_coeff) if attenuation_parameters is not None else alpha_coeff,
+        c0=c0,
+        omega0=omega0,
+        dt=dt,
+        nbdy=nbdy,
+        back_faces=back_faces,
+        frozen_cells=shell,
+    )
     n_xe, n_ye, n_ze = c.shape
 
-    source_cells = np.asarray(incoords)[:, :3].astype(np.int64) + mext
-    sensor_cells = np.asarray(outcoords)[:, :3].astype(np.int64) + mext
+    source_cells = np.asarray(incoords)[:, :3].astype(np.int64) + offset
+    sensor_cells = np.asarray(outcoords)[:, :3].astype(np.int64) + offset
 
     air_cells = np.empty((0, 3), dtype=np.int64)
     if air_coords is not None:
-        air_cells = np.asarray(air_coords)[:, :3].astype(np.int64) + mext
+        air_cells = np.asarray(air_coords)[:, :3].astype(np.int64) + offset
 
     dat_io.write_map(outdir / "c.dat", c)
     dat_io.write_map(outdir / "rho.dat", rho)
     dat_io.write_map(outdir / "K.dat", c**2 * rho)
     dat_io.write_map(outdir / "beta.dat", beta)
     dat_io.write_map(outdir / "Aexp.dat", aexp)
+    if attenuation_parameters is not None:
+        power_law_attenuation.write_files(
+            outdir=outdir,
+            parameters=attenuation_parameters,
+            alpha_coeff=alpha_coeff,
+            alpha_power=extend_map_faces(maps["pmap"], margins),
+            f0=omega0 / 2.0 / np.pi,
+        )
     if len(source_cells):
         dat_io_3d.write_coords_3d(outdir / "icc.dat", *source_cells.T)
     else:
         (outdir / "icc.dat").unlink(missing_ok=True)
     dat_io_3d.write_coords_3d(outdir / "outc.dat", *sensor_cells.T)
     additive_cells = _write_additive_cells(
-        outdir, cells=additive_incoords, n_tic=n_tic_additive, mext=mext
+        outdir, cells=additive_incoords, n_tic=n_tic_additive, offset=offset
     )
     if len(air_cells):
         dat_io_3d.write_coords_3d(outdir / "icczero.dat", *air_cells.T)
@@ -132,11 +171,12 @@ def write_run_directory_3d(
         "ncoordszero": len(air_cells),
         "ncoords_add": len(additive_cells),
         "mext": mext,
+        "margins": margins,
     }
 
 
 def _write_additive_cells(
-    outdir: Path, *, cells: NDArray | None, n_tic: int | None, mext: int
+    outdir: Path, *, cells: NDArray | None, n_tic: int | None, offset: NDArray
 ) -> NDArray:
     """Write ``icc_add.dat`` and ``nTic_add.dat`` and return the shifted cells (none if disabled).
 
@@ -150,7 +190,7 @@ def _write_additive_cells(
     if n_tic is None:
         msg = "n_tic_additive is required with additive_incoords"
         raise ValueError(msg)
-    shifted = np.asarray(cells)[:, :3].astype(np.int64) + mext
+    shifted = np.asarray(cells)[:, :3].astype(np.int64) + offset
     if len(np.unique(shifted, axis=0)) != len(shifted):
         msg = "the additive source cells must all be different: one value is added per cell"
         raise ValueError(msg)

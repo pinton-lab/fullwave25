@@ -22,6 +22,7 @@ from fullwave.solver.source_type import (
     is_hard_held,
     is_soft,
 )
+from fullwave.ultra import attenuation_parameters as power_law_attenuation
 from fullwave.ultra import backend, binary, factory
 from fullwave.utils import (
     check_functions,
@@ -474,6 +475,8 @@ class Solver:
         write_maps_the_solver_does_not_read: bool = False,
         use_ultra: bool = False,
         ultra_sponge_thickness_px: int | None = None,
+        ultra_attenuation_parameters: str | Path | None = None,
+        ultra_unlimited_materials: bool = False,
     ) -> None:
         """Initialize a Solver instance for the fullwave simulation.
 
@@ -620,6 +623,13 @@ class Solver:
             Width of the absorbing sponge of the ``use_ultra`` backend, in cells.
             None, the default, gives 6 wavelengths in 2D and 4 wavelengths in 3D.
             Used only with ``use_ultra=True``.
+        ultra_attenuation_parameters : str | Path, optional
+            Power-law attenuation for the ``use_ultra`` backend. Give "centered", "author",
+            or the path of a parameter file. Needs ``use_ultra=True`` and
+            ``use_exponential_attenuation=False``.
+        ultra_unlimited_materials : bool, optional
+            If True, allow any number of distinct materials (uses more GPU memory). Needs
+            ``ultra_attenuation_parameters``.
 
         Raises
         ------
@@ -631,8 +641,26 @@ class Solver:
 
         """
         self.ultra = None
+        power_law_attenuation.check_unlimited_materials(
+            unlimited_materials=ultra_unlimited_materials,
+            parameters=ultra_attenuation_parameters,
+            use_ultra=use_ultra,
+        )
+        if ultra_attenuation_parameters is not None:
+            request = power_law_attenuation.check_request(
+                parameters=ultra_attenuation_parameters,
+                use_ultra=use_ultra,
+                use_exponential_attenuation=use_exponential_attenuation,
+                binary=path_fullwave_simulation_bin,
+                is_3d=grid.is_3d,
+                unlimited_materials=ultra_unlimited_materials,
+            )
+            ultra_attenuation_parameters = request.parameter_file
+            path_fullwave_simulation_bin = request.binary
         if use_ultra:
             self._init_ultra(
+                attenuation_parameters=ultra_attenuation_parameters,
+                unlimited_materials=ultra_unlimited_materials,
                 work_dir=work_dir,
                 grid=grid,
                 medium=medium,
@@ -898,11 +926,15 @@ class Solver:
         verify_gpu: bool,
         nbdy: int | None,
         options: dict,
+        attenuation_parameters: Path | None,
+        unlimited_materials: bool,
     ) -> None:
         """Set up the experimental fullwave2-ultra backend (see ``fullwave.ultra``)."""
         backend.warn_experimental()
         backend.warn_ppw_above_speed_optimum(ppw=grid.ppw)
-        backend.check_solver_options(**options)
+        backend.check_solver_options(
+            **options, has_attenuation_parameters=attenuation_parameters is not None
+        )
         binary_name = binary.BINARY_NAME_3D if grid.is_3d else binary.BINARY_NAME_2D
         ultra_binary = binary.resolve_binary(path_fullwave_simulation_bin, name=binary_name)
         self._check_input(grid, medium, source, sensor, transducer, ultra_binary)
@@ -924,6 +956,8 @@ class Solver:
             cuda_device_id=cuda_device_id,
             verify_gpu=verify_gpu,
             source_type=options["source_type"],
+            attenuation_parameters=attenuation_parameters,
+            unlimited_materials=unlimited_materials,
         )
 
     def _warn_if_the_additive_signal_was_not_scaled(self) -> None:

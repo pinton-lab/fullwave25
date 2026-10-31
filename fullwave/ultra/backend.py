@@ -24,6 +24,7 @@ from fullwave.utils.signal_filter import apply_filter
 from . import binary as binary_module
 from . import dat_io
 from .errors import FullwaveUltraExperimentalWarning, UltraUnsupportedError
+from .medium_to_aexp import back_faces_of_source
 from .time_axis import check_time_axis, delay_additive_signal
 from .writer_3d import write_run_directory_3d, write_sources_3d
 
@@ -123,6 +124,61 @@ def warn_one_device_only(*, device: int) -> None:
 def refuse(message: str) -> None:
     """Raise ``UltraUnsupportedError`` with ``message``."""
     raise UltraUnsupportedError(message)
+
+
+def warn_power_converted(*, alpha_power: NDArray, f0: float) -> None:
+    """Warn once per process when cells with ``alpha_power != 1`` are converted to power 1."""
+    other_powers = alpha_power[alpha_power != 1.0]
+    if other_powers.size == 0:
+        return
+    _warn_once(
+        name="power_converted",
+        message=(
+            f"use_ultra=True runs attenuation with power 1. Cells with alpha_power from "
+            f"{other_powers.min():g} to {other_powers.max():g} are converted to power 1 with "
+            f"the same attenuation at f0={f0 / 1e6:g} MHz: alpha_coeff * f0_MHz**(alpha_power - 1)."
+        ),
+        category=UserWarning,
+    )
+
+
+def power_one_alpha_coeff(*, alpha_coeff: NDArray, alpha_power: NDArray, f0: float) -> NDArray:
+    """Return ``alpha_coeff`` of the power-1 law with the same attenuation at ``f0``.
+
+    Parameters
+    ----------
+    alpha_coeff : NDArray
+        Attenuation coefficient in dB/(MHz^alpha_power cm).
+    alpha_power : NDArray
+        Exponent of the frequency in the attenuation law.
+    f0 : float
+        Center frequency in Hz.
+
+    Returns
+    -------
+    NDArray
+        ``alpha_coeff * f0_MHz**(alpha_power - 1)``, which is ``alpha_coeff`` itself when every
+        power is 1.
+    """
+    if np.all(alpha_power == 1.0):
+        return alpha_coeff
+    return alpha_coeff * (f0 / 1e6) ** (alpha_power - 1.0)
+
+
+def alpha_coeff_for_binary(
+    *, medium: fullwave.Medium, f0: float, attenuation_parameters: Path | None
+) -> NDArray:
+    """Return the attenuation coefficient map written for the binary.
+
+    With a parameter file the binary computes the power law, so the map is unchanged. Without
+    it the binary runs power 1 and the map is converted by :func:`power_one_alpha_coeff`.
+    """
+    alpha_coeff = to_host(medium.alpha_coeff)
+    if attenuation_parameters is not None:
+        return alpha_coeff
+    return power_one_alpha_coeff(
+        alpha_coeff=alpha_coeff, alpha_power=to_host(medium.alpha_power), f0=f0
+    )
 
 
 def driven_source(
@@ -250,6 +306,11 @@ class UltraBackend3D:
         ``"hard_released_after"`` sets it while the signal plays, then lets the cells evolve
         freely. ``"soft"`` adds the scaled signal to the pressure of the same cells and leaves
         them transparent.
+    attenuation_parameters : Path | None
+        Parameter file of the power-law attenuation that the binary computes; None runs the
+        exponential attenuation model.
+    unlimited_materials : bool
+        Pass ``--unlimited-materials`` to the binary; needs ``attenuation_parameters``.
     """
 
     def __init__(
@@ -266,7 +327,11 @@ class UltraBackend3D:
         cuda_device_id: str | int | list | None,
         verify_gpu: bool,
         source_type: str = HARD_RELEASED_AFTER,
+        attenuation_parameters: Path | None = None,
+        unlimited_materials: bool = False,
     ) -> None:
+        self.attenuation_parameters = attenuation_parameters
+        self.unlimited_materials = unlimited_materials
         self.grid = grid
         self.medium = medium
         self.source = driven_source(source, grid=grid, medium=medium, source_type=source_type)
@@ -295,8 +360,8 @@ class UltraBackend3D:
             refuse(f"cfl {self.grid.cfl} is above the 3D stability limit {CFL_LIMIT_3D}")
         if type(self.medium).__name__ != "Medium":
             refuse("use_ultra=True needs fullwave.Medium (exponential attenuation)")
-        if not np.all(to_host(self.medium.alpha_power) == 1.0):
-            refuse("use_ultra=True needs alpha_power == 1 everywhere")
+        if self.attenuation_parameters is None:
+            warn_power_converted(alpha_power=to_host(self.medium.alpha_power), f0=self.grid.f0)
         if any(v is not None for v in (self.source.u0, self.source.v0, self.source.w0)):
             refuse("velocity sources are not supported by use_ultra=True")
         if self.source.n_sources + self.source.n_sources_add == 0:
@@ -389,7 +454,10 @@ class UltraBackend3D:
                 "cmap": to_host(medium.sound_speed),
                 "rmap": to_host(medium.density),
                 "nmap": to_host(medium.beta),
-                "amap": to_host(medium.alpha_coeff),
+                "amap": alpha_coeff_for_binary(
+                    medium=medium, f0=grid.f0, attenuation_parameters=self.attenuation_parameters
+                ),
+                "pmap": to_host(medium.alpha_power),
             },
             incoords=self.source.incoords,
             outcoords=self.sensor.outcoords,
@@ -399,6 +467,12 @@ class UltraBackend3D:
             air_coords=to_host(medium.air_coords) if len(medium.air_coords) else None,
             additive_incoords=self.source.incoords_add if additive is not None else None,
             n_tic_additive=None if additive is None else additive.shape[1],
+            back_faces=back_faces_of_source(
+                incoords=self.source.incoords,
+                shape=tuple(medium.sound_speed.shape),
+                held=self.holds_hard_source,
+            ),
+            attenuation_parameters=self.attenuation_parameters,
         )
         write_sources_3d(
             rundir,
@@ -413,7 +487,11 @@ class UltraBackend3D:
 
         started = time.perf_counter()
         stdout = binary_module.run_binary(
-            self.binary, rundir, device=self.device, verify_gpu=self.verify_gpu
+            self.binary,
+            rundir,
+            device=self.device,
+            verify_gpu=self.verify_gpu,
+            unlimited_materials=self.unlimited_materials,
         )
         self.last_run.update(run_seconds=time.perf_counter() - started, stdout=stdout)
         genout = rundir / "genout.dat"
@@ -483,6 +561,7 @@ def check_solver_options(
     source_type: str,
     native_only_options: dict[str, object],
     use_exponential_attenuation: bool,
+    has_attenuation_parameters: bool = False,
 ) -> None:
     """Refuse the ``Solver`` options that ``use_ultra=True`` cannot honor; warn on the rest."""
     if not use_pml:
@@ -494,4 +573,5 @@ def check_solver_options(
     if source_type not in SOURCE_TYPES:
         refuse(f"source_type must be one of {SOURCE_TYPES}, not {source_type!r}")
     warn_native_only_options(options=native_only_options)
-    warn_relaxation_model_requested(use_exponential_attenuation=use_exponential_attenuation)
+    if not has_attenuation_parameters:
+        warn_relaxation_model_requested(use_exponential_attenuation=use_exponential_attenuation)
