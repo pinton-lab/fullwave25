@@ -31,8 +31,14 @@ from .backend import (
 )
 from .binary import OUTPUT_TAIL_CHARS
 from .errors import UltraBinaryError, UltraUnsupportedError
+from .medium_to_aexp import back_faces_of_source, face_margins
 from .time_axis import check_time_axis, delay_additive_signal
-from .writer_2d import extension_cells, write_run_directory_2d, write_sources_2d
+from .writer_2d import (
+    extension_cells,
+    frozen_shell_2d,
+    write_run_directory_2d,
+    write_sources_2d,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -478,10 +484,22 @@ class UltraBackend2D:
             )
         return min(wanted, fit)
 
+    def _back_faces(self) -> frozenset[str]:
+        """Return the faces behind a held source that touches the grid edge."""
+        return back_faces_of_source(
+            incoords=self.source.incoords,
+            shape=tuple(self.medium.sound_speed.shape),
+            held=self.hold and self.source.n_sources > 0,
+        )
+
     def _member_bytes(self, *, n_t: int, n_tic: int, n_tic_add: int) -> tuple[int, int]:
         """Return the GPU bytes shared by all members and the bytes added by each member."""
-        _, margin = extension_cells(ppw=self.grid.ppw, nbdy=self.nbdy)
-        n_x, n_y = (cells + 2 * margin for cells in self.medium.sound_speed.shape)
+        nbdy, mext = extension_cells(ppw=self.grid.ppw, nbdy=self.nbdy)
+        margins = face_margins(
+            ndim=2, mext=mext, shell=frozen_shell_2d(), nbdy=nbdy, back_faces=self._back_faces()
+        )
+        n_x = self.medium.sound_speed.shape[0] + margins["x_low"] + margins["x_high"]
+        n_y = self.medium.sound_speed.shape[1] + margins["y_low"] + margins["y_high"]
         return device_bytes_2d(
             n_x=n_x,
             n_y=n_y,
@@ -530,6 +548,7 @@ class UltraBackend2D:
             air_coords=medium.air_coords if len(medium.air_coords) else None,
             additive_incoords=self.source.incoords_add if additive_signals else None,
             n_tic_additive=additive_signals[0].shape[1] if additive_signals else None,
+            back_faces=self._back_faces(),
         )
         write_sources_2d(
             rundir,

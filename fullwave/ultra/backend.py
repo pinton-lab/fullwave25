@@ -24,6 +24,7 @@ from fullwave.utils.signal_filter import apply_filter
 from . import binary as binary_module
 from . import dat_io
 from .errors import FullwaveUltraExperimentalWarning, UltraUnsupportedError
+from .medium_to_aexp import back_faces_of_source
 from .time_axis import check_time_axis, delay_additive_signal
 from .writer_3d import write_run_directory_3d, write_sources_3d
 
@@ -399,6 +400,11 @@ class UltraBackend3D:
             air_coords=to_host(medium.air_coords) if len(medium.air_coords) else None,
             additive_incoords=self.source.incoords_add if additive is not None else None,
             n_tic_additive=None if additive is None else additive.shape[1],
+            back_faces=back_faces_of_source(
+                incoords=self.source.incoords,
+                shape=tuple(medium.sound_speed.shape),
+                held=self.holds_hard_source,
+            ),
         )
         write_sources_3d(
             rundir,

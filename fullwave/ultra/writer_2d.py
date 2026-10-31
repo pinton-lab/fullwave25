@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from . import dat_io, stencil
-from .medium_to_aexp import aexp_from_amap, extend_map
+from .medium_to_aexp import aexp_from_amap, extend_map_faces, face_margins
 from .time_axis import time_axis
 
 if TYPE_CHECKING:
@@ -17,6 +17,11 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
 SPONGE_WAVELENGTHS = 6
+
+
+def frozen_shell_2d(*, m_stencil: int = 8) -> int:
+    """Return the frozen shell of the 2D binary: its outer cells that are never updated."""
+    return m_stencil + 2
 
 
 def extension_cells(*, ppw: float, nbdy: int | None, m_stencil: int = 8) -> tuple[int, int]:
@@ -58,8 +63,13 @@ def write_run_directory_2d(
     additive_incoords: NDArray | None = None,
     n_tic_additive: int | None = None,
     m_stencil: int = 8,
-) -> dict[str, float | int]:
+    back_faces: frozenset[str] = frozenset(),
+) -> dict[str, float | int | dict[str, int]]:
     """Write every input file except the source signals and return the realized scalars.
+
+    A face named in ``back_faces`` is padded by the frozen shell (outermost) and then the
+    sponge of ``nbdy`` cells, which ends on the cell next to the grid; all other faces are
+    padded by ``mext`` cells.
 
     Parameters
     ----------
@@ -83,24 +93,38 @@ def write_run_directory_2d(
         Additive signal length in steps; needed with ``additive_incoords``.
     m_stencil : int
         Stencil half-width.
+    back_faces : frozenset[str]
+        Faces ``x_low``, ``x_high``, ``y_low``, ``y_high`` behind a held source on the grid edge.
+        The default empty set pads every face by ``mext``.
     """
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     nbdy, mext = extension_cells(ppw=ppw, nbdy=nbdy, m_stencil=m_stencil)
     dx, dt, n_t = time_axis(c0=c0, omega0=omega0, dur=dur, ppw=ppw, cfl=cfl)
+    shell = frozen_shell_2d(m_stencil=m_stencil)
+    margins = face_margins(ndim=2, mext=mext, shell=shell, nbdy=nbdy, back_faces=back_faces)
+    offset = np.array([margins["x_low"], margins["y_low"]], dtype=np.int64)
 
-    c = extend_map(maps["cmap"], mext)
-    rho = extend_map(maps["rmap"], mext)
-    beta = extend_map(maps["nmap"], mext)
-    aexp = aexp_from_amap(extend_map(maps["amap"], mext), c0=c0, omega0=omega0, dt=dt, nbdy=nbdy)
+    c = extend_map_faces(maps["cmap"], margins)
+    rho = extend_map_faces(maps["rmap"], margins)
+    beta = extend_map_faces(maps["nmap"], margins)
+    aexp = aexp_from_amap(
+        extend_map_faces(maps["amap"], margins),
+        c0=c0,
+        omega0=omega0,
+        dt=dt,
+        nbdy=nbdy,
+        back_faces=back_faces,
+        frozen_cells=shell,
+    )
     n_xe, n_ye = c.shape
     n_zones = stencil.n_zones(sound_speed=c)
 
-    source_cells = np.asarray(incoords)[:, :2].astype(np.int64) + mext
-    sensor_cells = np.asarray(outcoords)[:, :2].astype(np.int64) + mext
+    source_cells = np.asarray(incoords)[:, :2].astype(np.int64) + offset
+    sensor_cells = np.asarray(outcoords)[:, :2].astype(np.int64) + offset
     air_cells = np.empty((0, 2), dtype=np.int64)
     if air_coords is not None:
-        air_cells = np.asarray(air_coords)[:, :2].astype(np.int64) + mext
+        air_cells = np.asarray(air_coords)[:, :2].astype(np.int64) + offset
 
     dat_io.write_map(outdir / "c.dat", c)
     dat_io.write_map(outdir / "rho.dat", rho)
@@ -116,7 +140,7 @@ def write_run_directory_2d(
         dat_io.write_coords_2d(outdir / "icczero.dat", *air_cells.T)
         _write_air_hold_window(outdir, n_t=n_t)
     dat_io.write_int(outdir / "nTzero.dat", n_t)
-    _write_additive_cells(outdir, cells=additive_incoords, n_tic=n_tic_additive, mext=mext)
+    _write_additive_cells(outdir, cells=additive_incoords, n_tic=n_tic_additive, offset=offset)
     integers = {
         "nX": n_xe,
         "nY": n_ye,
@@ -146,6 +170,7 @@ def write_run_directory_2d(
         "ncoordszero": len(air_cells),
         "nTzero": n_t,
         "mext": mext,
+        "margins": margins,
     }
 
 
@@ -156,7 +181,7 @@ def _write_air_hold_window(outdir: Path, *, n_t: int) -> None:
 
 
 def _write_additive_cells(
-    outdir: Path, *, cells: NDArray | None, n_tic: int | None, mext: int
+    outdir: Path, *, cells: NDArray | None, n_tic: int | None, offset: NDArray
 ) -> None:
     """Write ``icc_add.dat``, ``ncoords_add.dat`` and ``nTic_add.dat``, or disable the channel.
 
@@ -170,7 +195,7 @@ def _write_additive_cells(
     if n_tic is None:
         msg = "n_tic_additive is required with additive_incoords"
         raise ValueError(msg)
-    shifted = np.asarray(cells)[:, :2].astype(np.int64) + mext
+    shifted = np.asarray(cells)[:, :2].astype(np.int64) + offset
     dat_io.write_coords_2d(outdir / "icc_add.dat", *shifted.T)
     dat_io.write_int(count_file, len(shifted))
     dat_io.write_int(outdir / "nTic_add.dat", n_tic)
