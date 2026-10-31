@@ -30,11 +30,22 @@ def main() -> None:
     # --- define the computational grid ---
     #
 
-    domain_size = (42.5e-3 * 1.5, 42.5e-3)  # meters
     f0 = 1e6
     c0 = 1540
+    width_m = 45e-3  # lateral width [m], wider than the array
+    domain_size = (
+        42.5e-3 * 1.5,
+        width_m,
+    )  # meters
     duration = domain_size[0] / c0 * 2
     grid = fullwave.Grid(domain_size, f0, duration, c0=c0)
+
+    #
+    # --- define the linear transducer ---
+    #
+
+    # A named array places itself, so only the transmit has to be stated.
+    transducer = fullwave.Transducer.l7_4(grid)
 
     #
     # --- define the acoustic medium properties ---
@@ -46,9 +57,10 @@ def main() -> None:
     alpha_power_map = 1.0 * np.ones((grid.nx, grid.ny))  # power law exponent
     beta_map = 0.0 * np.ones((grid.nx, grid.ny))  # nonlinearity parameter
 
-    # embed an object with different properties in the center of the medium
-    obj_x_start = grid.nx // 3
-    obj_x_end = 2 * grid.nx // 3
+    # embed an object with different properties in the middle third of the tissue below the face
+    tissue_rows = grid.nx - transducer.face_row_px
+    obj_x_start = transducer.face_row_px + tissue_rows // 3
+    obj_x_end = transducer.face_row_px + 2 * tissue_rows // 3
     obj_y_start = grid.ny // 3
     obj_y_end = 2 * grid.ny // 3
 
@@ -60,20 +72,15 @@ def main() -> None:
 
     medium = fullwave.Medium(
         grid=grid,
-        sound_speed=sound_speed_map,
-        density=density_map,
-        alpha_coeff=alpha_coeff_map,
-        alpha_power=alpha_power_map,
         beta=beta_map,
+        **transducer.fill_probe_above_face(
+            sound_speed=sound_speed_map,
+            density=density_map,
+            alpha_coeff=alpha_coeff_map,
+            alpha_power=alpha_power_map,
+        ),
     )
     medium.plot(export_path=Path(work_dir / "medium.png"))
-
-    #
-    # --- define the linear transducer ---
-    #
-
-    # A named array places itself, so only the transmit has to be stated.
-    transducer = fullwave.Transducer.l7_4(grid)
 
     # send from the middle half of the aperture
     transducer.active_source_elements[:] = False

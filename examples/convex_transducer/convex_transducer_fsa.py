@@ -72,7 +72,7 @@ def main() -> None:
         grid,
         sampling_modulus_time=sampling_modulus_time,
     )
-    air_map = transducer.make_suraface_reflective_with_air()
+    air_map = transducer.make_surface_reflective_with_air()
 
     #
     # --- define the acoustic medium properties ---

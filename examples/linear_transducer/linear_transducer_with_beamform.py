@@ -28,13 +28,21 @@ def main() -> None:
     work_dir.mkdir(parents=True, exist_ok=True)
 
     # --- define the computational grid ---
-    domain_size = (42.5e-3, 42.5e-3)  # meters
     f0 = 2e6
     c0 = 1540
-    duration = domain_size[0] / c0 * 2.5
     ppw = 12
+    width_m = 45e-3  # lateral width [m], wider than the array
+    domain_size = (
+        42.5e-3,
+        width_m,
+    )  # meters
+    duration = domain_size[0] / c0 * 2.5
     cfl = 0.4
     grid = fullwave.Grid(domain_size, f0, duration, c0=c0, ppw=ppw, cfl=cfl)
+
+    # --- define the linear transducer ---
+    # its face (depth 0) is the first row of the medium
+    transducer = fullwave.Transducer.l7_4(grid)
 
     # --- define the acoustic medium properties ---
     sound_speed = 1540
@@ -55,7 +63,7 @@ def main() -> None:
         (40e-3, domain_size[1] / 2),
     ]
     for loc in point_target_locations_m:
-        ix = int(loc[0] / grid.dx)
+        ix = int((transducer.face_depth_m + loc[0]) / grid.dx)
         iy = int(loc[1] / grid.dx)
         sound_speed_map[ix, iy] = sound_speed * 0.6
 
@@ -75,19 +83,15 @@ def main() -> None:
 
     density_map *= scatterer
 
-    #
-    # --- define the linear transducer ---
-    #
-
-    transducer = fullwave.Transducer.l7_4(grid)
-
     medium = fullwave.Medium(
         grid=grid,
-        sound_speed=sound_speed_map,
-        density=density_map,
-        alpha_coeff=alpha_coeff_map,
-        alpha_power=alpha_power_map,
         beta=beta_map,
+        **transducer.fill_probe_above_face(
+            sound_speed=sound_speed_map,
+            density=density_map,
+            alpha_coeff=alpha_coeff_map,
+            alpha_power=alpha_power_map,
+        ),
     )
     medium.plot(export_path=Path(work_dir / "medium.png"))
 
@@ -126,7 +130,8 @@ def main() -> None:
         grid.wavelength / 8,
     )
     image_start_m = 5 * grid.wavelength
-    axial_position = np.arange(image_start_m, domain_size[0], grid.wavelength / 8)
+    image_end_m = domain_size[0] - transducer.face_depth_m
+    axial_position = np.arange(image_start_m, image_end_m, grid.wavelength / 8)
 
     element_id_to_receiver_center = transducer.element_id_to_receiver_center
     transducer_coordinates = np.array(
@@ -141,6 +146,7 @@ def main() -> None:
         axial_position_m=axial_position,
         num_elements=num_elements,
         transducer_coordinates=transducer_coordinates,
+        face_row_px=transducer.face_row_px,
     )
     beamformed_image = beamformer.run(sensor_output)
 

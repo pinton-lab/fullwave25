@@ -30,9 +30,13 @@ def main() -> None:
     # --- define the computational grid ---
     #
 
-    domain_size = (6e-2, 6e-2)  # [axial, lateral] meters
     f0 = 2e6
     c0 = 1540
+    width_m = 45e-3  # lateral width [m], wider than the array
+    domain_size = (
+        6e-2,
+        width_m,
+    )  # [axial, lateral] meters
     duration = domain_size[0] / c0 * 2.5
     grid = fullwave.Grid(domain_size, f0, duration, c0=c0)
 
@@ -60,9 +64,10 @@ def main() -> None:
         grid=grid,
         background_property_name=background_property_name,
     )
-    # define abdominal wall
+    # define abdominal wall, whose first layer starts at the probe face
     abdominal_wall = presets.AbdominalWallDomain(
         grid=grid,
+        start_depth=transducer.face_depth_m,
     )
 
     # define scatterer
@@ -91,8 +96,8 @@ def main() -> None:
     )
     mb.register_domain(background)
     mb.register_domain(abdominal_wall)
-    # mb.register_domain(simple_domain_1)
-    # mb.register_domain(simple_domain_2)
+    # register the probe fill last so it overrides the other domains
+    mb.register_domain(transducer.probe_fill_domain())
 
     # we can plot to see the current registered domains
 
@@ -130,7 +135,9 @@ def main() -> None:
         grid.wavelength / 8,
     )
     image_start_m = 5 * grid.wavelength
-    axial_position = np.arange(image_start_m, domain_size[0], grid.wavelength / 8)
+    # the axial positions are depths below the probe face
+    image_end_m = domain_size[0] - transducer.face_depth_m
+    axial_position = np.arange(image_start_m, image_end_m, grid.wavelength / 8)
 
     element_id_to_receiver_center = transducer.element_id_to_receiver_center
     transducer_coordinates = np.array(
@@ -145,6 +152,7 @@ def main() -> None:
         axial_position_m=axial_position,
         num_elements=num_elements,
         transducer_coordinates=transducer_coordinates,
+        face_row_px=transducer.face_row_px,
         f_number=1.0,
     )
     beamformed_image = beamformer.run(sensor_output)

@@ -36,12 +36,22 @@ def main() -> None:
     #
     # --- define the computational grid ---
     #
-    # 20 mm deep and 42 mm wide, so the 38 mm L7-4 aperture fits.
-    domain_size = (2.0e-2, 4.2e-2)  # [axial, lateral] meters
+    # 20 mm deep and 45 mm wide, wider than the L7-4 aperture.
     f0 = 5.208e6
     c0 = 1540
+    width_m = 45e-3  # lateral width [m], wider than the array
+    domain_size = (
+        2.0e-2,
+        width_m,
+    )  # [axial, lateral] meters
     duration = domain_size[0] / c0 * 2.3  # the two-way time, with a margin
     grid = fullwave.Grid(domain_size, f0, duration, c0=c0, ppw=8, cfl=0.4)
+
+    #
+    # --- define the transducer ---
+    #
+    receive_every = 4  # time steps between two recorded samples
+    transducer = fullwave.Transducer.l7_4(grid, sampling_modulus_time=receive_every)
 
     #
     # --- define the acoustic medium: soft tissue with speckle and 3 point targets ---
@@ -59,23 +69,20 @@ def main() -> None:
         np.arange(grid.shape[1]) * grid.dx - domain_size[1] / 2,
         indexing="ij",
     )
-    for depth_m in (8e-3, 12e-3, 16e-3):
-        target = (axial_m - depth_m) ** 2 + lateral_m**2 <= (0.2e-3) ** 2
+    for depth_m in (8e-3, 12e-3, 16e-3):  # below the probe face
+        target = (axial_m - transducer.face_depth_m - depth_m) ** 2 + lateral_m**2 <= (0.2e-3) ** 2
         density[target] = 2000  # a strong reflector of 0.2 mm radius
+
     medium = fullwave.Medium(
         grid,
-        sound_speed=np.ones(grid.shape) * c0,
-        density=density,
-        alpha_coeff=np.ones(grid.shape) * 0.5,  # dB/(MHz^y cm)
-        alpha_power=np.ones(grid.shape) * 1.1,
         beta=np.zeros(grid.shape),
+        **transducer.fill_probe_above_face(
+            sound_speed=np.ones(grid.shape) * c0,
+            density=density,
+            alpha_coeff=np.ones(grid.shape) * 0.5,  # dB/(MHz^y cm)
+            alpha_power=np.ones(grid.shape) * 1.1,
+        ),
     )
-
-    #
-    # --- define the transducer ---
-    #
-    receive_every = 4  # time steps between two recorded samples
-    transducer = fullwave.Transducer.l7_4(grid, sampling_modulus_time=receive_every)
 
     #
     # --- build one source per transmit ---
@@ -90,8 +97,10 @@ def main() -> None:
         plane_waves.append(transducer.source)
 
     aperture_m = transducer.transducer_geometry.transducer_width_m
-    focus_depth_m = 15e-3
-    laterals_m = np.linspace(-aperture_m / 4, aperture_m / 4, num=16)
+    focus_depth_m = transducer.face_depth_m + 15e-3  # 15 mm below the probe face
+    # focus_m is absolute, so the lines are centered on the middle of the grid
+    offsets_m = np.linspace(-aperture_m / 4, aperture_m / 4, num=16)
+    laterals_m = domain_size[1] / 2 + offsets_m
     focused_lines = []
     for lateral_m in laterals_m:
         transducer.focus(focus_m=(focus_depth_m, lateral_m))
@@ -152,7 +161,7 @@ def main() -> None:
     figure, axes = plt.subplots(1, 2, figsize=(11, 5), sharey=True, layout="constrained")
     for axis, traces, title in (
         (axes[0], plane_traces, f"plane wave {angles[2]} deg"),
-        (axes[1], focus_traces, f"focused line {laterals_m[8] * 1e3:.1f} mm"),
+        (axes[1], focus_traces, f"focused line {offsets_m[8] * 1e3:.1f} mm off axis"),
     ):
         level_db = 20 * np.log10(np.abs(traces) / np.abs(traces).max() + 1e-12)
         image = axis.imshow(

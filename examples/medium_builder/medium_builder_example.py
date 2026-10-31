@@ -30,11 +30,21 @@ def main() -> None:
 
     # --- define the computational grid ---
 
-    domain_size = (42.5e-3 * 1.5, 42.5e-3)  # [axial, lateral] meters
     f0 = 1e6
     c0 = 1540
+    width_m = 45e-3  # lateral width [m], wider than the array
+    domain_size = (
+        42.5e-3 * 1.5,
+        width_m,
+    )  # [axial, lateral] meters
     duration = domain_size[0] / c0 * 2.5
     grid = fullwave.Grid(domain_size, f0, duration, c0=c0)
+
+    # --- define the linear transducer ---
+
+    # A named array places itself, so only the transmit has to be stated.
+    transducer = fullwave.Transducer.l7_4(grid)
+    face_row = transducer.face_row_px
 
     # --- define the acoustic medium properties ---
 
@@ -50,10 +60,15 @@ def main() -> None:
         background_property_name=None,
     )
 
+    # the domains sit in the tissue below the probe face
+    tissue_rows = grid.nx - face_row
+
     # define simple domain 1
     geometry = np.zeros((grid.nx, grid.ny), dtype=int)
     geometry[
-        round(grid.nx // 2 - grid.nx * 0.1) : round(grid.nx // 2 + grid.nx * 0.1),
+        round(face_row + tissue_rows // 2 - tissue_rows * 0.1) : round(
+            face_row + tissue_rows // 2 + tissue_rows * 0.1,
+        ),
         round(grid.ny // 2 - grid.ny * 0.1) : round(grid.ny // 2 + grid.ny * 0.1),
     ] = 1
     maps = {
@@ -73,7 +88,9 @@ def main() -> None:
     # define simple domain 2
     geometry_2 = np.zeros((grid.nx, grid.ny), dtype=int)
     geometry_2[
-        round(grid.nx // 4 - grid.nx * 0.1) : round(grid.nx // 4 + grid.nx * 0.1),
+        round(face_row + tissue_rows // 4 - tissue_rows * 0.1) : round(
+            face_row + tissue_rows // 4 + tissue_rows * 0.1,
+        ),
         round(grid.ny // 4 - grid.ny * 0.1) : round(grid.ny // 4 + grid.ny * 0.1),
     ] = 1
     maps_2 = {
@@ -110,6 +127,8 @@ def main() -> None:
     mb.register_domain(background)
     mb.register_domain(simple_domain_1)
     mb.register_domain(simple_domain_2)
+    # register the probe fill last so it overrides the other domains
+    mb.register_domain(transducer.probe_fill_domain())
 
     # we can plot to see the current registered domains
     mb.plot_current_map(export_path=work_dir / "medium.png")
@@ -117,15 +136,12 @@ def main() -> None:
     # generate medium for simulation
     medium = mb.run()
 
-    # --- define the linear transducer ---
-
-    # A named array places itself, so only the transmit has to be stated.
-    transducer = fullwave.Transducer.l7_4(grid)
-
     # --- define the transmit ---
 
-    # focus nine tenths of the way down the domain, on the axis
-    transducer.focus(focus_m=(domain_size[0] * 9 / 10, domain_size[1] / 2))
+    # focus nine tenths of the way down the tissue, on the axis
+    tissue_depth_m = domain_size[0] - transducer.face_depth_m
+    focus_depth_m = transducer.face_depth_m + tissue_depth_m * 9 / 10
+    transducer.focus(focus_m=(focus_depth_m, domain_size[1] / 2))
 
     # make a sensor for whole domain to make an animation
     sensor_mask = np.zeros((grid.nx, grid.ny), dtype=bool)

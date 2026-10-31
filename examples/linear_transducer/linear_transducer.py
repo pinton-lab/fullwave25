@@ -27,13 +27,22 @@ def main() -> None:
     work_dir.mkdir(parents=True, exist_ok=True)
 
     # --- define the computational grid ---
-    domain_size = (42.5e-3 / 2, 42.5e-3)  # meters
     f0 = 3.7e6
     c0 = 1540
-    duration = domain_size[0] / c0 * 2.5
     ppw = 12
+    width_m = 45e-3  # lateral width [m], wider than the array
+    domain_size = (
+        42.5e-3 / 2,
+        width_m,
+    )  # meters
+    duration = domain_size[0] / c0 * 2.5
     cfl = 0.4
     grid = fullwave.Grid(domain_size, f0, duration, c0=c0, ppw=ppw, cfl=cfl)
+
+    # --- define the linear transducer ---
+
+    # A named array places itself, so only the transmit has to be stated.
+    transducer = fullwave.Transducer.l7_4(grid)
 
     # --- define the acoustic medium properties ---
     sound_speed = 1540
@@ -43,9 +52,10 @@ def main() -> None:
     beta = 0.0
 
     sound_speed_map = sound_speed * np.ones((grid.nx, grid.ny))
-    # put a square with different sound speed
+    # put a square with different sound speed in the middle of the tissue below the probe face
+    tissue_center_row = (transducer.face_row_px + grid.nx) // 2
     sound_speed_map[
-        grid.nx // 2 - int(grid.nx * 0.1) : grid.nx // 2 + int(grid.nx * 0.1),
+        tissue_center_row - int(grid.nx * 0.1) : tissue_center_row + int(grid.nx * 0.1),
         grid.ny // 2 - int(grid.ny * 0.1) : grid.ny // 2 + int(grid.ny * 0.1),
     ] = 1400
 
@@ -56,20 +66,15 @@ def main() -> None:
 
     medium = fullwave.Medium(
         grid=grid,
-        sound_speed=sound_speed_map,
-        density=density_map,
-        alpha_coeff=alpha_coeff_map,
-        alpha_power=alpha_power_map,
         beta=beta_map,
+        **transducer.fill_probe_above_face(
+            sound_speed=sound_speed_map,
+            density=density_map,
+            alpha_coeff=alpha_coeff_map,
+            alpha_power=alpha_power_map,
+        ),
     )
     medium.plot(export_path=Path(work_dir / "medium.png"))
-
-    #
-    # --- define the linear transducer ---
-    #
-
-    # A named array places itself, so only the transmit has to be stated.
-    transducer = fullwave.Transducer.l7_4(grid)
 
     #
     # --- define the transmit ---

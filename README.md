@@ -220,6 +220,8 @@ grid = fullwave.Grid(domain_size=(4.5e-2, 4.5e-2), f0=5.208e6, duration=6.7e-5, 
 
 transducer = fullwave.Transducer.l7_4(grid)
 transducer.plane_wave(angle_deg=2.5)
+maps = transducer.fill_probe_above_face(sound_speed=sound_speed_map, density=density_map, alpha_coeff=alpha_coeff_map, alpha_power=alpha_power_map)
+medium = fullwave.Medium(grid, beta=beta_map, **maps)
 
 solver = fullwave.Solver(work_dir="./outputs/my_run", grid=grid, medium=medium, transducer=transducer)
 recorded = solver.run()
@@ -229,9 +231,11 @@ The arrays are `l7_4` (linear, 128 elements, 5.208 MHz), `c5_2v` (curved, 49.57 
 
 The transmits are `plane_wave(angle_deg=...)`, `focus(focus_m=...)`, `diverging(virtual_source_m=...)` and `synthetic_aperture(element)`. Each takes `apodization` and `pulse`. Set `transducer.active_source_elements` first to use part of the aperture.
 
-The source type is `"hard_released_after"` by default: the transducer assigns its pressure while the drive signal plays, then the source cells evolve freely. `"hard"` assigns it for the whole run, so the cells stay at zero pressure after the drive ends. `"soft"` adds the signal to the field, and is what the calibrated setups use. Pass `source_type=` to `Transducer.l7_4`, `c5_2v`, `p4_1c` or `fullwave.Solver`.
+The flat arrays (`l7_4`, `p4_1c`, `LinearTransducer`, `make_p4_1c_trasnducer`) share one layout. The source is one wavelength of rows (at least 8) with its first row on grid row 0, the sponge directly behind it. The receiver row is directly in front of the last source row, and the probe face (depth 0) is the row after it, where the medium starts. The array is centered in the grid, so make the grid wider than the array (the calibrated L7-4 uses 45 mm for its 38.09 mm). `transducer.fill_probe_above_face(...)` sets the cells above the face between the first and the last element edge (the source, kerf and receiver cells) to the probe fill (1540 m/s, 1000 kg/m3, attenuation 0.005 dB/MHz/cm, power 1.0), and the columns beside the array on the same rows to water (the same values with power 1.999), with no scatterers; pass its result to `fullwave.Medium`, or register `transducer.probe_fill_domain()` last in a `MediumBuilder`. `transducer.face_row_px` is the face row and `transducer.face_depth_m` its depth: start the tissue there (for an `AbdominalWallDomain`, pass `start_depth=transducer.face_depth_m`) and measure targets and focus depths from it. `Beamformer(..., face_row_px=...)` measures its depths from there. The curved `c5_2v` keeps its own layout, and `transducer.make_surface_reflective_with_air()` returns the air behind it.
 
-`transducer.apply_transducer_stack(...)` paints a probe's backing, matching layer, lens and standoff onto the medium maps before the `Medium` is built. `fullwave.TransducerStack` holds the values.
+The source type is `"hard"` by default for the named arrays: the transducer assigns its pressure for the whole run, so the source cells stay at zero pressure after the drive ends and the face stays reflective. `"hard_released_after"` assigns it while the drive signal plays, then the source cells evolve freely. `"soft"` adds the signal to the field. Pass `source_type=` to `Transducer.l7_4`, `c5_2v`, `p4_1c` or `fullwave.Solver`.
+
+`transducer.apply_transducer_stack(...)` still paints a probe's backing, matching layer, lens and standoff onto the medium maps before the `Medium` is built, for a calibrated stack. `fullwave.TransducerStack` holds the values.
 
 ### Transmit batches
 
