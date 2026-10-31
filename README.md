@@ -354,7 +354,7 @@ Please see the following examples for more advanced usage.
 
 The fullwave2-ultra backend is optimized for speed at ppw = 6 (`Grid.ppw`); a larger ppw runs, but more slowly, and gives a warning.
 
-fullwave25 does not ship the fullwave2-ultra binaries. Get them from <https://github.com/pinton-lab/fullwave2-ultra> or contact the Pinton lab.
+fullwave25 does not ship the fullwave2-ultra binaries. Obtain them from the Pinton lab.
 
 Point the solver to the binary with `path_fullwave_simulation_bin` or with the environment variable `FW2U_BATCH_BIN`. Either can be the binary file or the folder that contains it. The binary name is `bench_2d_batch` for a 2D grid and `bench_3d_opt` for a 3D grid.
 
@@ -366,7 +366,7 @@ import fullwave
 solver = fullwave.Solver(
     work_dir=Path("./outputs/ultra"),
     grid=grid,  # 2D or 3D fullwave.Grid
-    medium=medium,  # fullwave.Medium with alpha_power == 1 everywhere
+    medium=medium,  # fullwave.Medium; alpha_power other than 1 is converted to power 1 at f0
     source=source,
     sensor=sensor,
     path_fullwave_simulation_bin=Path("/path/to/fullwave2-ultra/bin"),
@@ -390,16 +390,39 @@ Supported now:
 - `run_batch` in 3D.
 - Velocity sources, and sources that are not pressure sources.
 - Sparse-grid sensors, `is_static_map`, and `record_whole_domain`.
-- Media other than `fullwave.Medium` (exponential attenuation), and `alpha_power` other than 1.
+- Media other than `fullwave.Medium` (exponential attenuation).
 - `use_pml=False`, `m_spatial_order` other than 8, `use_gpu=False`, and an invalid `source_type`.
 - In 2D, a binary that does not read the files for air cells, for the additive channel, or for releasing the source (with such a binary, pad `p0` to `grid.nt`).
 - In 3D, air cells with a binary that does not read `icczero.dat` and `nzero0.dat`, and additive sources with a binary that does not read `ncoords_add.dat` and `icmat_add.dat`.
 
 This list will grow as the backend does.
 
-The backend runs the exponential attenuation model (frequency-independent: the same attenuation at every frequency). Set the width of its absorbing sponge, in cells, with `ultra_sponge_thickness_px`; the default is 6 wavelengths in 2D and 4 wavelengths in 3D. `exponential_attenuation_pml_thickness_px` no longer sets this width with `use_ultra=True`; a script that relied on it now gets the default width until it passes `ultra_sponge_thickness_px`.
+Unless `ultra_attenuation_parameters` is set (below), the backend runs the exponential attenuation model (frequency-independent: the same attenuation at every frequency); a frequency-dependent attenuation is available only with `ultra_attenuation_parameters` and a compatible binary. Without it, cells with an `alpha_power` other than 1 are converted to power 1 with the same attenuation at `f0` (`alpha_coeff * f0_MHz**(alpha_power - 1)`), with one warning that names the converted range. Set the width of its absorbing sponge, in cells, with `ultra_sponge_thickness_px`; the default is 6 wavelengths in 2D and 4 wavelengths in 3D. `exponential_attenuation_pml_thickness_px` no longer sets this width with `use_ultra=True`; a script that relied on it now gets the default width until it passes `ultra_sponge_thickness_px`.
 
 Options that only tune the native solver are ignored with a warning, once per process: `pml_layer_thickness_px`, `n_transition_layer`, `pml_alpha_entrance`, `exponential_attenuation_pml_thickness_px` (use `ultra_sponge_thickness_px` instead), `use_gpu_pml`, `save_gpu_memory`, `write_maps_the_solver_does_not_read`, `use_isotropic_relaxation=False`, and a `cuda_device_id` that lists more than one device (the run uses the first one listed). `use_exponential_attenuation=False`, the native default, also warns that the backend runs the exponential attenuation model, whose attenuation is frequency-independent, not the relaxation model, whose attenuation is frequency-dependent. Pass `use_exponential_attenuation=True` to silence it.
+
+#### Attenuation modes
+
+A 2D or 3D run has three attenuation modes. Each needs `use_ultra=True`; the last two need the power-law attenuation binaries from the Pinton lab and `use_exponential_attenuation=False`.
+
+```python
+# 1. Default: frequency-independent attenuation (as described above).
+solver = fullwave.Solver(..., use_ultra=True, path_fullwave_simulation_bin=bin_folder)
+
+# 2. Power-law attenuation alpha_coeff * f**alpha_power.
+solver = fullwave.Solver(
+    ...,
+    use_ultra=True,
+    use_exponential_attenuation=False,
+    path_fullwave_simulation_bin=bin_folder,
+    ultra_attenuation_parameters="centered",  # or "author", or the path of a settings file
+)
+
+# 3. The same with any number of materials (more GPU memory).
+solver = fullwave.Solver(..., ultra_attenuation_parameters="centered", ultra_unlimited_materials=True)
+```
+
+`bin_folder` is the folder of the binaries. With `ultra_attenuation_parameters` it gives the power-law build of the grid dimension; without it, `bench_2d_batch` or `bench_3d_opt`. A name looks for `attenuation_parameters_<name>_v1.dat` next to the binary, then in the `params` folder beside `bin_folder`; the error lists the places searched. "centered" is the recommended band. `UltraUnsupportedError` is raised without `use_ultra=True`, with `use_exponential_attenuation=True`, for a missing settings file, for a binary that does not read `alpha_power.dat`, and, with `ultra_unlimited_materials=True`, for a binary that does not support it. The run directory then gets `alpha_coeff.dat`, `alpha_power.dat`, `f0.dat` and a copy of the settings file as `attenuation_parameters.dat`, and `Aexp.dat` holds the sponge only. The environment variable `FW2U_BATCH_BIN` is not used in modes 2 and 3.
 
 ---
 

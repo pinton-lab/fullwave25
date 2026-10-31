@@ -257,9 +257,9 @@ def build(tmp_path, fake_binary, *, grid, medium, source, sensor):
     )
 
 
-def test_alpha_power_other_than_one_is_refused(tmp_path, fake_binary):
+def test_alpha_power_other_than_one_is_converted_with_a_warning(tmp_path, fake_binary):
     grid, medium, source, sensor = make_inputs(alpha_power=1.1)
-    with pytest.raises(UltraUnsupportedError, match="alpha_power"):
+    with pytest.warns(UserWarning, match="converted to power 1"):
         build(tmp_path, fake_binary, grid=grid, medium=medium, source=source, sensor=sensor)
 
 

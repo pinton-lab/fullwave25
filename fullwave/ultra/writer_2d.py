@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from . import attenuation_parameters as power_law_attenuation
 from . import dat_io, stencil
 from .medium_to_aexp import aexp_from_amap, extend_map_faces, face_margins
 from .time_axis import time_axis
@@ -64,6 +65,7 @@ def write_run_directory_2d(
     n_tic_additive: int | None = None,
     m_stencil: int = 8,
     back_faces: frozenset[str] = frozenset(),
+    attenuation_parameters: str | Path | None = None,
 ) -> dict[str, float | int | dict[str, int]]:
     """Write every input file except the source signals and return the realized scalars.
 
@@ -78,7 +80,8 @@ def write_run_directory_2d(
     c0, omega0, dur, ppw, cfl : float
         Sound speed, angular frequency, duration, points per wavelength and Courant number.
     maps : dict[str, NDArray]
-        Interior maps ``cmap``, ``rmap``, ``nmap`` and ``amap`` [dB/(MHz cm)].
+        Interior maps ``cmap``, ``rmap``, ``nmap`` and ``amap`` [dB/(MHz cm)]; with
+        ``attenuation_parameters`` also ``pmap``, the attenuation exponent.
     incoords, outcoords : NDArray
         0-based interior ``(N, 2)`` source and sensor cells.
     n_tic, mod_t : int
@@ -96,6 +99,9 @@ def write_run_directory_2d(
     back_faces : frozenset[str]
         Faces ``x_low``, ``x_high``, ``y_low``, ``y_high`` behind a held source on the grid edge.
         The default empty set pads every face by ``mext``.
+    attenuation_parameters : str | Path | None
+        Parameter file of the power-law attenuation. With it, the attenuation maps, the center
+        frequency and a copy of the file are written, and ``Aexp.dat`` holds the sponge only.
     """
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -108,8 +114,9 @@ def write_run_directory_2d(
     c = extend_map_faces(maps["cmap"], margins)
     rho = extend_map_faces(maps["rmap"], margins)
     beta = extend_map_faces(maps["nmap"], margins)
+    alpha_coeff = extend_map_faces(maps["amap"], margins)
     aexp = aexp_from_amap(
-        extend_map_faces(maps["amap"], margins),
+        np.zeros_like(alpha_coeff) if attenuation_parameters is not None else alpha_coeff,
         c0=c0,
         omega0=omega0,
         dt=dt,
@@ -131,6 +138,14 @@ def write_run_directory_2d(
     dat_io.write_map(outdir / "K.dat", c**2 * rho)
     dat_io.write_map(outdir / "beta.dat", beta)
     dat_io.write_map(outdir / "Aexp.dat", aexp)
+    if attenuation_parameters is not None:
+        power_law_attenuation.write_files(
+            outdir=outdir,
+            parameters=attenuation_parameters,
+            alpha_coeff=alpha_coeff,
+            alpha_power=extend_map_faces(maps["pmap"], margins),
+            f0=omega0 / 2.0 / np.pi,
+        )
     dat_io.write_dcmap(outdir / "dcmap.dat", stencil.zone_index_map(sound_speed=c), n_zones=n_zones)
     dat_io.write_table(outdir / "dmap.dat", stencil.zone_table(sound_speed=c, dt=dt, dx=dx))
     dat_io.write_table(outdir / "d.dat", stencil.stencil_table(cfl=cfl))
