@@ -76,22 +76,10 @@ def main() -> None:
     density_map *= scatterer
 
     #
-    # --- define the linear transducer and its probe stack ---
+    # --- define the linear transducer ---
     #
 
-    transducer = fullwave.Transducer.l7_4(
-        grid,
-        face_depth_m=fullwave.TransducerStack.backing_thickness_m,
-    )
-    transducer.apply_transducer_stack(
-        sound_speed_map,
-        density_map,
-        alpha_coeff_map,
-        alpha_power_map,
-        beta_map,
-        scatterer=scatterer,
-        rng=rng,
-    )
+    transducer = fullwave.Transducer.l7_4(grid)
 
     medium = fullwave.Medium(
         grid=grid,
@@ -137,7 +125,8 @@ def main() -> None:
         aperture_m / 2,
         grid.wavelength / 8,
     )
-    axial_position = np.arange(domain_size[0] * 1 / 100, domain_size[0], grid.wavelength / 8)
+    image_start_m = 5 * grid.wavelength
+    axial_position = np.arange(image_start_m, domain_size[0], grid.wavelength / 8)
 
     element_id_to_receiver_center = transducer.element_id_to_receiver_center
     transducer_coordinates = np.array(
