@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import inspect
 import time
 import warnings
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
@@ -36,15 +37,43 @@ if TYPE_CHECKING:
 CFL_LIMIT_3D = 0.30
 SPEED_OPTIMIZED_PPW = 6
 
+PACKAGE_DIR = Path(__file__).parents[1]
+
 _shown_warnings: set[str] = set()
 
 
+def _stacklevel_of_first_caller_outside_package() -> int:
+    """Return the ``warnings.warn`` stacklevel of the first frame outside the fullwave package."""
+    frame = inspect.currentframe()
+    stacklevel = 0
+    while frame is not None and Path(frame.f_code.co_filename).is_relative_to(PACKAGE_DIR):
+        frame = frame.f_back
+        stacklevel += 1
+    return stacklevel
+
+
 def _warn_once(*, name: str, message: str, category: type[Warning]) -> None:
-    """Warn with ``message`` the first time ``name`` is seen in this process."""
+    """Warn with ``message`` the first time ``name`` is seen in this process.
+
+    The warning points at the line of the user's code, however deep the call is.
+    """
     if name in _shown_warnings:
         return
     _shown_warnings.add(name)
-    warnings.warn(message, category, stacklevel=5)
+    warnings.warn(message, category, stacklevel=_stacklevel_of_first_caller_outside_package())
+
+
+def warn_sponge_without_ultra() -> None:
+    """Warn once per process that ``ultra_sponge_thickness_px`` needs ``use_ultra=True``."""
+    _warn_once(
+        name="sponge_without_ultra",
+        message=(
+            "ultra_sponge_thickness_px is ignored without use_ultra=True. The native "
+            "absorber is sized by pml_layer_thickness_px (relaxation model) or "
+            "exponential_attenuation_pml_thickness_px (exponential model)."
+        ),
+        category=UserWarning,
+    )
 
 
 def warn_ppw_above_speed_optimum(*, ppw: int) -> None:
@@ -69,6 +98,25 @@ def warn_experimental() -> None:
             "Solver(use_ultra=True) is experimental and may change or be removed without notice."
         ),
         category=FullwaveUltraExperimentalWarning,
+    )
+
+
+def warn_ignored(*, option: str, detail: str = "") -> None:
+    """Warn once per process that ``use_ultra=True`` ignores ``option``."""
+    suffix = f"; {detail}" if detail else ""
+    _warn_once(
+        name=f"ignored:{option}",
+        message=f"{option} is ignored with use_ultra=True{suffix}.",
+        category=UserWarning,
+    )
+
+
+def warn_one_device_only(*, device: int) -> None:
+    """Warn once per process that ``use_ultra=True`` runs on one GPU, the first one listed."""
+    _warn_once(
+        name="one_device_only",
+        message=f"cuda_device_id lists several GPUs; use_ultra=True runs on GPU {device} only.",
+        category=UserWarning,
     )
 
 
@@ -122,9 +170,12 @@ def single_device(cuda_device_id: str | int | list | None) -> int:
         devices = list(cuda_device_id)
     else:
         devices = [cuda_device_id]
-    if len(devices) != 1:
-        refuse("use_ultra=True runs on one GPU; give one cuda_device_id")
-    return int(devices[0])
+    if not devices:
+        refuse("cuda_device_id lists no device")
+    device = int(devices[0])
+    if len(devices) > 1:
+        warn_one_device_only(device=device)
+    return device
 
 
 def work_directory(
@@ -377,39 +428,70 @@ class UltraBackend3D:
         )
 
 
+SPONGE_HINT = "set the sponge width with ultra_sponge_thickness_px"
+
+
+class NativeOnlyOption(NamedTuple):
+    """An option of the native solver that ``use_ultra=True`` ignores."""
+
+    solver_default: object
+    hint: str = ""
+
+
+NATIVE_ONLY_OPTIONS: dict[str, NativeOnlyOption] = {
+    "pml_layer_thickness_px": NativeOnlyOption(solver_default=None, hint=SPONGE_HINT),
+    "n_transition_layer": NativeOnlyOption(solver_default=None, hint=SPONGE_HINT),
+    "pml_alpha_entrance": NativeOnlyOption(solver_default=None, hint=SPONGE_HINT),
+    "exponential_attenuation_pml_thickness_px": NativeOnlyOption(
+        solver_default=None, hint=SPONGE_HINT
+    ),
+    "use_gpu_pml": NativeOnlyOption(solver_default=False),
+    "save_gpu_memory": NativeOnlyOption(solver_default=False),
+    "write_maps_the_solver_does_not_read": NativeOnlyOption(solver_default=False),
+    "use_isotropic_relaxation": NativeOnlyOption(solver_default=True),
+}
+
+
+def warn_native_only_options(*, options: dict[str, object]) -> None:
+    """Warn once per process for each native-only option set to a non-default value."""
+    for name, option in NATIVE_ONLY_OPTIONS.items():
+        if options[name] != option.solver_default:
+            warn_ignored(option=name, detail=option.hint)
+
+
+def warn_relaxation_model_requested(*, use_exponential_attenuation: bool) -> None:
+    """Warn once per process when the relaxation model is requested, as the native default does."""
+    if use_exponential_attenuation:
+        return
+    _warn_once(
+        name="attenuation_model",
+        message=(
+            "use_ultra=True runs the exponential attenuation model, whose attenuation is "
+            "frequency-independent (the same at every frequency), not the relaxation model that "
+            "use_exponential_attenuation=False requests, whose attenuation is "
+            "frequency-dependent."
+        ),
+        category=UserWarning,
+    )
+
+
 def check_solver_options(
     *,
     use_pml: bool,
     m_spatial_order: int,
-    pml_layer_thickness_px: int | None,
-    n_transition_layer: int | None,
     use_gpu: bool,
-    use_gpu_pml: bool,
-    pml_alpha_entrance: float | None,
     source_type: str,
-    save_gpu_memory: bool,
-    write_maps_the_solver_does_not_read: bool,
+    native_only_options: dict[str, object],
+    use_exponential_attenuation: bool,
 ) -> None:
-    """Refuse the ``Solver`` options that ``use_ultra=True`` cannot honor."""
+    """Refuse the ``Solver`` options that ``use_ultra=True`` cannot honor; warn on the rest."""
     if not use_pml:
         refuse("use_pml=False is not supported by use_ultra=True")
-    if (
-        pml_layer_thickness_px is not None
-        or n_transition_layer is not None
-        or use_gpu_pml
-        or pml_alpha_entrance is not None
-    ):
-        refuse(
-            "PML settings do not apply to use_ultra=True; "
-            "set the sponge with exponential_attenuation_pml_thickness_px"
-        )
     if m_spatial_order != 8:
         refuse("use_ultra=True supports m_spatial_order=8 only")
     if not use_gpu:
         refuse("use_ultra=True needs the GPU")
     if source_type not in SOURCE_TYPES:
         refuse(f"source_type must be one of {SOURCE_TYPES}, not {source_type!r}")
-    if save_gpu_memory:
-        refuse("save_gpu_memory is not supported by use_ultra=True")
-    if write_maps_the_solver_does_not_read:
-        refuse("write_maps_the_solver_does_not_read does not apply to use_ultra=True")
+    warn_native_only_options(options=native_only_options)
+    warn_relaxation_model_requested(use_exponential_attenuation=use_exponential_attenuation)

@@ -473,6 +473,7 @@ class Solver:
         source_type: str = HARD_RELEASED_AFTER,
         write_maps_the_solver_does_not_read: bool = False,
         use_ultra: bool = False,
+        ultra_sponge_thickness_px: int | None = None,
     ) -> None:
         """Initialize a Solver instance for the fullwave simulation.
 
@@ -608,11 +609,17 @@ class Solver:
             Experimental. Run a user-supplied fullwave2-ultra binary (not shipped; pass it
             as ``path_fullwave_simulation_bin`` or set ``FW2U_BATCH_BIN``): ``bench_2d_batch``
             for a 2D grid, ``bench_3d_opt`` for a 3D grid.
-            ``exponential_attenuation_pml_thickness_px`` sets the sponge width in cells.
-            A source with ``p0_additive`` and ``source_type="soft"`` are added to the pressure
-            through the binary's additive channel, which needs a binary that reads
-            ``ncoords_add.dat`` (and ``icmat_add.dat`` on a 3D grid). Unsupported options raise
-            ``UltraUnsupportedError``.
+            The backend runs the exponential attenuation model (frequency-independent:
+            the same attenuation at every frequency). A source with ``p0_additive`` and
+            ``source_type="soft"`` are added to the pressure through the binary's additive
+            channel, which needs a binary that reads ``ncoords_add.dat`` (and ``icmat_add.dat``
+            on a 3D grid). Options that only tune the native solver are ignored with a
+            warning; the README lists them.
+            Other unsupported options raise ``UltraUnsupportedError``.
+        ultra_sponge_thickness_px : int, optional
+            Width of the absorbing sponge of the ``use_ultra`` backend, in cells.
+            None, the default, gives 6 wavelengths in 2D and 4 wavelengths in 3D.
+            Used only with ``use_ultra=True``.
 
         Raises
         ------
@@ -636,21 +643,32 @@ class Solver:
                 run_on_memory=run_on_memory,
                 cuda_device_id=cuda_device_id,
                 verify_gpu=verify_gpu,
-                nbdy=exponential_attenuation_pml_thickness_px,
+                nbdy=ultra_sponge_thickness_px,
                 options={
                     "use_pml": use_pml,
                     "m_spatial_order": m_spatial_order,
-                    "pml_layer_thickness_px": pml_layer_thickness_px,
-                    "n_transition_layer": n_transition_layer,
                     "use_gpu": use_gpu,
-                    "use_gpu_pml": use_gpu_pml,
-                    "pml_alpha_entrance": pml_alpha_entrance,
                     "source_type": source_type,
-                    "save_gpu_memory": save_gpu_memory,
-                    "write_maps_the_solver_does_not_read": write_maps_the_solver_does_not_read,
+                    "use_exponential_attenuation": use_exponential_attenuation,
+                    "native_only_options": {
+                        "pml_layer_thickness_px": pml_layer_thickness_px,
+                        "n_transition_layer": n_transition_layer,
+                        "pml_alpha_entrance": pml_alpha_entrance,
+                        "exponential_attenuation_pml_thickness_px": (
+                            exponential_attenuation_pml_thickness_px
+                        ),
+                        "use_gpu_pml": use_gpu_pml,
+                        "save_gpu_memory": save_gpu_memory,
+                        "write_maps_the_solver_does_not_read": (
+                            write_maps_the_solver_does_not_read
+                        ),
+                        "use_isotropic_relaxation": use_isotropic_relaxation,
+                    },
                 },
             )
             return
+        if ultra_sponge_thickness_px is not None:
+            backend.warn_sponge_without_ultra()
         if exponential_attenuation_pml_thickness_px is not None and not use_exponential_attenuation:
             error_msg = (
                 "exponential_attenuation_pml_thickness_px belongs to the exponential "
