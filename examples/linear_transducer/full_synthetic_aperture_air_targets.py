@@ -169,10 +169,14 @@ def main() -> None:
     # --- define the computational grid ---
     #
 
-    domain_size = (4.5e-2, 4.5e-2)  # [axial, lateral] meters
     f0 = 2e6
     # f0 = 5e6
     c0 = 1540
+    width_m = 45e-3  # lateral width [m], wider than the array
+    domain_size = (
+        4.5e-2,
+        width_m,
+    )  # [axial, lateral] meters
     duration = domain_size[0] / c0 * 2.3
     # ppw = 22
     ppw = 12
@@ -189,11 +193,19 @@ def main() -> None:
     beta_map = np.ones(grid.shape) * 0  # nonlinearity parameter
     air_map = np.zeros(grid.shape)  # no air bubbles
 
+    sampling_interval = 7
+    transducer = fullwave.Transducer.l7_4(
+        grid,
+        sampling_modulus_time=sampling_interval,
+    )
+
     rng = np.random.default_rng(seed=42)
 
-    # put random air scatterers below 20 mm depth
+    # put random air scatterers below 20 mm depth under the probe face
     air_scatterer_start_depth_m = 20e-3
-    air_scatterer_start_depth_px = int(air_scatterer_start_depth_m / grid.dx)
+    air_scatterer_start_depth_px = transducer.face_row_px + int(
+        air_scatterer_start_depth_m / grid.dx
+    )
 
     # beads_diameter_m = 1.2e-3  # mm
     beads_diameter_m = 60e-6  # um
@@ -229,35 +241,16 @@ def main() -> None:
     # scatterer values are centered around 1.0 with small variations.
     density_map *= scatterer
 
-    #
-    # --- define the linear transducer and its probe stack ---
-    #
-
-    sampling_interval = 7
-    transducer = fullwave.Transducer.l7_4(
-        grid,
-        element_layer_px=8,
-        face_depth_m=fullwave.TransducerStack.backing_thickness_m,
-        sampling_modulus_time=sampling_interval,
-    )
-    transducer.apply_transducer_stack(
-        sound_speed_map,
-        density_map,
-        alpha_coeff_map,
-        alpha_power_map,
-        beta_map,
-        scatterer=scatterer,
-        rng=rng,
-    )
-
     medium = fullwave.Medium(
         grid,
-        sound_speed=sound_speed_map,
-        density=density_map,
-        alpha_coeff=alpha_coeff_map,
-        alpha_power=alpha_power_map,
         beta=beta_map,
         air_map=air_map,
+        **transducer.fill_probe_above_face(
+            sound_speed=sound_speed_map,
+            density=density_map,
+            alpha_coeff=alpha_coeff_map,
+            alpha_power=alpha_power_map,
+        ),
     )
     # medium.plot(export_path=work_dir / "medium.svg")
     medium.plot(export_path=work_dir / "medium.png")
@@ -331,7 +324,13 @@ def main() -> None:
     element_positions = linear_probe_positions(params["Nelements"], params["pitch"])
     b_mode_x = np.linspace(-transducer_width_m / 2, transducer_width_m / 2, num=256, endpoint=True)
     b_mode_y = np.array([0.0])  # 2D imaging (single y-plane)
-    b_mode_z = np.linspace(5e-3, domain_size[0], num=512, endpoint=True)
+    # depth below the probe face, which is the first medium row
+    b_mode_z = np.linspace(
+        5e-3,
+        domain_size[0] - transducer.face_depth_m,
+        num=512,
+        endpoint=True,
+    )
 
     # make grid points for beamforming
     grid_points = scan_grid(b_mode_x, b_mode_y, b_mode_z)

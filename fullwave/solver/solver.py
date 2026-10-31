@@ -1,6 +1,7 @@
 """solver module."""
 
 import contextlib
+import copy
 import logging
 import os
 import time
@@ -471,7 +472,7 @@ class Solver:
         verify_gpu: bool = True,
         use_gpu_pml: bool = False,
         pml_alpha_entrance: float | None = None,
-        source_type: str = HARD_RELEASED_AFTER,
+        source_type: str | None = None,
         write_maps_the_solver_does_not_read: bool = False,
         use_ultra: bool = False,
         ultra_sponge_thickness_px: int | None = None,
@@ -602,12 +603,14 @@ class Solver:
             relaxation path. Set it to True for a solver binary that predates
             that record. Such a binary stops with an error on kappax.dat rather
             than returning a wrong answer.
-        source_type : str, optional
-            How the source drives the field. "hard_released_after", the default,
-            assigns the source pressure while the drive signal plays, then lets the
-            source cells evolve freely. "hard" assigns it for the whole run, so the
-            cells stay at zero pressure after the signal ends. "soft" adds the signal
-            to the field. ``use_ultra`` follows the same three values.
+        source_type : str | None, optional
+            How the source drives the field. None, the default, takes the type of the
+            ``transducer`` when one is given, and "hard_released_after" otherwise. A
+            value that differs from the transducer's type raises ValueError.
+            "hard_released_after" assigns the source pressure while the drive signal
+            plays, then lets the source cells evolve freely. "hard" assigns it for the
+            whole run, so the cells stay at zero pressure after the signal ends.
+            "soft" adds the signal to the field. ``use_ultra`` follows the same three values.
         use_ultra : bool, optional
             Experimental. Run a user-supplied fullwave2-ultra binary (not shipped; pass it
             as ``path_fullwave_simulation_bin`` or set ``FW2U_BATCH_BIN``): ``bench_2d_batch``
@@ -640,6 +643,7 @@ class Solver:
             and transducer) are defined simultaneously.
 
         """
+        source_type = self._resolve_source_type(source_type=source_type, transducer=transducer)
         self.ultra = None
         power_law_attenuation.check_unlimited_materials(
             unlimited_materials=ultra_unlimited_materials,
@@ -841,7 +845,12 @@ class Solver:
             logger.error(error_msg)
             raise ValueError(error_msg)
         self.source_type = source_type
-        if is_soft(source_type) and self.source.p0_additive is not None:
+        source_is_the_transducers = source is None and transducer is not None
+        if is_soft(source_type) and source_is_the_transducers:
+            logger.info(
+                "source_type=%s, the transducer's source is driven by addition", source_type
+            )
+        elif is_soft(source_type) and self.source.p0_additive is not None:
             error_msg = (
                 "this source already carries an additive signal. source_type='soft' "
                 "converts a hard source into a soft one, and this source holds no "
@@ -852,7 +861,7 @@ class Solver:
             raise ValueError(error_msg)
         if not is_soft(source_type) and self.source.p0_additive is not None:
             self._warn_if_the_additive_signal_was_not_scaled()
-        if is_soft(source_type):
+        if is_soft(source_type) and not source_is_the_transducers:
             self.source = as_additive_source(
                 self.source,
                 self.grid,
@@ -959,6 +968,44 @@ class Solver:
             attenuation_parameters=attenuation_parameters,
             unlimited_materials=unlimited_materials,
         )
+
+    @staticmethod
+    def _resolve_source_type(
+        *, source_type: str | None, transducer: fullwave.Transducer | None
+    ) -> str:
+        """Return the source type of the run.
+
+        Parameters
+        ----------
+        source_type : str | None
+            The Solver's own argument.
+        transducer : fullwave.Transducer | None
+            The transducer that drives the run, if any.
+
+        Returns
+        -------
+        str
+            The transducer's type when the argument is None and a transducer is given,
+            the argument when it is given, and "hard_released_after" otherwise.
+
+        Raises
+        ------
+        ValueError
+            If the argument differs from the transducer's type.
+        """
+        if transducer is None:
+            return HARD_RELEASED_AFTER if source_type is None else source_type
+        if source_type is None:
+            return transducer.source_type
+        if source_type != transducer.source_type:
+            error_msg = (
+                f"Solver source_type {source_type!r} differs from the transducer's "
+                f"source_type {transducer.source_type!r}. Set the source type in one "
+                "place, on the Transducer, and leave the Solver's source_type unset."
+            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        return source_type
 
     def _warn_if_the_additive_signal_was_not_scaled(self) -> None:
         """Say so when an additive signal was built by hand and may carry no scale.
@@ -1575,8 +1622,10 @@ class Solver:
         Parameters
         ----------
         sources : Sequence[fullwave.Source]
-            The transmits, in order. Each one must have the same source coordinates,
-            the same signal kinds and the same signal length as the Solver's source.
+            The transmits, in order. Each one must have the same source coordinates
+            and the same signal kinds as the Solver's source. The signals may differ in
+            length and are padded with trailing zeros to the longest drive; with
+            ``use_ultra=True`` they must have one length.
             The Solver's ``source_type`` applies to every transmit.
         simulation_dir_name : str | Path
             The directory name of the simulation under the work directory.
@@ -1638,7 +1687,7 @@ class Solver:
                 highpass_cutoff_mhz=highpass_cutoff_mhz,
                 bandpass_cutoff_mhz=bandpass_cutoff_mhz,
             )
-        members = self._batch_members(sources)
+        members = self._batch_members(self._pad_to_longest_drive(sources))
         # The sensor and the sizing below need the extended grid and medium.
         self.pml_builder.run(use_pml=self.use_pml)
         sensor = self._output_sensor(
@@ -1680,6 +1729,43 @@ class Solver:
         if not load_results:
             return [path for run_paths in outputs for path in run_paths]
         return np.concatenate(outputs, axis=0)
+
+    def _pad_to_longest_drive(self, sources: Sequence[fullwave.Source]) -> list[fullwave.Source]:
+        """Return the transmits with every signal padded with zeros to the longest drive.
+
+        The longest drive is the longest signal among the transmits and the Solver's
+        source. The transmits are copied; the given sources stay as they are.
+
+        Parameters
+        ----------
+        sources : Sequence[fullwave.Source]
+            The transmits, in order.
+
+        Returns
+        -------
+        list[fullwave.Source]
+            The transmits, with signals of equal length.
+
+        """
+        names = ("p0", "p0_additive", "u0", "v0", "w0")
+        reference = [self.source] if getattr(self, "source", None) is not None else []
+        padded = []
+        for source in sources:
+            member = copy.copy(source)
+            for name in names:
+                signal = getattr(member, name, None)
+                if signal is None:
+                    continue
+                length = max(
+                    np.shape(getattr(other, name, None))[-1]
+                    for other in [*sources, *reference]
+                    if getattr(other, name, None) is not None
+                )
+                if np.shape(signal)[-1] < length:
+                    pad = [(0, 0)] * (np.ndim(signal) - 1) + [(0, length - np.shape(signal)[-1])]
+                    setattr(member, name, np.pad(signal, pad))
+            padded.append(member)
+        return padded
 
     def _batch_members(self, sources: Sequence[fullwave.Source]) -> list[fullwave.Source]:
         """Check the transmits of a batch against the Solver's source and return them.
@@ -1764,7 +1850,10 @@ class Solver:
                 return f"the {kind} signal is present in only one of them"
             if expected is None:
                 continue
-            if np.shape(found) != np.shape(expected):
+            if (
+                np.shape(found)[:-1] != np.shape(expected)[:-1]
+                or np.shape(found)[-1] < np.shape(expected)[-1]
+            ):
                 return f"the {kind} signal shape {np.shape(found)} != {np.shape(expected)}"
             expected_coords = getattr(self.source, coords, None)
             found_coords = getattr(member, coords, None)

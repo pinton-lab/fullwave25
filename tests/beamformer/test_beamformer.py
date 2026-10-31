@@ -29,6 +29,7 @@ def test_beamformer_delay_and_sum():
         axial_position_m=axial_position,
         num_elements=num_elements,
         transducer_coordinates=transducer_coordinates,
+        face_row_px=1,
     )
 
     n_time = 100
@@ -68,16 +69,39 @@ def test_beamformer_array_depth_is_not_in_time_origin():
                 * np.cos(2 * np.pi * 0.1 * (sample - center))
             )
 
+    face_row = array_row + 1
     rows = np.arange(target_row - 60, target_row + 61, 2)
     beamformer = Beamformer(
         c0=c0,
         dx=dx,
         dt=dt,
         lateral_position_m=np.array([0.0]),
-        axial_position_m=rows * dx,
+        axial_position_m=(rows - face_row) * dx,
         num_elements=num_elements,
         transducer_coordinates=transducer_coordinates,
+        face_row_px=face_row,
     )
     envelope = np.abs(beamformer.run(signals))[:, 0, 0]
     peak_row = rows[np.argmax(envelope)]
     assert abs(peak_row - target_row) <= 2
+
+
+def test_beamformer_depth_zero_is_the_face_row():
+    num_elements = 8
+    transducer_coordinates = np.stack(
+        (np.full(num_elements, 8), np.arange(num_elements)),
+        axis=-1,
+    )
+    kwargs = {
+        "c0": 1540.0,
+        "dx": 3.0e-5,
+        "dt": 5.0e-9,
+        "lateral_position_m": np.array([0.0]),
+        "axial_position_m": np.array([2.0e-3]),
+        "num_elements": num_elements,
+        "transducer_coordinates": transducer_coordinates,
+    }
+    signals = np.random.default_rng(0).normal(size=(num_elements, 2000))
+    at_face = Beamformer(**kwargs, face_row_px=9).run(signals)
+    two_rows_deeper = Beamformer(**kwargs, face_row_px=11).run(signals)
+    assert not np.allclose(at_face, two_rows_deeper)

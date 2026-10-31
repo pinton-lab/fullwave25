@@ -32,9 +32,13 @@ def main() -> None:
     # --- define the computational grid ---
     #
 
-    domain_size = (6e-2, 6e-2)  # [axial, lateral] meters
     f0 = 1e6
     c0 = 1540
+    width_m = 45e-3  # lateral width [m], wider than the array
+    domain_size = (
+        6e-2,
+        width_m,
+    )  # [axial, lateral] meters
     duration = domain_size[0] / c0 * 1.2
     grid = fullwave.Grid(domain_size, f0, duration, c0=c0)
 
@@ -49,8 +53,10 @@ def main() -> None:
     # --- define the transmit ---
     #
 
-    # focus nine tenths of the way down the domain, on the axis
-    transducer.focus(focus_m=(domain_size[0] * 9 / 10, domain_size[1] / 2))
+    # focus nine tenths of the way down the tissue, on the axis
+    tissue_depth_m = domain_size[0] - transducer.face_depth_m
+    focus_depth_m = transducer.face_depth_m + tissue_depth_m * 9 / 10
+    transducer.focus(focus_m=(focus_depth_m, domain_size[1] / 2))
 
     # make a sensor for whole domain to make an animation
     sensor_mask = np.zeros((grid.nx, grid.ny), dtype=bool)
@@ -69,15 +75,19 @@ def main() -> None:
         grid=grid,
         background_property_name=background_property_name,
     )
-    # define abdominal wall
+    # define abdominal wall, whose first layer starts at the probe face
     abdominal_wall = presets.AbdominalWallDomain(
         grid=grid,
+        start_depth=transducer.face_depth_m,
     )
 
+    # the air sits two thirds of the way down the tissue below the face
+    tissue_rows = grid.nx - transducer.face_row_px
+    air_center_row = transducer.face_row_px + tissue_rows // 3 * 2
     geometry = np.zeros((grid.nx, grid.ny))
     air_location = np.array(
         [
-            [round(grid.nx // 3 * 2 - grid.nx * 0.1), round(grid.nx // 3 * 2 + grid.nx * 0.1)],
+            [round(air_center_row - tissue_rows * 0.1), round(air_center_row + tissue_rows * 0.1)],
             [round(grid.ny // 2 - grid.ny * 0.2), round(grid.ny // 2 + grid.ny * 0.2)],
         ],
     )
@@ -136,8 +146,8 @@ def main() -> None:
     mb.register_domain(background)
     mb.register_domain(abdominal_wall)
     mb.register_domain(air_domain)
-    # mb.register_domain(simple_domain_1)
-    # mb.register_domain(simple_domain_2)
+    # register the probe fill last so it overrides the other domains
+    mb.register_domain(transducer.probe_fill_domain())
 
     # we can plot to see the current registered domains
     mb.plot_current_map(export_path=work_dir / "medium.png")

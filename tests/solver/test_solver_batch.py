@@ -94,6 +94,50 @@ def test_run_batch_writes_the_signals_of_every_member_in_order(batch_solver):
     np.testing.assert_array_equal(written, expected.ravel())
 
 
+def _short_transmit(grid: fullwave.Grid, *, drive_samples: int, delay: int) -> fullwave.Source:
+    """Return a transmit whose drive is ``drive_samples`` long, shifted by ``delay`` samples."""
+    mask = _source_mask(grid)
+    signal = np.zeros((int(mask.sum()), drive_samples))
+    signal[:, delay:] = np.linspace(0.5, 1.0, drive_samples - delay)
+    return fullwave.Source(signal, mask)
+
+
+def test_run_batch_pads_transmits_of_different_drive_lengths_with_zeros(batch_solver):
+    short = _short_transmit(batch_solver.grid, drive_samples=40, delay=5)
+    long = _short_transmit(batch_solver.grid, drive_samples=90, delay=30)
+    (simulation_dir,) = batch_solver.run_batch([short, long], generate_input_only=True)
+
+    length = 90
+    written = np.fromfile(simulation_dir / "icmat.dat", dtype=np.float32)
+    rows = short.icmat.shape[0]
+    written = written.reshape(2 * rows, length)
+    np.testing.assert_array_equal(written[:rows, :40], short.icmat.astype(np.float32))
+    assert not written[:rows, 40:].any()
+    np.testing.assert_array_equal(written[rows:, :90], long.icmat.astype(np.float32))
+    assert short.icmat.shape[1] == 40
+    assert _read_int(simulation_dir / "nTic.dat") == length
+
+
+def test_run_batch_pads_to_the_longest_drive_when_the_solver_source_is_shorter(batch_solver):
+    batch_solver.source = _short_transmit(batch_solver.grid, drive_samples=20, delay=0)
+    short = _short_transmit(batch_solver.grid, drive_samples=40, delay=5)
+    long = _short_transmit(batch_solver.grid, drive_samples=90, delay=30)
+    (simulation_dir,) = batch_solver.run_batch([short, long], generate_input_only=True)
+
+    rows = short.icmat.shape[0]
+    written = np.fromfile(simulation_dir / "icmat.dat", dtype=np.float32)
+    assert written.size == 2 * rows * 90
+
+
+def test_run_batch_still_refuses_transmits_with_other_source_points(batch_solver):
+    grid = batch_solver.grid
+    mask = np.zeros((grid.nx, grid.ny), dtype=bool)
+    mask[grid.nx // 2 + 1, :] = True
+    other = fullwave.Source(np.ones((int(mask.sum()), 40)), mask)
+    with pytest.raises(ValueError, match="does not match"):
+        batch_solver.run_batch([_transmit(grid, 1.0), other], generate_input_only=True)
+
+
 def test_run_batch_writes_the_same_coordinates_as_a_single_run(batch_solver):
     transmits = [_transmit(batch_solver.grid, scale) for scale in (1.0, 2.0)]
     (batch_dir,) = batch_solver.run_batch(transmits, generate_input_only=True)
@@ -241,15 +285,6 @@ def test_run_batch_refuses_a_transmit_with_other_coordinates(batch_solver):
 
     with pytest.raises(ValueError, match="source 1 of the batch"):
         batch_solver.run_batch([_transmit(grid, 1.0), other], generate_input_only=True)
-
-
-def test_run_batch_refuses_a_transmit_with_another_signal_length(batch_solver):
-    grid = batch_solver.grid
-    mask = _source_mask(grid)
-    short = fullwave.Source(np.ones((mask.sum(), grid.nt - 1)), mask)
-
-    with pytest.raises(ValueError, match="signal shape"):
-        batch_solver.run_batch([short], generate_input_only=True)
 
 
 def test_run_batch_refuses_an_empty_list_and_a_run_size_below_one(batch_solver):

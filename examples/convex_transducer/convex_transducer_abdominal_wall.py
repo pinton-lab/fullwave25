@@ -47,7 +47,7 @@ def main() -> None:
     # A named array places itself, so only the transmit has to be stated.
     sampling_modulus_time = 7
     transducer = fullwave.Transducer.c5_2v(grid, sampling_modulus_time=sampling_modulus_time)
-    air_map = transducer.make_suraface_reflective_with_air()
+    air_map = transducer.make_surface_reflective_with_air()
 
     # make a sensor for whole domain to make an animation
     sensor_mask = np.zeros((grid.nx, grid.ny), dtype=bool)

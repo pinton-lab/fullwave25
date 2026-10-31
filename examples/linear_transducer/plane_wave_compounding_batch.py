@@ -22,7 +22,6 @@ from plane_wave_compounding import convert_to_db, make_echoic_targets
 
 import fullwave
 from fullwave.utils import plot_utils
-from fullwave.utils.signal_filter import apply_filter
 
 
 def main() -> None:
@@ -41,11 +40,15 @@ def main() -> None:
     #
 
     # The calibrated L7-4 setup: 5.208 MHz, 12 points per wavelength, Courant 0.4.
-    domain_size = (4.5e-2, 4.5e-2)  # [axial, lateral] meters
     f0 = 5.208e6
     c0 = 1540
-    duration = domain_size[0] / c0 * 2.3
     ppw = 12
+    width_m = 45e-3  # lateral width [m], wider than the array
+    domain_size = (
+        4.5e-2,
+        width_m,
+    )  # [axial, lateral] meters
+    duration = domain_size[0] / c0 * 2.3
     cfl = 0.4
 
     grid = fullwave.Grid(domain_size, f0, duration, c0=c0, ppw=ppw, cfl=cfl)
@@ -59,6 +62,13 @@ def main() -> None:
     alpha_power_map = np.ones(grid.shape) * 1.1  # y
     beta_map = np.ones(grid.shape) * 0  # nonlinearity parameter
     air_map = np.zeros(grid.shape)  # no air bubbles
+
+    sampling_interval = 7
+    transducer = fullwave.Transducer.l7_4(
+        grid,
+        sampling_modulus_time=sampling_interval,
+    )
+    transducer_width_m = transducer.transducer_geometry.transducer_width_m
 
     # define scatterer
 
@@ -80,6 +90,7 @@ def main() -> None:
         start_offset_y_m=10e-3,
         n_targets_axial=3,
         n_targets_lateral=3,
+        face_depth_m=transducer.face_depth_m,
         centered=True,
     )
     plot_utils.plot_array(scatterer, export_path=work_dir / "scatterer.png")
@@ -87,35 +98,16 @@ def main() -> None:
     # scatterer values are centered around 1.0 with small variations.
     density_map *= scatterer
 
-    #
-    # --- define the linear transducer and its probe stack ---
-    #
-
-    sampling_interval = 7
-    transducer = fullwave.Transducer.l7_4(
-        grid,
-        face_depth_m=fullwave.TransducerStack.backing_thickness_m,
-        sampling_modulus_time=sampling_interval,
-    )
-    transducer_width_m = transducer.transducer_geometry.transducer_width_m
-    transducer.apply_transducer_stack(
-        sound_speed_map,
-        density_map,
-        alpha_coeff_map,
-        alpha_power_map,
-        beta_map,
-        scatterer=scatterer,
-        rng=rng,
-    )
-
     medium = fullwave.Medium(
         grid,
-        sound_speed=sound_speed_map,
-        density=density_map,
-        alpha_coeff=alpha_coeff_map,
-        alpha_power=alpha_power_map,
         beta=beta_map,
         air_map=air_map,
+        **transducer.fill_probe_above_face(
+            sound_speed=sound_speed_map,
+            density=density_map,
+            alpha_coeff=alpha_coeff_map,
+            alpha_power=alpha_power_map,
+        ),
     )
     medium.plot(export_path=work_dir / "medium.svg")
 
@@ -144,17 +136,9 @@ def main() -> None:
     # [angles, sensor points, time samples]; all 5 angles run in one simulation.
     batch_output = fw_solver.run_batch(sources, simulation_dir_name="plane_waves")
 
-    use_filter = True
     sensor_output_list = []
     for transmit_output in batch_output:
         sensor_output = transmit_output
-        if use_filter:
-            sensor_output = apply_filter(
-                sensor_output,
-                dt=grid.dt * transducer.sampling_modulus_time,  # effective dt after downsampling
-                f_low_hz=0.05e6,
-                use_gpu=True,
-            )
         sensor_output = fw_solver.transducer.post_process_sensor_output(
             sensor_output,
             average_surface_signals=True,
@@ -176,7 +160,13 @@ def main() -> None:
     element_positions = linear_probe_positions(params["Nelements"], params["pitch"])
     b_mode_x = np.linspace(-transducer_width_m / 2, transducer_width_m / 2, num=256, endpoint=True)
     b_mode_y = np.array([0.0])  # 2D imaging (single y-plane)
-    b_mode_z = np.linspace(5e-3, domain_size[0], num=512, endpoint=True)
+    # depth below the probe face, which is the first medium row
+    b_mode_z = np.linspace(
+        5e-3,
+        domain_size[0] - transducer.face_depth_m,
+        num=512,
+        endpoint=True,
+    )
 
     grid_points = scan_grid(b_mode_x, b_mode_y, b_mode_z)
 
