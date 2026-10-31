@@ -269,3 +269,115 @@ def test_map_parameters_search_no_invalid_points(monkeypatch, caplog):
 
     assert result.shape == (1, 2, 6)
     assert "invalid relaxation parameters" not in caplog.text
+
+
+def _cupy_with_gpu():
+    try:
+        import cupy as cp
+
+        cp.cuda.runtime.getDeviceCount()
+    except Exception:
+        return None
+    return cp
+
+
+def _same_parameters(first: dict, second: dict) -> bool:
+    return all(np.array_equal(np.asarray(first[key]), np.asarray(second[key])) for key in first)
+
+
+def _on_host(parameters: dict) -> dict:
+    return {
+        key: np.asarray(getattr(value, "get", lambda v=value: v)())
+        for key, value in parameters.items()
+    }
+
+
+@pytest.fixture(scope="module")
+def generator():
+    from fullwave.utils.relaxation_parameters import RelaxationParametersGenerator
+
+    return RelaxationParametersGenerator()
+
+
+def _parameters_for(generator, alpha_coeff, alpha_power, *, dtype, xp=np):
+    alpha_coeff_map = xp.full((3, 2), alpha_coeff, dtype=dtype)
+    alpha_power_map = xp.full((3, 2), alpha_power, dtype=dtype)
+    return _on_host(generator.generate(alpha_coeff_map, alpha_power_map))
+
+
+@pytest.fixture(scope="module")
+def invalid_nodes(generator):
+    invalid = np.asarray(generator.invalid_matrix).astype(bool)
+    alpha_nodes = np.asarray(generator.alpha_list).ravel().round(10)
+    power_nodes = np.asarray(generator.power_list).ravel().round(10)
+    rows, columns = np.nonzero(invalid)
+    assert rows.size > 0
+    return invalid, alpha_nodes, power_nodes, rows, columns
+
+
+def test_float32_power_node_serves_its_own_cell(generator):
+    own_cell = _parameters_for(generator, 0.5, 1.2, dtype=np.float64)
+    next_cell = _parameters_for(generator, 0.5, 1.3, dtype=np.float64)
+    served = _parameters_for(generator, 0.5, 1.2, dtype=np.float32)
+    assert _same_parameters(served, own_cell)
+    assert not _same_parameters(served, next_cell)
+
+
+def test_float32_alpha_node_serves_its_own_cell(generator):
+    own_cell = _parameters_for(generator, 0.1, 1.5, dtype=np.float64)
+    next_cell = _parameters_for(generator, 0.11, 1.5, dtype=np.float64)
+    served = _parameters_for(generator, 0.1, 1.5, dtype=np.float32)
+    assert _same_parameters(served, own_cell)
+    assert not _same_parameters(served, next_cell)
+
+
+def test_off_node_requests_keep_the_cell_at_or_above_rule(generator):
+    cell_above = _parameters_for(generator, 0.5, 1.3, dtype=np.float64)
+    assert _same_parameters(_parameters_for(generator, 0.5, 1.25, dtype=np.float64), cell_above)
+    assert _same_parameters(
+        _parameters_for(generator, 0.5, 1.2 + 1e-4, dtype=np.float64), cell_above
+    )
+    assert _same_parameters(
+        _parameters_for(generator, 0.5, 1.2 + 1e-4, dtype=np.float32), cell_above
+    )
+    assert not _same_parameters(_parameters_for(generator, 0.5, 1.2, dtype=np.float64), cell_above)
+
+
+def test_float32_node_on_the_gpu_matches_the_cpu(generator):
+    cp = _cupy_with_gpu()
+    if cp is None:
+        pytest.skip("cupy and a GPU are required")
+    for alpha_coeff, alpha_power in [(0.5, 1.2), (0.1, 1.5)]:
+        on_cpu = _parameters_for(generator, alpha_coeff, alpha_power, dtype=np.float64)
+        on_gpu = _parameters_for(generator, alpha_coeff, alpha_power, dtype=np.float32, xp=cp)
+        assert _same_parameters(on_gpu, on_cpu)
+    cell_above = _parameters_for(generator, 0.5, 1.3, dtype=np.float64)
+    off_node = _parameters_for(generator, 0.5, 1.2 + 1e-4, dtype=np.float32, xp=cp)
+    assert _same_parameters(off_node, cell_above)
+
+
+def test_is_calibrated_reports_a_float32_invalid_node_as_invalid(generator, invalid_nodes):
+    _, alpha_nodes, power_nodes, rows, columns = invalid_nodes
+    alpha32 = alpha_nodes[rows].astype(np.float32)
+    power32 = power_nodes[columns].astype(np.float32)
+    assert not generator.is_calibrated(alpha32, power32).any()
+    assert not generator.is_calibrated(alpha_nodes[rows], power_nodes[columns]).any()
+
+
+def test_is_calibrated_reads_the_cell_below_an_invalid_column(generator, invalid_nodes):
+    invalid, alpha_nodes, power_nodes, rows, columns = invalid_nodes
+    has_cell_below = columns > 0
+    alpha32 = alpha_nodes[rows[has_cell_below]].astype(np.float32)
+    power_below32 = power_nodes[columns[has_cell_below] - 1].astype(np.float32)
+    is_valid_below = ~invalid[rows[has_cell_below], columns[has_cell_below] - 1]
+    assert np.array_equal(generator.is_calibrated(alpha32, power_below32), is_valid_below)
+
+
+def test_is_usable_reads_the_same_cell_for_float32_and_float64(generator, invalid_nodes):
+    _, alpha_nodes, power_nodes, rows, columns = invalid_nodes
+    assert np.array_equal(
+        generator.is_usable(
+            alpha_nodes[rows].astype(np.float32), power_nodes[columns].astype(np.float32)
+        ),
+        generator.is_usable(alpha_nodes[rows], power_nodes[columns]),
+    )
