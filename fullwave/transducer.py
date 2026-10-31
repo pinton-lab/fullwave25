@@ -993,7 +993,7 @@ class Transducer:
         element_layer_px: int = 2,
         face_depth_m: float = 0.0,
         sampling_modulus_time: int = 1,
-        source_type: str = source_type_module.HARD_RELEASED_AFTER,
+        source_type: str = source_type_module.HARD,
     ) -> "Transducer":
         """Return an ATL Philips L7-4 linear array on one grid.
 
@@ -1016,10 +1016,11 @@ class Transducer:
         sampling_modulus_time : int
             How many time steps separate two recorded samples.
         source_type : str
-            "hard_released_after", the default, assigns the signal while it plays,
-            then lets the source cells evolve freely. "hard" assigns it for the
-            whole run, so the cells stay at zero pressure after the signal ends.
-            "soft" adds the signal to the field.
+            "hard", the default, assigns the signal for the whole run, so the
+            cells stay at zero pressure after the signal ends and the array
+            face stays reflective. "hard_released_after" assigns it while it
+            plays, then lets the source cells evolve freely. "soft" adds the
+            signal to the field.
 
         Returns
         -------
@@ -1050,7 +1051,7 @@ class Transducer:
         element_layer_px: int | None = None,
         face_depth_m: float = 0.0,
         sampling_modulus_time: int = 1,
-        source_type: str = source_type_module.HARD_RELEASED_AFTER,
+        source_type: str = source_type_module.HARD,
     ) -> "Transducer":
         """Return a curved array of 49.57 mm radius on one grid.
 
@@ -1072,10 +1073,11 @@ class Transducer:
         sampling_modulus_time : int
             How many time steps separate two recorded samples.
         source_type : str
-            "hard_released_after", the default, assigns the signal while it plays,
-            then lets the source cells evolve freely. "hard" assigns it for the
-            whole run, so the cells stay at zero pressure after the signal ends.
-            "soft" adds the signal to the field.
+            "hard", the default, assigns the signal for the whole run, so the
+            cells stay at zero pressure after the signal ends and the array
+            face stays reflective. "hard_released_after" assigns it while it
+            plays, then lets the source cells evolve freely. "soft" adds the
+            signal to the field.
 
         Returns
         -------
@@ -1106,7 +1108,7 @@ class Transducer:
         element_layer_px: int = 4,
         face_depth_m: float = 0.0,
         sampling_modulus_time: int = 1,
-        source_type: str = source_type_module.HARD_RELEASED_AFTER,
+        source_type: str = source_type_module.HARD,
     ) -> "Transducer":
         """Return a 64 element phased array of 27 mm aperture on one grid.
 
@@ -1124,10 +1126,11 @@ class Transducer:
         sampling_modulus_time : int
             How many time steps separate two recorded samples.
         source_type : str
-            "hard_released_after", the default, assigns the signal while it plays,
-            then lets the source cells evolve freely. "hard" assigns it for the
-            whole run, so the cells stay at zero pressure after the signal ends.
-            "soft" adds the signal to the field.
+            "hard", the default, assigns the signal for the whole run, so the
+            cells stay at zero pressure after the signal ends and the array
+            face stays reflective. "hard_released_after" assigns it while it
+            plays, then lets the source cells evolve freely. "soft" adds the
+            signal to the field.
 
         Returns
         -------
@@ -1817,10 +1820,20 @@ class Transducer:
             additive.additive_signal_is_scaled = True
             return additive
         return fullwave.source.Source(
-            p0=self.signal,
+            p0=self._signal_without_silent_tail(),
             coords=self.source_coords,
             grid_shape=grid_shape,
         )
+
+    def _signal_without_silent_tail(self) -> NDArray[np.float64]:
+        """Return the signal up to the last time sample at which any pixel is nonzero.
+
+        The solver reads the length of this array as the drive length, so a hard
+        source holds, or releases, the cells after the drive and not after the run.
+        """
+        signal = self.signal
+        driven_samples = np.flatnonzero((signal != 0).any(axis=0))
+        return signal[:, : driven_samples[-1] + 1]
 
     @property
     def n_sources(self) -> int:
@@ -1956,7 +1969,7 @@ class LinearTransducer(Transducer):
         active_source_elements: tuple[bool] | None = None,
         active_sensor_elements: tuple[bool] | None = None,
         *,
-        source_type: str = source_type_module.HARD_RELEASED_AFTER,
+        source_type: str = source_type_module.HARD,
     ) -> None:
         """Initialize a LinearTransducer instance.
 
@@ -1972,6 +1985,11 @@ class LinearTransducer(Transducer):
             Flags indicating active source elements.
         active_sensor_elements : (tuple[bool] | None)
             Flags indicating active sensor elements.
+        source_type : str
+            "hard", the default, assigns the signal for the whole run, so the
+            cells stay at zero pressure after the signal ends and the array
+            face stays reflective. "hard_released_after" and "soft" are the
+            alternatives.
 
         """
         transducer_geometry = TransducerGeometry(
@@ -1997,7 +2015,10 @@ def make_p4_1c_trasnducer(
     position_m: tuple[float, float] | None = (0.0, 0.0),
     position_px: tuple[int, int] | None = None,
 ) -> Transducer:
-    """Create a P4.1C transducer.
+    """Create a P4.1C transducer with the held hard source.
+
+    The source type is "hard", so the cells stay at zero pressure after the
+    signal ends and the array face stays reflective.
 
     Parameters
     ----------
@@ -2036,5 +2057,5 @@ def make_p4_1c_trasnducer(
     return fullwave.Transducer(
         transducer_geometry=transducer_geometry,
         grid=grid,
-        source_type=source_type_module.HARD_RELEASED_AFTER,
+        source_type=source_type_module.HARD,
     )
