@@ -1,6 +1,7 @@
 """solver module."""
 
 import contextlib
+import copy
 import logging
 import os
 import time
@@ -1587,8 +1588,10 @@ class Solver:
         Parameters
         ----------
         sources : Sequence[fullwave.Source]
-            The transmits, in order. Each one must have the same source coordinates,
-            the same signal kinds and the same signal length as the Solver's source.
+            The transmits, in order. Each one must have the same source coordinates
+            and the same signal kinds as the Solver's source. The signals may differ in
+            length and are padded with trailing zeros to the longest drive; with
+            ``use_ultra=True`` they must have one length.
             The Solver's ``source_type`` applies to every transmit.
         simulation_dir_name : str | Path
             The directory name of the simulation under the work directory.
@@ -1650,7 +1653,7 @@ class Solver:
                 highpass_cutoff_mhz=highpass_cutoff_mhz,
                 bandpass_cutoff_mhz=bandpass_cutoff_mhz,
             )
-        members = self._batch_members(sources)
+        members = self._batch_members(self._pad_to_longest_drive(sources))
         # The sensor and the sizing below need the extended grid and medium.
         self.pml_builder.run(use_pml=self.use_pml)
         sensor = self._output_sensor(
@@ -1692,6 +1695,43 @@ class Solver:
         if not load_results:
             return [path for run_paths in outputs for path in run_paths]
         return np.concatenate(outputs, axis=0)
+
+    def _pad_to_longest_drive(self, sources: Sequence[fullwave.Source]) -> list[fullwave.Source]:
+        """Return the transmits with every signal padded with zeros to the longest drive.
+
+        The longest drive is the longest signal among the transmits and the Solver's
+        source. The transmits are copied; the given sources stay as they are.
+
+        Parameters
+        ----------
+        sources : Sequence[fullwave.Source]
+            The transmits, in order.
+
+        Returns
+        -------
+        list[fullwave.Source]
+            The transmits, with signals of equal length.
+
+        """
+        names = ("p0", "p0_additive", "u0", "v0", "w0")
+        reference = [self.source] if getattr(self, "source", None) is not None else []
+        padded = []
+        for source in sources:
+            member = copy.copy(source)
+            for name in names:
+                signal = getattr(member, name, None)
+                if signal is None:
+                    continue
+                length = max(
+                    np.shape(getattr(other, name, None))[-1]
+                    for other in [*sources, *reference]
+                    if getattr(other, name, None) is not None
+                )
+                if np.shape(signal)[-1] < length:
+                    pad = [(0, 0)] * (np.ndim(signal) - 1) + [(0, length - np.shape(signal)[-1])]
+                    setattr(member, name, np.pad(signal, pad))
+            padded.append(member)
+        return padded
 
     def _batch_members(self, sources: Sequence[fullwave.Source]) -> list[fullwave.Source]:
         """Check the transmits of a batch against the Solver's source and return them.
@@ -1776,7 +1816,10 @@ class Solver:
                 return f"the {kind} signal is present in only one of them"
             if expected is None:
                 continue
-            if np.shape(found) != np.shape(expected):
+            if (
+                np.shape(found)[:-1] != np.shape(expected)[:-1]
+                or np.shape(found)[-1] < np.shape(expected)[-1]
+            ):
                 return f"the {kind} signal shape {np.shape(found)} != {np.shape(expected)}"
             expected_coords = getattr(self.source, coords, None)
             found_coords = getattr(member, coords, None)

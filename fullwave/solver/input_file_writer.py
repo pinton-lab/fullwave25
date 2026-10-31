@@ -293,7 +293,7 @@ class InputFileWriter:
                     _incoords_vel,
                 )
         self._queue_coords_write(simulation_dir / "icc.dat", self.source.incoords)
-        self._save_drive_params(simulation_dir)
+        self._save_drive_params(simulation_dir, members)
         self._copy_simulation_bin_file(simulation_dir)
 
         if not self.use_exponential_attenuation:
@@ -1373,18 +1373,24 @@ class InputFileWriter:
             save_path = simulation_dir / f"{var_name}.dat"
             self._queue_v_abs_write(np.float32, save_path, var)
 
-    def _save_drive_params(self, simulation_dir: Path) -> None:
+    def _save_drive_params(
+        self,
+        simulation_dir: Path,
+        members: Sequence[fullwave.Source] | None = None,
+    ) -> None:
         """Write the drive length and the hold flag of this transmit.
 
         Every transmit folder gets its own files, never a link to the shared
         static-map files, and a flag left by an earlier run is removed when the
-        hold is off.
+        hold is off. The members of a batch share one length, which can exceed the
+        length of the source, so the drive length is the one of the members.
         """
         drive_length_file = simulation_dir / "nTic.dat"
         hold_flag_file = simulation_dir / "hold_source.dat"
         drive_length_file.unlink(missing_ok=True)
         hold_flag_file.unlink(missing_ok=True)
-        self._queue_v_abs_write(np.int32, drive_length_file, self.source.icmat.shape[1])
+        drive_source = self.source if members is None else members[0]
+        self._queue_v_abs_write(np.int32, drive_length_file, drive_source.icmat.shape[1])
         if self._holds_the_source:
             self._queue_v_abs_write(np.int32, hold_flag_file, 1)
 
