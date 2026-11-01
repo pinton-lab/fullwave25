@@ -53,7 +53,7 @@ The graph shows a comparison of the target power-law attenuation $\alpha=\alpha_
 
 Fullwave 2.5 is developed and maintained by [Pinton Lab](https://github.com/pinton-lab) at the University of North Carolina at Chapel Hill.
 
-If you use Fullwave 2.5 in your research, please cite this repository as:
+If you use Fullwave 2.5 in your research, please cite this repository as follows. If you use `MachBeamformer`, please also cite mach (see [Beamforming](#beamforming)).
 
 ```bibtex
 @ARTICLE{Sode2026-rd,
@@ -254,6 +254,37 @@ recorded = solver.run_batch(sources)  # [n_transmits, n_sensors, n_t]
 ```
 
 `run_batch` runs all transmits of the list. It puts at most `max_members_per_run` transmits in one simulation: by default 32, or fewer when the GPU memory estimate does not fit that many into the free GPU memory. A longer sequence runs as several simulations of nearly equal size, so 128 transmits run as 4 simulations of 32. In a 2D L7-4 test the time per transmit stopped falling at 16 to 32 transmits. [transmit_batch_basics.py](examples/transmit_batch/transmit_batch_basics.py) shows plane waves and focused lines as batches, and [plane_wave_compounding_batch.py](examples/linear_transducer/plane_wave_compounding_batch.py) makes a compounded B-mode from one batch.
+
+### Beamforming
+
+`fullwave.beamformer.Beamformer` is a delay-and-sum beamformer for linear arrays that runs on the CPU, for educational purposes; it is not optimized for speed. For fast beamforming, use `fullwave.beamformer.MachBeamformer`, built on [mach](https://github.com/Forest-Neurotech/mach), an open-source GPU beamformer with an optimized delay-and-sum CUDA kernel (1.1 trillion points per second on a consumer-grade GPU, more than 10 times faster than other open-source GPU beamformers). Install the extra with `pip install "fullwave25[mach]"`, which brings mach-beamform, pymust and cupy; mach needs Linux and an NVIDIA GPU with driver 12.8 or later. It converts the traces to IQ with `pymust.rf2iq`, measures depth from the probe face, and takes the transmit as a plane wave, a focus, one element, or arrival times you give:
+
+```python
+beamformer = MachBeamformer.from_transducer(
+    transducer, lateral_position_m=lateral_m, axial_position_m=depth_m, f_number=1.0,
+)
+arrival_s = [beamformer.plane_wave_arrival_s(angle_deg=a) for a in angles]
+image = beamformer.beamform(np.stack(traces), tx_arrival_s=np.stack(arrival_s))  # complex [n_depth, n_lateral]
+```
+
+`traces` is one `[n_elements, n_time]` array per transmit (from `post_process_sensor_output`). `focused_arrival_s(focus_m=...)` and `synthetic_aperture_arrival_s(element=...)` give the other transmits. `f_number` is F = depth / aperture width; `Beamformer` takes the half width as depth / F, so pass `f_number / 2` to match it. Time zero comes from the drive and the source-to-face rows, so it holds for any transmit of the named flat arrays. [plane_wave_compounding.py](examples/linear_transducer/plane_wave_compounding.py) and [full_synthetic_aperture.py](examples/linear_transducer/full_synthetic_aperture.py) use it.
+
+If you use `MachBeamformer`, please also cite mach:
+
+```bibtex
+@article{mach,
+  title = {mach: ultrafast ultrasound beamforming},
+  author = {Guan, Charles and Rockhill, Alexander P and Sode, Masashi and Pinton, Gianmarco},
+  year = 2026,
+  journal = {Journal of Medical Imaging},
+  publisher = {Society of Photo-Optical Instrumentation Engineers},
+  volume = 13,
+  number = 6,
+  pages = {062203--062203},
+  doi = {10.1117/1.JMI.13.6.062203},
+  url = {https://github.com/Forest-Neurotech/mach}
+}
+```
 
 ### Which example to read
 
