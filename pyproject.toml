@@ -45,6 +45,12 @@ examples = [
     "pymust>=0.1.8",
 ]
 
+mach = [
+    "mach-beamform>=0.0.4",
+    "cupy-cuda12x>=13.6.0",
+    "pymust>=0.1.8",
+]
+
 [tool.hatch.version]
 path = "fullwave/__init__.py"
 
