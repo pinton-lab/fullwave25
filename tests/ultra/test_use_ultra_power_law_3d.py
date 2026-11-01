@@ -142,11 +142,6 @@ def test_run_directory_without_the_keyword_has_none_of_the_files(build_power_law
     assert not any((rundir / name).exists() for name in NEW_FILES)
 
 
-def test_alpha_power_other_than_one_is_converted_without_the_keyword(build_power_law_solver):
-    with pytest.warns(UserWarning, match="converted to power 1"):
-        build_power_law_solver(ultra_attenuation_parameters=None, use_exponential_attenuation=True)
-
-
 def test_keyword_without_use_ultra_is_refused(build_power_law_solver):
     with pytest.raises(UltraUnsupportedError, match="needs use_ultra=True"):
         build_power_law_solver(use_ultra=False)

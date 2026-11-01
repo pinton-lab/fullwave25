@@ -9,9 +9,8 @@ import pytest
 
 import fullwave
 from fullwave.ultra import binary
-from fullwave.ultra.backend import power_one_alpha_coeff
 from fullwave.ultra.errors import UltraUnsupportedError
-from fullwave.ultra.medium_to_aexp import aexp_from_amap, extend_map
+from fullwave.ultra.medium_to_aexp import aexp_from_amap, dbmhzcm2aexp, extend_map
 
 SHAPE = (40, 32)
 N_TIC = 30
@@ -158,48 +157,27 @@ def aexp_of_run(build_solver, solver_arguments, *, alpha_coeff, alpha_power):
     return (rundir / "Aexp.dat").read_bytes()
 
 
-def test_power_two_is_converted_to_power_one_at_f0(build_solver, solver_arguments):
-    f0_mhz = solver_arguments()["grid"].f0 / 1e6
-    converted = aexp_of_run(build_solver, solver_arguments, alpha_coeff=0.4, alpha_power=2.0)
-    by_hand = aexp_of_run(build_solver, solver_arguments, alpha_coeff=0.4 * f0_mhz, alpha_power=1.0)
-    assert converted == by_hand
+def test_alpha_power_is_ignored_without_a_settings_file(build_solver, solver_arguments):
+    powered = aexp_of_run(build_solver, solver_arguments, alpha_coeff=0.4, alpha_power=2.0)
+    power_one = aexp_of_run(build_solver, solver_arguments, alpha_coeff=0.4, alpha_power=1.0)
+    assert powered == power_one
 
 
-def test_power_one_medium_is_written_unchanged(solver_arguments):
-    alpha_coeff = np.linspace(0.1, 0.9, 12)
-    assert (
-        power_one_alpha_coeff(
-            alpha_coeff=alpha_coeff, alpha_power=np.ones(12), f0=solver_arguments()["grid"].f0
-        )
-        is alpha_coeff
-    )
+def test_written_decay_uses_alpha_coeff_as_given(build_solver, solver_arguments):
+    grid = solver_arguments()["grid"]
+    medium = uniform_medium(grid, alpha_coeff=0.4, alpha_power=2.0)
+    (rundir,) = input_only_run(build_solver(medium=medium))
+    decay = dbmhzcm2aexp(np.full(1, 0.4), c0=grid.c0, omega0=grid.omega, dt=grid.dt)[0]
+    written = read_map(rundir, "Aexp.dat")
+    assert np.float32(decay) == written[EXTENDED[0] // 2, EXTENDED[1] // 2]
 
 
-def test_converted_values_are_alpha_times_f0_to_the_power_minus_one():
-    alpha_power = np.array([1.0, 2.0, 1.5])
-    converted = power_one_alpha_coeff(
-        alpha_coeff=np.full(3, 0.5), alpha_power=alpha_power, f0=3.0e6
-    )
-    assert np.allclose(converted, 0.5 * 3.0 ** (alpha_power - 1.0))
-
-
-def test_power_conversion_warns_once_with_the_range_and_f0(build_solver, solver_arguments):
-    medium = uniform_medium(solver_arguments()["grid"], alpha_coeff=0.4, alpha_power=2.0)
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        build_solver(medium=medium)
-        build_solver(medium=medium)
-    messages = [str(w.message) for w in caught if "converted to power 1" in str(w.message)]
-    assert len(messages) == 1
-    assert "from 2 to 2" in messages[0]
-    assert "f0=1 MHz" in messages[0]
-
-
-def test_power_one_medium_gives_no_conversion_warning(build_solver):
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        build_solver()
-    assert not any("converted to power 1" in str(w.message) for w in caught)
+def test_the_ultra_decay_formula_equals_the_standard_exponential_decay(solver_arguments):
+    grid = solver_arguments()["grid"]
+    medium = uniform_medium(grid, alpha_coeff=0.4, alpha_power=2.0)
+    standard = np.asarray(medium.build_exponential().alpha_exp)
+    ultra = dbmhzcm2aexp(np.full(SHAPE, 0.4), c0=grid.c0, omega0=grid.omega, dt=grid.dt)
+    assert np.allclose(standard, ultra, rtol=1e-12)
 
 
 def test_keyword_without_use_ultra_is_refused(build_power_law_solver):

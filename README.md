@@ -402,7 +402,7 @@ import fullwave
 solver = fullwave.Solver(
     work_dir=Path("./outputs/ultra"),
     grid=grid,  # 2D or 3D fullwave.Grid
-    medium=medium,  # fullwave.Medium; alpha_power other than 1 is converted to power 1 at f0
+    medium=medium,  # fullwave.Medium
     source=source,
     sensor=sensor,
     path_fullwave_simulation_bin=Path("/path/to/fullwave2-ultra/bin"),
@@ -433,7 +433,7 @@ Supported now:
 
 This list will grow as the backend does.
 
-Unless `ultra_attenuation_parameters` is set (below), the backend runs the exponential attenuation model (frequency-independent: the same attenuation at every frequency); a frequency-dependent attenuation is available only with `ultra_attenuation_parameters` and a compatible binary. Without it, cells with an `alpha_power` other than 1 are converted to power 1 with the same attenuation at `f0` (`alpha_coeff * f0_MHz**(alpha_power - 1)`), with one warning that names the converted range. Set the width of its absorbing sponge, in cells, with `ultra_sponge_thickness_px`; the default is 6 wavelengths in 2D and 4 wavelengths in 3D. `exponential_attenuation_pml_thickness_px` no longer sets this width with `use_ultra=True`; a script that relied on it now gets the default width until it passes `ultra_sponge_thickness_px`.
+Unless `ultra_attenuation_parameters` is set (below), the backend runs the exponential attenuation model (frequency-independent: the same attenuation at every frequency); a frequency-dependent attenuation is available only with `ultra_attenuation_parameters` and a compatible binary. Without it, `alpha_coeff` is used as given in dB/(MHz cm) and `alpha_power` is ignored, as fullwave25 standard with exponential attenuation does. Set the width of its absorbing sponge, in cells, with `ultra_sponge_thickness_px`; the default is 6 wavelengths in 2D and 4 wavelengths in 3D. `exponential_attenuation_pml_thickness_px` no longer sets this width with `use_ultra=True`; a script that relied on it now gets the default width until it passes `ultra_sponge_thickness_px`.
 
 Options that only tune the native solver are ignored with a warning, once per process: `pml_layer_thickness_px`, `n_transition_layer`, `pml_alpha_entrance`, `exponential_attenuation_pml_thickness_px` (use `ultra_sponge_thickness_px` instead), `use_gpu_pml`, `save_gpu_memory`, `write_maps_the_solver_does_not_read`, `use_isotropic_relaxation=False`, and a `cuda_device_id` that lists more than one device (the run uses the first one listed). `use_exponential_attenuation=False`, the native default, also warns that the backend runs the exponential attenuation model, whose attenuation is frequency-independent, not the relaxation model, whose attenuation is frequency-dependent. Pass `use_exponential_attenuation=True` to silence it.
 

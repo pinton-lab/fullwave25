@@ -21,14 +21,12 @@ from fullwave.utils.gpu_memory import (
 from . import binary as binary_module
 from . import dat_io
 from .backend import (
-    alpha_coeff_for_binary,
     check_filters,
     driven_source,
     filter_traces,
     refuse,
     single_device,
     to_host,
-    warn_power_converted,
     work_directory,
 )
 from .binary import OUTPUT_TAIL_CHARS
@@ -246,8 +244,6 @@ class UltraBackend2D:
             refuse("this backend runs a 2D grid")
         if type(self.medium).__name__ != "Medium":
             refuse("use_ultra=True needs fullwave.Medium (exponential attenuation)")
-        if self.attenuation_parameters is None:
-            warn_power_converted(alpha_power=to_host(self.medium.alpha_power), f0=self.grid.f0)
         self._check_source(self.source)
         if getattr(self.sensor, "is_sparse_grid", False):
             refuse("sparse-grid sensors are not supported by use_ultra=True")
@@ -549,9 +545,7 @@ class UltraBackend2D:
                 "cmap": to_host(medium.sound_speed),
                 "rmap": to_host(medium.density),
                 "nmap": to_host(medium.beta),
-                "amap": alpha_coeff_for_binary(
-                    medium=medium, f0=grid.f0, attenuation_parameters=self.attenuation_parameters
-                ),
+                "amap": to_host(medium.alpha_coeff),
                 "pmap": to_host(medium.alpha_power),
             },
             incoords=self.source.incoords,
