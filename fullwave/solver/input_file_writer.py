@@ -12,6 +12,7 @@ import numpy as np
 from numpy.typing import DTypeLike, NDArray
 
 import fullwave
+from fullwave.solver.source_type import kerf_switch_step
 from fullwave.utils import check_functions
 from fullwave.utils.numerical import matlab_round
 
@@ -293,6 +294,7 @@ class InputFileWriter:
                     _incoords_vel,
                 )
         self._queue_coords_write(simulation_dir / "icc.dat", self.source.incoords)
+        self._save_kerf(simulation_dir, members)
         self._save_drive_params(simulation_dir, members)
         self._copy_simulation_bin_file(simulation_dir)
 
@@ -1393,6 +1395,29 @@ class InputFileWriter:
         self._queue_v_abs_write(np.int32, drive_length_file, drive_source.icmat.shape[1])
         if self._holds_the_source:
             self._queue_v_abs_write(np.int32, hold_flag_file, 1)
+
+    def _save_kerf(
+        self,
+        simulation_dir: Path,
+        members: Sequence[fullwave.Source] | None = None,
+    ) -> None:
+        """Write the kerf cells and the step at which each transmit starts to hold them.
+
+        ``icckerf.dat`` lists the cells like ``icc.dat``, ``ncoordskerf.dat`` their count and
+        ``nkerf0.dat`` one switch step per transmit: the last driven sample plus 1. The
+        solver holds the cells at zero pressure from that step to the end of the run.
+        Files left by an earlier run are removed when the source has no kerf cells.
+        """
+        names = ("icckerf.dat", "ncoordskerf.dat", "nkerf0.dat")
+        for name in names:
+            (simulation_dir / name).unlink(missing_ok=True)
+        if not self.source.n_kerf:
+            return
+        transmits = [self.source] if members is None else members
+        steps = [kerf_switch_step(transmit.icmat) for transmit in transmits]
+        self._queue_coords_write(simulation_dir / "icckerf.dat", self.source.kerf_coords)
+        self._queue_v_abs_write(np.int32, simulation_dir / "ncoordskerf.dat", self.source.n_kerf)
+        self._queue_v_abs_write(np.int32, simulation_dir / "nkerf0.dat", np.array(steps))
 
     def _save_coords_params(self, simulation_dir: Path) -> None:
         var_list = [

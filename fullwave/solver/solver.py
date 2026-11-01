@@ -22,6 +22,7 @@ from fullwave.solver.source_type import (
     as_additive_source,
     is_hard_held,
     is_soft,
+    kerf_refusal,
 )
 from fullwave.ultra import attenuation_parameters as power_law_attenuation
 from fullwave.ultra import backend, binary, factory
@@ -37,7 +38,12 @@ from fullwave.utils.gpu_memory import (
 from fullwave.utils.signal_filter import apply_filter
 
 from .binary_manager import ensure_binary
-from .binary_markers import check_binary_holds_source
+from .binary_markers import (
+    KERF_MARKER,
+    binary_has_marker,
+    check_binary_holds_kerf,
+    check_binary_holds_source,
+)
 from .cuda_utils import get_cuda_architecture, retrieve_cuda_version
 from .utils import load_dat_data
 
@@ -644,6 +650,7 @@ class Solver:
 
         """
         source_type = self._resolve_source_type(source_type=source_type, transducer=transducer)
+        self._drops_transducer_kerf = False
         self.ultra = None
         power_law_attenuation.check_unlimited_materials(
             unlimited_materials=ultra_unlimited_materials,
@@ -832,20 +839,28 @@ class Solver:
         if n_transition_layer is None:
             n_transition_layer = self.grid.ppw * 2
 
-        if source is not None:
-            self.source = source
-        elif transducer is not None:
-            self.source = transducer.source
-        else:
-            error_msg = "source or transducer must be provided"
-            raise ValueError(error_msg)
-
         if source_type not in SOURCE_TYPES:
             error_msg = f"source_type {source_type!r} is not one of {SOURCE_TYPES}"
             logger.error(error_msg)
             raise ValueError(error_msg)
         self.source_type = source_type
+        if transducer is not None:
+            self._drops_transducer_kerf = self._transducer_kerf_is_dropped(
+                transducer=transducer,
+                binary=Path(path_fullwave_simulation_bin),
+                source_type=source_type,
+            )
+        if source is not None:
+            self.source = source
+        elif transducer is not None:
+            self.source = self._without_dropped_kerf(transducer.source)
+        else:
+            error_msg = "source or transducer must be provided"
+            raise ValueError(error_msg)
+        if self.source.n_kerf and (refusal := kerf_refusal(source_type)):
+            raise ValueError(refusal)
         source_is_the_transducers = source is None and transducer is not None
+        self._source_is_the_transducers = source_is_the_transducers
         if is_soft(source_type) and source_is_the_transducers:
             logger.info(
                 "source_type=%s, the transducer's source is driven by addition", source_type
@@ -869,7 +884,7 @@ class Solver:
                 use_exponential_attenuation=use_exponential_attenuation,
             )
             logger.info("source_type=%s, the source is driven by addition", source_type)
-        self._check_binary_holds_source(path_fullwave_simulation_bin)
+        self._check_binary_holds_source_and_kerf(path_fullwave_simulation_bin)
 
         if sensor is not None:
             self.sensor = sensor
@@ -947,8 +962,12 @@ class Solver:
         binary_name = binary.BINARY_NAME_3D if grid.is_3d else binary.BINARY_NAME_2D
         ultra_binary = binary.resolve_binary(path_fullwave_simulation_bin, name=binary_name)
         self._check_input(grid, medium, source, sensor, transducer, ultra_binary)
+        if transducer is not None:
+            self._drops_transducer_kerf = self._transducer_kerf_is_dropped(
+                transducer=transducer, binary=ultra_binary, source_type=options["source_type"]
+            )
         if source is None:
-            source = transducer.source
+            source = self._without_dropped_kerf(transducer.source)
         if sensor is None:
             sensor = transducer.sensor
         self.grid, self.medium, self.source, self.sensor = grid, medium, source, sensor
@@ -968,6 +987,56 @@ class Solver:
             attenuation_parameters=attenuation_parameters,
             unlimited_materials=unlimited_materials,
         )
+
+    @staticmethod
+    def _transducer_kerf_is_dropped(
+        *,
+        transducer: fullwave.Transducer,
+        binary: Path,
+        source_type: str,
+    ) -> bool:
+        """Return whether the kerf of ``transducer`` cannot be held, and log one warning if so.
+
+        The kerf cannot be held with a source type other than "hard" or by a binary that does
+        not read ``nkerf0.dat``. A kerf given in an explicit ``Source`` is never dropped; it is
+        refused.
+        """
+        if not transducer.hold_kerf:
+            return False
+        reason = kerf_refusal(source_type)
+        if reason is None and not binary_has_marker(binary, marker=KERF_MARKER):
+            reason = f"the binary {binary} does not read nkerf0.dat"
+        if reason is None:
+            return False
+        logger.warning(
+            "The hold_kerf=True of the transducer is not applied, so its kerf is not held: %s.",
+            reason,
+        )
+        return True
+
+    def _without_dropped_kerf(self, source: fullwave.Source) -> fullwave.Source:
+        """Return ``source`` without kerf pixels if this Solver drops the kerf of its transducer."""
+        return source.without_kerf() if self._drops_transducer_kerf else source
+
+    @contextlib.contextmanager
+    def _transducer_kerf_decided_on(self, binary: Path) -> Iterator[None]:
+        """Decide in the block whether the transducer kerf is dropped for ``binary``.
+
+        The Solver's source and the extended source of its PML builder follow the decision,
+        and the Solver's own decision is restored afterwards.
+        """
+        builder = self.pml_builder
+        decided = (self._drops_transducer_kerf, self.source, builder.extended_source)
+        self._drops_transducer_kerf = self._transducer_kerf_is_dropped(
+            transducer=self.transducer, binary=binary, source_type=self.source_type
+        )
+        self.source = self._without_dropped_kerf(self.transducer.source)
+        builder.extended_source = copy.copy(builder.extended_source)
+        builder.extended_source.kerf_coords = self.source.kerf_coords + builder.num_boundary_points
+        try:
+            yield
+        finally:
+            self._drops_transducer_kerf, self.source, builder.extended_source = decided
 
     @staticmethod
     def _resolve_source_type(
@@ -1677,7 +1746,7 @@ class Solver:
         """
         if self.ultra is not None:
             return self.ultra.run_batch(
-                sources,
+                [self._without_dropped_kerf(source) for source in sources],
                 simulation_dir_name,
                 max_members_per_run=max_members_per_run,
                 is_static_map=is_static_map,
@@ -1687,48 +1756,74 @@ class Solver:
                 highpass_cutoff_mhz=highpass_cutoff_mhz,
                 bandpass_cutoff_mhz=bandpass_cutoff_mhz,
             )
-        members = self._batch_members(self._pad_to_longest_drive(sources))
-        # The sensor and the sizing below need the extended grid and medium.
-        self.pml_builder.run(use_pml=self.use_pml)
-        sensor = self._output_sensor(
-            record_whole_domain=record_whole_domain,
-            sampling_modulus_time_whole_domain=sampling_modulus_time_whole_domain,
-        )
-        per_run = self._members_per_run(len(members), max_members_per_run, sensor)
-        binary = self._batch_binary() if per_run > 1 else self.path_fullwave_simulation_bin
-        runs = _split_evenly(members, per_run)
-        logger.info(
-            "Running %d transmits as %d simulation(s) of up to %d transmits.",
-            len(members),
-            len(runs),
-            per_run,
-        )
+        with contextlib.ExitStack() as kerf_decision:
+            if self._kerf_follows_the_batch_binary(
+                n_transmits=len(sources), max_members_per_run=max_members_per_run
+            ):
+                kerf_decision.enter_context(self._transducer_kerf_decided_on(self._batch_binary()))
+            members = self._batch_members(
+                self._pad_to_longest_drive([self._without_dropped_kerf(s) for s in sources])
+            )
+            # The sensor and the sizing below need the extended grid and medium.
+            self.pml_builder.run(use_pml=self.use_pml)
+            sensor = self._output_sensor(
+                record_whole_domain=record_whole_domain,
+                sampling_modulus_time_whole_domain=sampling_modulus_time_whole_domain,
+            )
+            per_run = self._members_per_run(len(members), max_members_per_run, sensor)
+            binary = self._batch_binary() if per_run > 1 else self.path_fullwave_simulation_bin
+            self._check_binary_holds_source_and_kerf(binary)
+            runs = _split_evenly(members, per_run)
+            logger.info(
+                "Running %d transmits as %d simulation(s) of up to %d transmits.",
+                len(members),
+                len(runs),
+                per_run,
+            )
 
-        outputs = []
-        with self._binary_in_use(binary):
-            for index, run_members in enumerate(runs):
-                name = simulation_dir_name if len(runs) == 1 else f"{simulation_dir_name}_{index}"
-                outputs.append(
-                    self._run_one(
-                        name,
-                        members=run_members,
-                        is_static_map=is_static_map,
-                        recalculate_pml=index == 0 or not is_static_map,
-                        record_whole_domain=record_whole_domain,
-                        sampling_modulus_time_whole_domain=sampling_modulus_time_whole_domain,
-                        load_results=load_results,
-                        generate_input_only=generate_input_only,
-                        release_after_write=release_after_write,
-                        highpass_cutoff_mhz=highpass_cutoff_mhz,
-                        bandpass_cutoff_mhz=bandpass_cutoff_mhz,
-                        gpu_memory_estimate=gpu_memory_estimate,
-                    ),
-                )
+            outputs = []
+            with self._binary_in_use(binary):
+                for index, run_members in enumerate(runs):
+                    name = (
+                        simulation_dir_name if len(runs) == 1 else f"{simulation_dir_name}_{index}"
+                    )
+                    outputs.append(
+                        self._run_one(
+                            name,
+                            members=run_members,
+                            is_static_map=is_static_map,
+                            recalculate_pml=index == 0 or not is_static_map,
+                            record_whole_domain=record_whole_domain,
+                            sampling_modulus_time_whole_domain=sampling_modulus_time_whole_domain,
+                            load_results=load_results,
+                            generate_input_only=generate_input_only,
+                            release_after_write=release_after_write,
+                            highpass_cutoff_mhz=highpass_cutoff_mhz,
+                            bandpass_cutoff_mhz=bandpass_cutoff_mhz,
+                            gpu_memory_estimate=gpu_memory_estimate,
+                        ),
+                    )
         if generate_input_only:
             return outputs
         if not load_results:
             return [path for run_paths in outputs for path in run_paths]
         return np.concatenate(outputs, axis=0)
+
+    def _kerf_follows_the_batch_binary(
+        self, *, n_transmits: int, max_members_per_run: int | None
+    ) -> bool:
+        """Return whether the kerf of the transducer must be decided on the batch binary.
+
+        This is so when the Solver's source is the transducer's and requests a kerf hold, the
+        batch binary is a different binary downloaded by default, and the batch runs on it.
+        """
+        return (
+            self._source_is_the_transducers
+            and self.transducer.hold_kerf
+            and self._uses_default_binary
+            and n_transmits > 1
+            and max_members_per_run != 1
+        )
 
     def _pad_to_longest_drive(self, sources: Sequence[fullwave.Source]) -> list[fullwave.Source]:
         """Return the transmits with every signal padded with zeros to the longest drive.
@@ -1862,6 +1957,8 @@ class Solver:
                 and not np.array_equal(np.asarray(found_coords), np.asarray(expected_coords))
             ):
                 return f"the {kind} coordinates differ"
+        if not np.array_equal(member.kerf_coords, self.source.kerf_coords):
+            return "the kerf coordinates differ"
         return None
 
     def _batch_binary(self) -> Path:
@@ -1900,9 +1997,7 @@ class Solver:
                 use_isotropic_relaxation=self.use_isotropic_relaxation,
                 batch=True,
             )
-            binary = ensure_binary(local_path)
-            self._check_binary_holds_source(binary)
-            return binary
+            return ensure_binary(local_path)
         name = Path(self.path_fullwave_simulation_bin).name
         if "batch" not in name:
             error_msg = (
@@ -1914,8 +2009,8 @@ class Solver:
             raise ValueError(error_msg)
         return Path(self.path_fullwave_simulation_bin)
 
-    def _check_binary_holds_source(self, binary: Path) -> None:
-        """Refuse a binary that cannot hold the hard source, when the run needs it held.
+    def _check_binary_holds_source_and_kerf(self, binary: Path) -> None:
+        """Refuse a binary that cannot hold the hard source or the kerf, when the run needs it.
 
         Parameters
         ----------
@@ -1930,6 +2025,8 @@ class Solver:
         )
         if holds_source:
             check_binary_holds_source(binary)
+        if self.source.n_kerf:
+            check_binary_holds_kerf(binary)
 
     @contextlib.contextmanager
     def _binary_in_use(self, binary: Path) -> Iterator[None]:

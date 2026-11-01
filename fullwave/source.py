@@ -1,7 +1,8 @@
 """Source class for Fullwave."""
 
+import copy
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -43,6 +44,7 @@ class Source:
     incoords_v: NDArray[np.int64] | None = None
     w0: NDArray[np.float64] | None = None
     incoords_w: NDArray[np.int64] | None = None
+    kerf_coords: NDArray[np.int64] = field(default_factory=lambda: np.empty((0, 0), dtype=np.int64))
 
     def __init__(  # noqa: PLR0912
         self,
@@ -67,6 +69,8 @@ class Source:
         w0: NDArray[np.float64] | None = None,
         coords_w: NDArray[np.int64] | None = None,
         mask_w: NDArray[np.bool] | None = None,
+        # --- kerf cells ---
+        kerf_coords: NDArray[np.int64] | None = None,
     ) -> None:
         """Source class for Fullwave.
 
@@ -118,6 +122,12 @@ class Source:
             Mutually exclusive with mask_w.
         mask_w : NDArray[np.bool] | None
             Boolean mask for w-velocity source positions. Mutually exclusive with coords_w.
+        kerf_coords : NDArray[np.int64] | None
+            Coordinates of the kerf pixels, the gap pixels between the held source pixels;
+            shape [n_kerf, ndim]. They run free until the drive ends, and are held at zero
+            pressure from then on. A Solver holds them with a hard source type
+            (``source_type="hard"``) and a binary that reads ``nkerf0.dat``, and refuses
+            them otherwise.
 
         Raises
         ------
@@ -240,6 +250,7 @@ class Source:
         self.incoords_w, self.w0 = self._resolve_velocity_component("w", w0, coords_w, mask_w)
 
         self.is_3d = len(self.grid_shape) == 3
+        self.kerf_coords = self._resolve_kerf_coords(kerf_coords)
         super().__init__()
         self.__post_init__()
         logger.debug("Source instance created.")
@@ -317,6 +328,20 @@ class Source:
                     f"{self.incoords_add.shape[0]} rows (incoords_add)"
                 )
                 raise ValueError(error_msg)
+
+    def _resolve_kerf_coords(self, kerf_coords: NDArray[np.int64] | None) -> NDArray[np.int64]:
+        """Return the kerf pixels as an ``(n_kerf, ndim)`` array, empty if none are given."""
+        ndim = len(self.grid_shape)
+        if kerf_coords is None or np.size(kerf_coords) == 0:
+            return np.empty((0, ndim), dtype=np.int64)
+        coords = np.atleast_2d(kerf_coords).astype(np.int64, copy=False)
+        if coords.ndim != 2 or coords.shape[1] != ndim:
+            error_msg = f"kerf_coords must have shape [n_kerf, {ndim}], not {coords.shape}"
+            raise ValueError(error_msg)
+        if (coords < 0).any() or (coords >= np.asarray(self.grid_shape)).any():
+            error_msg = f"kerf_coords reach outside the grid of shape {self.grid_shape}"
+            raise ValueError(error_msg)
+        return coords
 
     @staticmethod
     def _resolve_velocity_component(
@@ -414,6 +439,17 @@ class Source:
         return self.incoords.shape[0]
 
     @property
+    def n_kerf(self) -> int:
+        """Return the number of kerf pixels."""
+        return len(self.kerf_coords)
+
+    def without_kerf(self) -> "Source":
+        """Return a copy of this source with no kerf pixels."""
+        source = copy.copy(self)
+        source.kerf_coords = np.empty((0, len(self.grid_shape)), dtype=np.int64)
+        return source
+
+    @property
     def n_sources_add(self) -> int:
         """Return the number of additive (soft) source positions."""
         if self.incoords_add is None:
@@ -501,6 +537,8 @@ class Source:
             lines.append(f"  p0_additive shape: {self.p0_additive.shape}")
         if self.incoords_add is not None:
             lines.append(f"  incoords_add: {self.incoords_add.shape[0]} points")
+        if self.n_kerf:
+            lines.append(f"  kerf_coords: {self.n_kerf} points")
         for comp, sig, n in (
             ("u", self.u0, self.n_sources_u),
             ("v", self.v0, self.n_sources_v),

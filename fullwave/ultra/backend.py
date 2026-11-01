@@ -17,6 +17,8 @@ from fullwave.solver.source_type import (
     as_additive_source,
     is_hard_held,
     is_soft,
+    kerf_refusal,
+    kerf_switch_step,
 )
 from fullwave.utils import run_directory_in_memory
 from fullwave.utils.signal_filter import apply_filter
@@ -195,9 +197,13 @@ def driven_source(
 
     Raises
     ------
+    UltraUnsupportedError
+        When the source has a kerf and the source type is not "hard".
     ValueError
         When a soft source already carries an additive signal.
     """
+    if source.n_kerf and (refusal := kerf_refusal(source_type)):
+        refuse(refusal)
     if not is_soft(source_type):
         return source
     if source.p0_additive is not None:
@@ -208,6 +214,38 @@ def driven_source(
         )
         raise ValueError(msg)
     return as_additive_source(source, grid, medium, use_exponential_attenuation=True)
+
+
+def check_kerf(
+    *,
+    source: fullwave.Source,
+    air_coords: NDArray,
+    features: binary_module.BinaryFeatures,
+    binary: Path,
+) -> None:
+    """Refuse kerf cells that the binary cannot hold or that sit on a source or air cell.
+
+    Raises
+    ------
+    UltraUnsupportedError
+        When the source has kerf cells and there is no hard source, the binary lacks the kerf
+        input, or a kerf cell is also a source cell or an air cell.
+    """
+    if not source.n_kerf:
+        return
+    if not source.n_sources:
+        refuse("kerf_coords need a hard source to be held next to")
+    if not features.has_kerf:
+        refuse(
+            f"{binary} does not read nkerf0.dat, so it cannot hold kerf cells and would run "
+            "with them free"
+        )
+    kerf = np.ravel_multi_index(source.kerf_coords.T, source.grid_shape)
+    for name, coords in (("source", source.incoords), ("air", to_host(air_coords))):
+        if not len(coords):
+            continue
+        if np.intersect1d(kerf, np.ravel_multi_index(coords.T, source.grid_shape)).size:
+            refuse(f"kerf_coords overlap the {name} cells; a cell cannot be both")
 
 
 def to_host(array: object) -> NDArray:
@@ -385,6 +423,12 @@ class UltraBackend3D:
                 f"{self.binary} has no additive source channel (it does not read both "
                 "ncoords_add.dat and icmat_add.dat) and would run without the additive source"
             )
+        check_kerf(
+            source=self.source,
+            air_coords=self.medium.air_coords,
+            features=features,
+            binary=self.binary,
+        )
         if self.holds_hard_source:
             check_binary_holds_source(
                 self.binary,
@@ -473,6 +517,8 @@ class UltraBackend3D:
                 held=self.holds_hard_source,
             ),
             attenuation_parameters=self.attenuation_parameters,
+            kerf_coords=self.source.kerf_coords if self.source.n_kerf else None,
+            kerf_switch_step=kerf_switch_step(hard) if self.source.n_kerf else None,
         )
         write_sources_3d(
             rundir,

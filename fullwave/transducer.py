@@ -963,6 +963,7 @@ class Transducer:
         validate_input: bool = True,
         sampling_modulus_time: int = 1,
         source_type: str,
+        hold_kerf: bool = False,
     ) -> None:
         """Initialize the GeneralTransducer with the provided geometry, grid, and input signal.
 
@@ -997,12 +998,29 @@ class Transducer:
             pressure after the signal ends. "soft" adds the signal to the field,
             scaled so the aperture radiates the pressure it is given, at the
             grid's reference sound speed.
+        hold_kerf: bool
+            True makes the source hold the kerf: the gap pixels between the elements.
+            They run free while the drive plays and are held at zero pressure from the step
+            after the last driven sample, so the array face stays closed between the
+            elements. A ``Solver`` whose binary does not read ``nkerf0.dat``, or whose source
+            type is not "hard", drops the kerf pixels of this transducer and logs one
+            warning. Flat arrays only.
+
+        Raises
+        ------
+        ValueError
+            If the source type is not valid, or hold_kerf is combined with a curved array.
 
         """
         if validate_input:
             check_functions.check_instance(transducer_geometry, TransducerGeometry)
             check_functions.check_instance(grid, Grid)
 
+        self.hold_kerf = hold_kerf
+        if hold_kerf and transducer_geometry.radius != float("inf"):
+            error_msg = "hold_kerf supports a flat array only"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         self.transducer_geometry = transducer_geometry
         self.grid = grid
         self.is_3d = grid.is_3d
@@ -1041,6 +1059,7 @@ class Transducer:
         face_depth_m: float = 0.0,
         sampling_modulus_time: int = 1,
         source_type: str = source_type_module.HARD,
+        hold_kerf: bool = False,
     ) -> "Transducer":
         """Return an ATL Philips L7-4 linear array on one grid.
 
@@ -1071,6 +1090,9 @@ class Transducer:
             face stays reflective. "hard_released_after" assigns it while it
             plays, then lets the source cells evolve freely. "soft" adds the
             signal to the field.
+        hold_kerf : bool
+            True holds the kerf pixels between the elements at zero pressure after the
+            drive ends; see ``Transducer``.
 
         Returns
         -------
@@ -1090,6 +1112,7 @@ class Transducer:
             pulse=transmit.Pulse(pressure=3.162e5, cycles=1.0, drop_off=2.0),
             sampling_modulus_time=sampling_modulus_time,
             source_type=source_type,
+            hold_kerf=hold_kerf,
         )
 
     @classmethod
@@ -1159,6 +1182,7 @@ class Transducer:
         face_depth_m: float = 0.0,
         sampling_modulus_time: int = 1,
         source_type: str = source_type_module.HARD,
+        hold_kerf: bool = False,
     ) -> "Transducer":
         """Return a 64 element phased array of 27 mm aperture on one grid.
 
@@ -1184,6 +1208,8 @@ class Transducer:
             face stays reflective. "hard_released_after" assigns it while it
             plays, then lets the source cells evolve freely. "soft" adds the
             signal to the field.
+        hold_kerf : bool
+            True holds the kerf pixels between the elements; see ``Transducer``.
 
         Returns
         -------
@@ -1203,6 +1229,7 @@ class Transducer:
             pulse=transmit.Pulse(),
             sampling_modulus_time=sampling_modulus_time,
             source_type=source_type,
+            hold_kerf=hold_kerf,
         )
 
     @classmethod
@@ -1218,6 +1245,7 @@ class Transducer:
         pulse: transmit.Pulse,
         sampling_modulus_time: int,
         source_type: str,
+        hold_kerf: bool = False,
         radius_m: float = float("inf"),
         element_height_m: float | None = None,
         face_depth_m: float = 0.0,
@@ -1254,6 +1282,7 @@ class Transducer:
             pulse=pulse,
             sampling_modulus_time=sampling_modulus_time,
             source_type=source_type,
+            hold_kerf=hold_kerf,
         )
 
     def plane_wave(
@@ -1640,6 +1669,30 @@ class Transducer:
         return self.transducer_geometry._source_coords[mask]
 
     @property
+    def kerf_coords(self) -> NDArray[np.int64]:
+        """Coordinates of the kerf pixels; shape [N_kerf, ndim].
+
+        In every source row, the pixels between the first and the last pixel of any element
+        of the geometry that no element pixel covers: the gaps of ``element_spacing_px``
+        between the elements. Active and inactive elements count alike, so the kerf is the
+        same for every sub-aperture and for every transmit of a batch.
+        """
+        coords = self.transducer_geometry._source_coords
+        lateral_axis = 1
+        row_keys = np.delete(coords, lateral_axis, axis=1)
+        kerf_parts = []
+        for key in np.unique(row_keys, axis=0):
+            lateral = coords[(row_keys == key).all(axis=1), lateral_axis]
+            gaps = np.setdiff1d(np.arange(lateral.min(), lateral.max() + 1), lateral)
+            part = np.empty((len(gaps), coords.shape[1]), dtype=np.int64)
+            part[:, lateral_axis] = gaps
+            part[:, np.arange(coords.shape[1]) != lateral_axis] = key
+            kerf_parts.append(part)
+        if not kerf_parts:
+            return np.empty((0, coords.shape[1]), dtype=np.int64)
+        return np.concatenate(kerf_parts, axis=0)
+
+    @property
     def sensor_coords(self) -> NDArray[np.int64]:
         """Coordinates of active sensor pixels; shape [N_snsr, ndim]."""
         active_ids = np.where(self.active_sensor_elements)[0] + 1
@@ -2015,6 +2068,7 @@ class Transducer:
             p0=self._signal_without_silent_tail(),
             coords=self.source_coords,
             grid_shape=grid_shape,
+            kerf_coords=self.kerf_coords if self.hold_kerf else None,
         )
 
     def _signal_without_silent_tail(self) -> NDArray[np.float64]:

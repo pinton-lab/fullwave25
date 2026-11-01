@@ -6,11 +6,16 @@ from pathlib import Path
 from typing import NamedTuple
 
 HOLD_SOURCE_MARKER = b"hold_source.dat"
+KERF_MARKER = b"nkerf0.dat"
 DEFAULT_FIX = "rebuild the binary, or set FULLWAVE25_BINARY_TAG to the release that has it"
 
 
 class HoldSourceUnsupportedError(RuntimeError):
     """Raised when the binary cannot hold the hard source after the drive ends."""
+
+
+class KerfUnsupportedError(RuntimeError):
+    """Raised when the binary cannot hold the kerf cells."""
 
 
 class _FileStamp(NamedTuple):
@@ -48,6 +53,30 @@ def binary_has_marker(binary: str | Path, *, marker: bytes) -> bool:
     path = Path(binary).resolve()
     stat = path.stat()
     return _find(_FileStamp(path=path, size=stat.st_size, mtime_ns=stat.st_mtime_ns), marker)
+
+
+def check_binary_holds_kerf(binary: str | Path, *, fix: str = DEFAULT_FIX) -> None:
+    """Refuse a binary that would run the kerf cells free.
+
+    Parameters
+    ----------
+    binary : str | Path
+        The solver binary.
+    fix : str, optional
+        What to do to get a binary that reads the kerf files, worded for the message.
+
+    Raises
+    ------
+    KerfUnsupportedError
+        When the binary does not contain ``nkerf0.dat``.
+    """
+    if binary_has_marker(binary, marker=KERF_MARKER):
+        return
+    message = (
+        f"{Path(binary).name} does not read {KERF_MARKER.decode()}, so it cannot hold kerf "
+        f"cells and would run with them free. Use a binary that reads it: {fix}."
+    )
+    raise KerfUnsupportedError(message)
 
 
 def check_binary_holds_source(

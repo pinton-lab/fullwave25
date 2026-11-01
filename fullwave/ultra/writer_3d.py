@@ -43,6 +43,8 @@ def write_run_directory_3d(
     n_tic_additive: int | None = None,
     back_faces: frozenset[str] = frozenset(),
     attenuation_parameters: str | Path | None = None,
+    kerf_coords: NDArray | None = None,
+    kerf_switch_step: int | None = None,
 ) -> dict[str, float | int | dict[str, int]]:
     """Write every input file except the source signals and return the realized scalars.
 
@@ -83,6 +85,11 @@ def write_run_directory_3d(
     attenuation_parameters : str | Path | None
         Parameter file of the power-law attenuation. With it, the attenuation maps, the center
         frequency and a copy of the file are written, and ``Aexp.dat`` holds the sponge only.
+    kerf_coords : NDArray | None
+        0-based interior ``(N, 3)`` kerf cells, held at zero pressure from ``kerf_switch_step``
+        to the end of the run; None writes no kerf input.
+    kerf_switch_step : int | None
+        The step at which the kerf cells are first held; needed with ``kerf_coords``.
     """
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -141,6 +148,9 @@ def write_run_directory_3d(
         dat_io.write_int(outdir / "ncoordszero.dat", len(air_cells))
         dat_io.write_int(outdir / "nzero0.dat", 0)
         dat_io.write_int(outdir / "nzero1.dat", n_t)
+    n_kerf = _write_kerf_cells(
+        outdir, cells=kerf_coords, switch_step=kerf_switch_step, offset=offset
+    )
     integers = {
         "nX": n_xe,
         "nY": n_ye,
@@ -169,10 +179,37 @@ def write_run_directory_3d(
         "ncoords": len(source_cells),
         "ncoordsout": len(sensor_cells),
         "ncoordszero": len(air_cells),
+        "ncoordskerf": n_kerf,
         "ncoords_add": len(additive_cells),
         "mext": mext,
         "margins": margins,
     }
+
+
+def _write_kerf_cells(
+    outdir: Path, *, cells: NDArray | None, switch_step: int | None, offset: NDArray
+) -> int:
+    """Write ``icckerf.dat``, ``ncoordskerf.dat`` and ``nkerf0.dat`` (one entry); return the count.
+
+    Without kerf cells the three files are removed from a reused run directory.
+
+    Raises
+    ------
+    ValueError
+        When ``switch_step`` is missing.
+    """
+    count_file = outdir / "ncoordskerf.dat"
+    if cells is None or len(cells) == 0:
+        dat_io.remove_kerf_files(outdir)
+        return 0
+    if switch_step is None:
+        msg = "kerf_switch_step is required with kerf_coords"
+        raise ValueError(msg)
+    shifted = np.asarray(cells)[:, :3].astype(np.int64) + offset
+    dat_io_3d.write_coords_3d(outdir / "icckerf.dat", *shifted.T)
+    dat_io.write_int(count_file, len(shifted))
+    dat_io.write_ints(outdir / "nkerf0.dat", [switch_step])
+    return len(shifted)
 
 
 def _write_additive_cells(
