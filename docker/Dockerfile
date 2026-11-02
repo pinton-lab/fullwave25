@@ -10,7 +10,7 @@ FROM ubuntu:22.04
 
 # The release tag of the solver binaries, and the CUDA versions to include. The wrapper
 # picks the binary that matches the CUDA version of the host driver.
-ARG FULLWAVE_BIN_TAG=fullwave_bin_v1.5.2
+ARG FULLWAVE_BIN_TAG=fullwave_bin_v1.6
 ARG FULLWAVE_BIN_CUDA_VERSIONS="118 124 129 130"
 ARG PYTHON_VERSION=3.12
 
@@ -39,12 +39,14 @@ RUN set -eu; \
     bins="$(python -c "import importlib.util; print(importlib.util.find_spec('fullwave').submodule_search_locations[0])")/solver/bins"; \
     url="https://github.com/pinton-lab/fullwave25/releases/download/${FULLWAVE_BIN_TAG}"; \
     for cuda in ${FULLWAVE_BIN_CUDA_VERSIONS}; do \
-        for dim in 2d 3d; do \
+        for variant in 2d 3d 2d_batch; do \
+            dim="${variant%%_*}"; \
+            suffix="${variant#"${dim}"}"; \
             mkdir -p "${bins}/gpu/${dim}" "${bins}/exponential_attenuation/gpu/${dim}"; \
-            curl -fsSL -o "${bins}/gpu/${dim}/fullwave2_${dim}_n_relax_multi_gpu_cuda${cuda}" \
-                "${url}/fullwave2_${dim}_n_relax_multi_gpu_cuda${cuda}"; \
-            curl -fsSL -o "${bins}/exponential_attenuation/gpu/${dim}/fullwave2_${dim}_exponential_attenuation_multi_gpu_cuda${cuda}" \
-                "${url}/fullwave2_${dim}_exponential_attenuation_multi_gpu_cuda${cuda}"; \
+            curl -fsSL -o "${bins}/gpu/${dim}/fullwave2_${dim}_n_relax_multi_gpu${suffix}_cuda${cuda}" \
+                "${url}/fullwave2_${dim}_n_relax_multi_gpu${suffix}_cuda${cuda}"; \
+            curl -fsSL -o "${bins}/exponential_attenuation/gpu/${dim}/fullwave2_${dim}_exponential_attenuation_multi_gpu${suffix}_cuda${cuda}" \
+                "${url}/fullwave2_${dim}_exponential_attenuation_multi_gpu${suffix}_cuda${cuda}"; \
         done; \
     done; \
     chmod 755 "${bins}"/gpu/*/* "${bins}"/exponential_attenuation/gpu/*/*; \

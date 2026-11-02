@@ -1,6 +1,6 @@
 [project]
 name = "fullwave25"
-version = "1.4.1" # Update via bump-my-version, not manually
+version = "1.4.3-dev0" # Update via bump-my-version, not manually
 description = "Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -32,7 +32,7 @@ classifiers = [
 [project.optional-dependencies] # --extra
 test = ["pytest", "tomli>=2.3.0"]
 dev = [
-    "pre-commit==4.1.0",
+    "pre-commit==4.6.2",
     "pytest>=8.3.5",
     "ruff>=0.12.9",
     "line-profiler>=5.0.1",
@@ -40,6 +40,12 @@ dev = [
 examples = [
     "jupyter>=1.0.0",
     "ipykernel>=6.28.0",
+    "mach-beamform>=0.0.4",
+    "cupy-cuda12x>=13.6.0",
+    "pymust>=0.1.8",
+]
+
+mach = [
     "mach-beamform>=0.0.4",
     "cupy-cuda12x>=13.6.0",
     "pymust>=0.1.8",

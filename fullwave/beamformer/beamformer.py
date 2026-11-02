@@ -14,6 +14,14 @@ class Beamformer:
     For faster implementations, consider using libraries such as
     mach beamformer: https://github.com/Forest-Neurotech/mach
 
+    Conventions: ``axial_position_m`` is the depth below the probe face, so
+    depth 0 is the face row ``face_row_px`` (``Transducer.face_row_px``, the
+    first medium row, one row in front of the receiver row).
+    ``transducer_coordinates`` must be the receiver positions in grid points
+    (for example from ``Transducer.element_id_to_receiver_center``). The time
+    origin is the mean receiver row, so the array depth is subtracted from the
+    two-way travel time.
+
     References
     ----------
     - Fullwave2 BMME890 implementation
@@ -31,6 +39,7 @@ class Beamformer:
         axial_position_m: np.ndarray,
         num_elements: int,
         transducer_coordinates: np.ndarray,
+        face_row_px: int,
         f_number: float = 1.0,
     ) -> None:
         """Initialize the beamformer with simulation and transducer parameters.
@@ -46,11 +55,14 @@ class Beamformer:
         lateral_position_m : np.ndarray
             Lateral positions (m) where the beamformed image will be computed.
         axial_position_m : np.ndarray
-            Axial positions (m) where the beamformed image will be computed.
+            Depths (m) below the probe face where the image is computed.
         num_elements : int
             Number of transducer elements.
         transducer_coordinates : np.ndarray
-            Coordinates of the transducer elements (m).
+            Receiver coordinates [n_elements, 2] in grid points (row, column).
+        face_row_px : int
+            Grid row of the probe face (depth 0), for example
+            ``Transducer.face_row_px``.
         f_number : float, optional
             F-number for aperture calculation, by default 1.0.
 
@@ -62,6 +74,7 @@ class Beamformer:
         self.axial_position_m = axial_position_m
         self.num_elements = num_elements
         self.transducer_coordinates = transducer_coordinates
+        self.face_row_px = face_row_px
         self.f_number = f_number
 
     def run(self, signals: np.ndarray) -> np.ndarray:
@@ -76,13 +89,17 @@ class Beamformer:
         Returns
         -------
         np.ndarray
-            Beamformed image. Shape: [n_axial, n_lateral, n_transmit].
+            Beamformed image. Shape: [n_axial, n_lateral, n_transmit]. Row 0
+            of the first axis is the first depth of ``axial_position_m``, which
+            is measured from the probe face.
 
         """
         # signals: [n_elements, n_time, n_transmit]
         if signals.ndim == 2:
             signals = signals[:, :, np.newaxis]
         n_transmit = signals.shape[2]
+        # idt_0 is the pulse arrival at the receivers, so time is measured from the array.
+        z_array = np.mean(self.transducer_coordinates[:, 0]) * self.dx
 
         hilbert_signals = hilbert(signals, axis=1)
         beamformed_image = np.zeros(
@@ -101,12 +118,13 @@ class Beamformer:
                 desc="Lateral positions",
                 total=len(self.lateral_position_m),
             ):
-                for i_axial, axial in tqdm(
+                for i_axial, depth in tqdm(
                     enumerate(self.axial_position_m),
                     desc="Axial positions",
                     total=len(self.axial_position_m),
                     leave=False,
                 ):
+                    axial = self.face_row_px * self.dx + depth
                     fcen = np.array(
                         [
                             int(axial / self.dx),
@@ -133,7 +151,7 @@ class Beamformer:
                     dd = np.round(dd / (self.dt / self.dx * self.c0)).astype(int)
                     dd = dd - dd.min()
 
-                    idt = idt_0 + int(2 * axial / self.c0 / self.dt)
+                    idt = idt_0 + int(2 * (axial - z_array) / self.c0 / self.dt)
 
                     # idp: 1D indices into signals flattened array
                     # we convert 2D indices to 1D indices

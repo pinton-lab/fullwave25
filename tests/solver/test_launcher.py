@@ -340,8 +340,6 @@ def test_run_changes_directory_back_on_success(tmp_path, monkeypatch):
 
 
 def _replace_peer_check(monkeypatch, result):
-    from fullwave.solver import cuda_utils
-
     asked = []
 
     def fake_check(ordinals):
@@ -350,7 +348,10 @@ def _replace_peer_check(monkeypatch, result):
             raise result
         return result
 
-    monkeypatch.setattr(cuda_utils, "find_consecutive_gpus_without_peer_access", fake_check)
+    monkeypatch.setattr(
+        "fullwave.solver.launcher.find_consecutive_gpus_without_peer_access",
+        fake_check,
+    )
     monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
     return asked
 

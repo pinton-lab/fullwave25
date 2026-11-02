@@ -1,5 +1,6 @@
 """Module for launching Fullwave simulation."""
 
+import copy
 import ctypes
 import logging
 import os
@@ -12,6 +13,7 @@ from time import time
 import numpy as np
 from numpy.typing import NDArray
 
+from .cuda_utils import find_consecutive_gpus_without_peer_access
 from .utils import load_dat_data
 
 logger = logging.getLogger("__main__." + __name__)
@@ -84,6 +86,26 @@ class Launcher:
             self._warn_if_gpus_lack_peer_access(self.cuda_device_id)
         self.save_gpu_memory = save_gpu_memory
         logger.debug("Launcher instance created.")
+
+    def with_binary(self, path_fullwave_simulation_bin: Path) -> "Launcher":
+        """Return a copy of this launcher that runs another binary.
+
+        Parameters
+        ----------
+        path_fullwave_simulation_bin : Path
+            The binary of the copy.
+
+        Returns
+        -------
+        Launcher
+            The copy, with the same devices and memory settings.
+
+        """
+        error_msg = f"Fullwave simulation binary not found at {path_fullwave_simulation_bin}"
+        assert path_fullwave_simulation_bin.exists(), error_msg
+        launcher = copy.copy(self)
+        launcher._path_fullwave_simulation_bin = path_fullwave_simulation_bin
+        return launcher
 
     @staticmethod
     def _parse_cuda_device_id(cuda_device_id: str | int | list | None) -> str:
@@ -190,8 +212,6 @@ class Launcher:
             )
             return
         try:
-            from .cuda_utils import find_consecutive_gpus_without_peer_access  # noqa: PLC0415
-
             pairs = find_consecutive_gpus_without_peer_access(device_ids)
         except (AttributeError, NameError, OSError, RuntimeError, ctypes.ArgumentError) as error:
             logger.debug("Peer access check skipped: %s", error)

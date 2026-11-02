@@ -4,12 +4,15 @@ import concurrent.futures
 import logging
 import os
 import time
+from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
 from numpy.typing import DTypeLike, NDArray
 
 import fullwave
+from fullwave.solver.source_type import kerf_switch_step
 from fullwave.utils import check_functions
 from fullwave.utils.numerical import matlab_round
 
@@ -63,6 +66,7 @@ class InputFileWriter:
         exponential_attenuation_pml_interior_offset_px: int = 0,
         use_gpu: bool = False,
         write_maps_the_solver_does_not_read: bool = False,
+        hold_hard_source: bool = False,
     ) -> None:
         """Initialize the InputGeneratorBase instance.
 
@@ -123,6 +127,11 @@ class InputFileWriter:
             which an older solver binary needs. The record the skipped maps
             replace is impedance_constraint.dat, and this writer always writes it
             on the relaxation path.
+        hold_hard_source : bool, optional
+            Whether the hard source cells stay at zero pressure after the drive ends.
+            True writes the flag file ``hold_source.dat``, which the solver reads to keep
+            the cells at zero for the rest of the run; the signals are written as given.
+            False, the default, lets the solver release the cells when the signal ends.
 
         """
         logger.debug("Initializing InputFileWriter instance.")
@@ -138,6 +147,7 @@ class InputFileWriter:
         self.use_isotropic_relaxation = use_isotropic_relaxation
         self.write_maps_the_solver_does_not_read = write_maps_the_solver_does_not_read
         self.use_gpu = use_gpu
+        self.hold_hard_source = hold_hard_source
 
         if validate_input:
             check_functions.check_path_exists(self.path_fullwave_simulation_bin)
@@ -202,6 +212,7 @@ class InputFileWriter:
         *,
         is_static_map: bool = False,
         recalculate_pml: bool = True,
+        members: Sequence[fullwave.Source] | None = None,
     ) -> Path:
         r"""Run the input data generation and return the simulation directory path.
 
@@ -230,6 +241,11 @@ class InputFileWriter:
             set False if you are using the same PML parameters for each transmit event
             such as plane wave
             AND this is the second or later transmit event.
+        members : Sequence[fullwave.Source] | None
+            The transmits of a batch run, in order. Each member gives its own signals and
+            shares the coordinates of ``source``. The signals of all members are written one
+            after another, and nsims.dat holds the member count. None writes a single
+            transmit from ``source``.
 
         Returns
         -------
@@ -243,11 +259,19 @@ class InputFileWriter:
 
         self._init_pending_writes()
 
+        member_count_file = simulation_dir / "nsims.dat"
+        if members is None:
+            # A file left by an earlier batch run in this directory would turn this run into
+            # a batch.
+            member_count_file.unlink(missing_ok=True)
+        else:
+            self._queue_v_abs_write(np.int32, member_count_file, len(members))
+
         self._queue_ic_write(
             simulation_dir / "icmat.dat",
-            np.transpose(self.source.icmat),
+            np.transpose(self._signals("icmat", members)),
         )
-        p0_additive = getattr(self.source, "p0_additive", None)
+        p0_additive = self._signals("p0_additive", members)
         incoords_add = getattr(self.source, "incoords_add", None)
         if p0_additive is not None:
             self._queue_ic_write(
@@ -257,7 +281,7 @@ class InputFileWriter:
         if incoords_add is not None:
             self._queue_coords_write(simulation_dir / "icc_add.dat", incoords_add)
         for _vel_suffix, _vel_attr in (("u", "u0"), ("v", "v0"), ("w", "w0")):
-            _signal_vel = getattr(self.source, _vel_attr, None)
+            _signal_vel = self._signals(_vel_attr, members)
             _incoords_vel = getattr(self.source, f"incoords_{_vel_suffix}", None)
             if _signal_vel is not None:
                 self._queue_ic_write(
@@ -270,6 +294,8 @@ class InputFileWriter:
                     _incoords_vel,
                 )
         self._queue_coords_write(simulation_dir / "icc.dat", self.source.incoords)
+        self._save_kerf(simulation_dir, members)
+        self._save_drive_params(simulation_dir, members)
         self._copy_simulation_bin_file(simulation_dir)
 
         if not self.use_exponential_attenuation:
@@ -309,6 +335,44 @@ class InputFileWriter:
         message = f"Input files generated in {end_file_writer_time - time_start:.2e} seconds."
         logger.info(message)
         return simulation_dir
+
+    def _signals(
+        self,
+        name: str,
+        members: Sequence[fullwave.Source] | None,
+    ) -> np.ndarray | None:
+        """Return one source signal matrix, with the rows of every member stacked in order.
+
+        Parameters
+        ----------
+        name : str
+            The signal attribute of fullwave.Source: icmat, p0_additive, u0, v0 or w0.
+        members : Sequence[fullwave.Source] | None
+            The transmits of a batch run, or None for the single transmit of ``source``.
+
+        Returns
+        -------
+        np.ndarray | None
+            [n_points, n_t] for a single transmit, [n_members * n_points, n_t] for a batch,
+            or None when the source has no signal of this kind.
+
+        """
+        if members is None:
+            signal = getattr(self.source, name, None)
+        elif getattr(self.source, name, None) is None:
+            return None
+        else:
+            signal = np.concatenate([getattr(member, name) for member in members], axis=0)
+        return signal
+
+    @property
+    def _holds_the_source(self) -> bool:
+        """Whether the solver keeps the hard source cells at zero after the drive ends."""
+        return (
+            self.hold_hard_source
+            and self.source.n_sources > 0
+            and self.source.icmat.shape[1] < self.grid.nt
+        )
 
     # --- constructor utils ---
 
@@ -867,8 +931,6 @@ class InputFileWriter:
             (c_min_val, c_max_val) of the sound speed.
 
         """
-        from concurrent.futures import ThreadPoolExecutor, as_completed  # noqa: PLC0415
-
         import cupy as cp  # noqa: PLC0415
 
         sound_speed_np = self.medium.sound_speed
@@ -1216,7 +1278,6 @@ class InputFileWriter:
             "ncoords_w",
             "ncoordsout",
             "ncoordszero",
-            "nTic",
             "modT",
             "modX",
             "modY",
@@ -1314,8 +1375,51 @@ class InputFileWriter:
             save_path = simulation_dir / f"{var_name}.dat"
             self._queue_v_abs_write(np.float32, save_path, var)
 
+    def _save_drive_params(
+        self,
+        simulation_dir: Path,
+        members: Sequence[fullwave.Source] | None = None,
+    ) -> None:
+        """Write the drive length and the hold flag of this transmit.
+
+        Every transmit folder gets its own files, never a link to the shared
+        static-map files, and a flag left by an earlier run is removed when the
+        hold is off. The members of a batch share one length, which can exceed the
+        length of the source, so the drive length is the one of the members.
+        """
+        drive_length_file = simulation_dir / "nTic.dat"
+        hold_flag_file = simulation_dir / "hold_source.dat"
+        drive_length_file.unlink(missing_ok=True)
+        hold_flag_file.unlink(missing_ok=True)
+        drive_source = self.source if members is None else members[0]
+        self._queue_v_abs_write(np.int32, drive_length_file, drive_source.icmat.shape[1])
+        if self._holds_the_source:
+            self._queue_v_abs_write(np.int32, hold_flag_file, 1)
+
+    def _save_kerf(
+        self,
+        simulation_dir: Path,
+        members: Sequence[fullwave.Source] | None = None,
+    ) -> None:
+        """Write the kerf cells and the step at which each transmit starts to hold them.
+
+        ``icckerf.dat`` lists the cells like ``icc.dat``, ``ncoordskerf.dat`` their count and
+        ``nkerf0.dat`` one switch step per transmit: the last driven sample plus 1. The
+        solver holds the cells at zero pressure from that step to the end of the run.
+        Files left by an earlier run are removed when the source has no kerf cells.
+        """
+        names = ("icckerf.dat", "ncoordskerf.dat", "nkerf0.dat")
+        for name in names:
+            (simulation_dir / name).unlink(missing_ok=True)
+        if not self.source.n_kerf:
+            return
+        transmits = [self.source] if members is None else members
+        steps = [kerf_switch_step(transmit.icmat) for transmit in transmits]
+        self._queue_coords_write(simulation_dir / "icckerf.dat", self.source.kerf_coords)
+        self._queue_v_abs_write(np.int32, simulation_dir / "ncoordskerf.dat", self.source.n_kerf)
+        self._queue_v_abs_write(np.int32, simulation_dir / "nkerf0.dat", np.array(steps))
+
     def _save_coords_params(self, simulation_dir: Path) -> None:
-        nt_ic = self.source.icmat.shape[1]
         var_list = [
             ("nX", self.grid.nx),
             ("nY", self.grid.ny),
@@ -1323,7 +1427,6 @@ class InputFileWriter:
             ("ncoords", self.source.n_sources),
             ("ncoordsout", self.sensor.n_sensors),
             ("ncoordszero", self.medium.n_air),
-            ("nTic", nt_ic),
             ("modT", self.sensor.sampling_modulus_time),
         ]
         n_sources_add = getattr(self.source, "n_sources_add", 0)

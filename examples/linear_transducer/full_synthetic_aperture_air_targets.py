@@ -11,18 +11,11 @@ import logging
 import shutil
 from pathlib import Path
 
-import cupy
 import numpy as np
-import pymust
-from einops import rearrange
-from mach import experimental, wavefront
-from mach.io.must import (
-    linear_probe_positions,
-    scan_grid,
-)
 from tqdm import tqdm
 
 import fullwave
+from fullwave.beamformer import MachBeamformer, face_crossing_time_s, receiver_positions_m
 from fullwave.utils import plot_utils
 
 
@@ -169,10 +162,14 @@ def main() -> None:
     # --- define the computational grid ---
     #
 
-    domain_size = (4.5e-2, 4.5e-2)  # [axial, lateral] meters
     f0 = 2e6
     # f0 = 5e6
     c0 = 1540
+    width_m = 45e-3  # lateral width [m], wider than the array
+    domain_size = (
+        4.5e-2,
+        width_m,
+    )  # [axial, lateral] meters
     duration = domain_size[0] / c0 * 2.3
     # ppw = 22
     ppw = 12
@@ -189,11 +186,19 @@ def main() -> None:
     beta_map = np.ones(grid.shape) * 0  # nonlinearity parameter
     air_map = np.zeros(grid.shape)  # no air bubbles
 
+    sampling_interval = 7
+    transducer = fullwave.Transducer.l7_4(
+        grid,
+        sampling_modulus_time=sampling_interval,
+    )
+
     rng = np.random.default_rng(seed=42)
 
-    # put random air scatterers below 20 mm depth
+    # put random air scatterers below 20 mm depth under the probe face
     air_scatterer_start_depth_m = 20e-3
-    air_scatterer_start_depth_px = int(air_scatterer_start_depth_m / grid.dx)
+    air_scatterer_start_depth_px = transducer.face_row_px + int(
+        air_scatterer_start_depth_m / grid.dx
+    )
 
     # beads_diameter_m = 1.2e-3  # mm
     beads_diameter_m = 60e-6  # um
@@ -215,7 +220,11 @@ def main() -> None:
         != 1.0
     )
 
-    plot_utils.plot_array(air_map, export_path=work_dir / "air_map.png")
+    plot_utils.plot_array(
+        air_map,
+        export_path=work_dir / "air_map.png",
+        **plot_utils.mm_axes_kwargs(grid),
+    )
     # define scatterer
 
     scatterer, _ = fullwave.utils.generate_scatterer(
@@ -229,35 +238,16 @@ def main() -> None:
     # scatterer values are centered around 1.0 with small variations.
     density_map *= scatterer
 
-    #
-    # --- define the linear transducer and its probe stack ---
-    #
-
-    sampling_interval = 7
-    transducer = fullwave.Transducer.l7_4(
-        grid,
-        element_layer_px=8,
-        face_depth_m=fullwave.TransducerStack.backing_thickness_m,
-        sampling_modulus_time=sampling_interval,
-    )
-    transducer.apply_transducer_stack(
-        sound_speed_map,
-        density_map,
-        alpha_coeff_map,
-        alpha_power_map,
-        beta_map,
-        scatterer=scatterer,
-        rng=rng,
-    )
-
     medium = fullwave.Medium(
         grid,
-        sound_speed=sound_speed_map,
-        density=density_map,
-        alpha_coeff=alpha_coeff_map,
-        alpha_power=alpha_power_map,
         beta=beta_map,
         air_map=air_map,
+        **transducer.fill_probe_above_face(
+            sound_speed=sound_speed_map,
+            density=density_map,
+            alpha_coeff=alpha_coeff_map,
+            alpha_power=alpha_power_map,
+        ),
     )
     # medium.plot(export_path=work_dir / "medium.svg")
     medium.plot(export_path=work_dir / "medium.png")
@@ -317,76 +307,38 @@ def main() -> None:
 
     transducer_width_m = transducer.transducer_geometry.transducer_width_m
 
-    params = {
-        "fs": 1 / grid.dt / sampling_interval,  # Sampling frequency (Hz)
-        "fc": f0,  # Center frequency (Hz)
-        "Nelements": 128,  # Number of array elements
-        "pitch": transducer_width_m / 128,  # Element pitch (meters)
-        "c": c0,  # Speed of sound in medium (m/s)
-        # "fnumber": 1.0,
-        "fnumber": 2.0,
-        "t0": 0,  # Start time of data acquisition (seconds)
-    }
-
-    element_positions = linear_probe_positions(params["Nelements"], params["pitch"])
     b_mode_x = np.linspace(-transducer_width_m / 2, transducer_width_m / 2, num=256, endpoint=True)
-    b_mode_y = np.array([0.0])  # 2D imaging (single y-plane)
-    b_mode_z = np.linspace(5e-3, domain_size[0], num=512, endpoint=True)
+    # depth below the probe face, which is the first medium row
+    b_mode_z = np.linspace(
+        5e-3,
+        domain_size[0] - transducer.face_depth_m,
+        num=512,
+        endpoint=True,
+    )
 
-    # make grid points for beamforming
-    grid_points = scan_grid(b_mode_x, b_mode_y, b_mode_z)
-
-    # -- compute transmit wavefront arrival times --
-    wavefront_arrivals_s = [
-        wavefront.spherical(
-            origin_m=element_positions[i_elem],
-            points_m=grid_points,
-            focus_m=element_positions[i_elem],  # FSA: focus at each element position
-        )
-        / params["c"]
-        for i_elem in active_source_element_id_list
-    ]
-    wavefront_arrivals_s = np.stack(wavefront_arrivals_s, axis=0)
-
-    # --- post-process and beamform ---
-
+    beamformer = MachBeamformer(
+        lateral_position_m=b_mode_x,
+        axial_position_m=b_mode_z,
+        receiver_positions_m=receiver_positions_m(transducer),
+        sound_speed=grid.c0,
+        center_frequency_hz=grid.f0,
+        sampling_frequency_hz=1 / (grid.dt * transducer.sampling_modulus_time),
+        f_number=2.0,
+        time_zero_s=face_crossing_time_s(transducer),
+        tukey_alpha=0.5,
+    )
+    # element ids count from zero here, and from one in the beamformer
+    tx_arrival_s = np.stack(
+        [
+            beamformer.synthetic_aperture_arrival_s(element=element_id + 1)
+            for element_id in active_source_element_id_list
+        ],
+        axis=0,
+    )
     sensor_output = np.stack(sensor_output_list, axis=0)
-    sensor_output = sensor_output.transpose(2, 1, 0)
-
-    # Convert RF data to IQ data
-    iq_data = pymust.rf2iq(sensor_output, Fs=params["fs"], Fc=params["fc"])
-
-    # Convert the IQ data to flattened grid points for beamforming
-    iq_data = iq_data[:, :, :, np.newaxis]
-    iq_data = np.ascontiguousarray(
-        rearrange(
-            iq_data,
-            "samples elements transmit frames -> transmit elements samples frames",
-        ),
-        # iq_data,
-        dtype=np.complex64,
-    )
-
-    # run beamforming on GPU.
-    b_mode = experimental.beamform(
-        channel_data=cupy.asarray(iq_data),  # IQ data from all elements
-        rx_coords_m=cupy.asarray(element_positions),  # Array element positions
-        scan_coords_m=cupy.asarray(grid_points),  # Imaging grid coordinates
-        tx_wave_arrivals_s=cupy.asarray(
-            wavefront_arrivals_s,
-        ),  # Transmit arrival times (s)
-        f_number=float(params["fnumber"]),  # Dynamic focusing f-number
-        rx_start_s=float(params["t0"]),  # Data acquisition start time
-        sampling_freq_hz=float(params["fs"]),  # Sampling frequency
-        sound_speed_m_s=float(params["c"]),  # Medium sound speed
-        modulation_freq_hz=float(params["fc"]),  # Demodulation frequency
-        tukey_alpha=0.5,  # No additional windowing
-    )
-
-    # convert cupy to numpy
-    b_mode = cupy.asnumpy(b_mode)
-    # reshape to 2D image
-    b_mode = b_mode.reshape(len(b_mode_x), len(b_mode_z))
+    iq_data = beamformer.rf_to_iq(sensor_output)
+    # [n_axial, n_lateral] to [n_lateral, n_axial]
+    b_mode = beamformer.beamform(sensor_output, tx_arrival_s=tx_arrival_s).T
 
     #
     # --- visualization ---

@@ -1,5 +1,6 @@
 """Tests for the transmit delays and the probe presets."""
 
+import inspect
 import math
 
 import numpy as np
@@ -133,6 +134,23 @@ def test_a_named_array_carries_its_own_excitation():
     grid = _grid()
     assert fullwave.Transducer.l7_4(grid).pulse.pressure == pytest.approx(3.162e5)
     assert fullwave.Transducer.p4_1c(grid).pulse.pressure == pytest.approx(1.0e5)
+
+
+@pytest.mark.parametrize("preset", ["l7_4", "c5_2v", "p4_1c"])
+def test_every_preset_holds_the_hard_source_by_default(preset):
+    grid = fullwave.Grid(
+        domain_size=(9.0e-2, 9.0e-2), f0=3.7e6, duration=2.0e-6, c0=1540.0, ppw=8, cfl=0.4
+    )
+    assert getattr(fullwave.Transducer, preset)(grid).source_type == "hard"
+
+
+def test_the_linear_transducer_and_the_p4_1c_helper_hold_the_hard_source_by_default():
+    grid = fullwave.Grid(
+        domain_size=(9.0e-2, 9.0e-2), f0=3.7e6, duration=2.0e-6, c0=1540.0, ppw=8, cfl=0.4
+    )
+    parameters = inspect.signature(fullwave.transducer.LinearTransducer.__init__).parameters
+    assert parameters["source_type"].default == "hard"
+    assert fullwave.transducer.make_p4_1c_trasnducer(grid).source_type == "hard"
 
 
 def test_a_curved_array_sits_on_an_arc():

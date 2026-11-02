@@ -33,11 +33,12 @@ def _make_echoic_targets(
     target_spacing_m: float,
     n_targets_axial: int,
     n_targets_lateral: int,
+    face_depth_m: float,
 ) -> np.ndarray:
-    """Place a grid of hypo/hyper/anechoic circles in the scatterer map."""
+    """Place a grid of hypo/hyper/anechoic circles in the tissue below the probe face."""
     total_axial = (n_targets_axial - 1) * target_spacing_m
     total_lateral = (n_targets_lateral - 1) * target_spacing_m
-    x0 = (grid.shape[0] * grid.dx - total_axial) / 2
+    x0 = face_depth_m + (grid.shape[0] * grid.dx - face_depth_m - total_axial) / 2
     y0 = (grid.shape[1] * grid.dx - total_lateral) / 2
 
     axial_pos = np.linspace(x0, x0 + total_axial, n_targets_axial)
@@ -76,6 +77,7 @@ def _make_echoic_targets(
 def _build_medium(
     grid: fullwave.Grid,
     c0: float,
+    transducer: fullwave.Transducer,
 ) -> fullwave.Medium:
     """Build the acoustic medium with echoic scattering targets."""
     rng = np.random.default_rng(42)
@@ -92,21 +94,24 @@ def _build_medium(
         target_spacing_m=15e-3,
         n_targets_axial=3,
         n_targets_lateral=3,
+        face_depth_m=transducer.face_depth_m,
     )
     return fullwave.Medium(
         grid,
-        sound_speed=np.ones(grid.shape) * c0,
-        density=np.ones(grid.shape) * 1000 * scatterer,
-        alpha_coeff=np.ones(grid.shape) * 0.5,
-        alpha_power=np.ones(grid.shape) * 1.1,
         beta=np.zeros(grid.shape),
         air_map=np.zeros(grid.shape),
+        **transducer.fill_probe_above_face(
+            sound_speed=np.ones(grid.shape) * c0,
+            density=np.ones(grid.shape) * 1000 * scatterer,
+            alpha_coeff=np.ones(grid.shape) * 0.5,
+            alpha_power=np.ones(grid.shape) * 1.1,
+        ),
     )
 
 
 def _build_transducer(grid: fullwave.Grid) -> fullwave.Transducer:
     """Build an L7-4 linear array that sends one plane wave straight ahead."""
-    transducer = fullwave.Transducer.l7_4(grid, element_layer_px=4, sampling_modulus_time=7)
+    transducer = fullwave.Transducer.l7_4(grid, sampling_modulus_time=7)
     transducer.plane_wave(angle_deg=0.0)
     return transducer
 
@@ -214,13 +219,17 @@ def main() -> None:
     work_dir = Path("./outputs/plane_wave_with_filter")
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    domain_size = (4.5e-2, 4.5e-2)  # [axial, lateral] m
     f0 = 2e6
     c0 = 1540
+    width_m = 45e-3  # lateral width [m], wider than the array
+    domain_size = (
+        4.5e-2,
+        width_m,
+    )  # [axial, lateral] m
 
     grid = fullwave.Grid(domain_size, f0, domain_size[0] / c0 * 2.3, c0=c0, ppw=12, cfl=0.4)
-    medium = _build_medium(grid, c0)
     transducer = _build_transducer(grid)
+    medium = _build_medium(grid, c0, transducer)
     raw_output, filtered_output = _run_simulation(work_dir, grid, medium, transducer)
     _plot_results(work_dir, grid, transducer, raw_output, filtered_output, f0)
     _print_summary(raw_output, filtered_output)
