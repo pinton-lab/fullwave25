@@ -418,6 +418,7 @@ class PMLBuilder:
             coords_v=incoords_v_ext,
             w0=getattr(self.source_org, "w0", None),
             coords_w=incoords_w_ext,
+            kerf_coords=self.source_org.kerf_coords + self.num_boundary_points,
         )
         logger.debug("building extended source for pml...done")
 
@@ -1901,6 +1902,7 @@ class PMLBuilderExponentialAttenuation(PMLBuilder):
             coords_v=incoords_v_ext,
             w0=getattr(self.source_org, "w0", None),
             coords_w=incoords_w_ext,
+            kerf_coords=self.source_org.kerf_coords + self.num_boundary_points,
         )
         if self.sensor_org.is_sparse_grid:
             self.extended_sensor = fullwave.Sensor(

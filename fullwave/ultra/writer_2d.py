@@ -66,6 +66,8 @@ def write_run_directory_2d(
     m_stencil: int = 8,
     back_faces: frozenset[str] = frozenset(),
     attenuation_parameters: str | Path | None = None,
+    kerf_coords: NDArray | None = None,
+    kerf_switch_steps: Sequence[int] | None = None,
 ) -> dict[str, float | int | dict[str, int]]:
     """Write every input file except the source signals and return the realized scalars.
 
@@ -102,6 +104,11 @@ def write_run_directory_2d(
     attenuation_parameters : str | Path | None
         Parameter file of the power-law attenuation. With it, the attenuation maps, the center
         frequency and a copy of the file are written, and ``Aexp.dat`` holds the sponge only.
+    kerf_coords : NDArray | None
+        0-based interior ``(N, 2)`` kerf cells, held at zero pressure from the switch step of
+        each transmit to the end of the run; None writes no kerf input.
+    kerf_switch_steps : Sequence[int] | None
+        The switch step of each batch member; needed with ``kerf_coords``.
     """
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -156,6 +163,9 @@ def write_run_directory_2d(
         _write_air_hold_window(outdir, n_t=n_t)
     dat_io.write_int(outdir / "nTzero.dat", n_t)
     _write_additive_cells(outdir, cells=additive_incoords, n_tic=n_tic_additive, offset=offset)
+    n_kerf = _write_kerf_cells(
+        outdir, cells=kerf_coords, switch_steps=kerf_switch_steps, offset=offset
+    )
     integers = {
         "nX": n_xe,
         "nY": n_ye,
@@ -183,6 +193,7 @@ def write_run_directory_2d(
         "ncoords": len(source_cells),
         "ncoordsout": len(sensor_cells),
         "ncoordszero": len(air_cells),
+        "ncoordskerf": n_kerf,
         "nTzero": n_t,
         "mext": mext,
         "margins": margins,
@@ -193,6 +204,33 @@ def _write_air_hold_window(outdir: Path, *, n_t: int) -> None:
     """Hold the air cells for the whole run in binaries that read ``nzero0.dat``/``nzero1.dat``."""
     dat_io.write_int(outdir / "nzero0.dat", 0)
     dat_io.write_int(outdir / "nzero1.dat", n_t)
+
+
+def _write_kerf_cells(
+    outdir: Path, *, cells: NDArray | None, switch_steps: Sequence[int] | None, offset: NDArray
+) -> int:
+    """Write ``icckerf.dat``, ``ncoordskerf.dat`` and ``nkerf0.dat``; return the cell count.
+
+    ``nkerf0.dat`` holds one switch step per batch member. Without kerf cells the three files
+    are removed from a reused run directory.
+
+    Raises
+    ------
+    ValueError
+        When ``switch_steps`` is missing.
+    """
+    count_file = outdir / "ncoordskerf.dat"
+    if cells is None or len(cells) == 0:
+        dat_io.remove_kerf_files(outdir)
+        return 0
+    if switch_steps is None:
+        msg = "kerf_switch_steps is required with kerf_coords"
+        raise ValueError(msg)
+    shifted = np.asarray(cells)[:, :2].astype(np.int64) + offset
+    dat_io.write_coords_2d(outdir / "icckerf.dat", *shifted.T)
+    dat_io.write_int(count_file, len(shifted))
+    dat_io.write_ints(outdir / "nkerf0.dat", switch_steps)
+    return len(shifted)
 
 
 def _write_additive_cells(

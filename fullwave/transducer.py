@@ -98,6 +98,7 @@ class TransducerGeometry:
         validate_input: bool = True,
         zero_offset: float = 0.0124,
         average_surface_signals: bool = True,
+        kerf_px: int | None = None,
     ) -> None:
         """Initialize base transducer class.
 
@@ -148,13 +149,21 @@ class TransducerGeometry:
             In case of convex transducer, this option is ignored
             and the entire element surface is used for the averaging.
             default is True.
+        kerf_px: int | None
+            Width of every gap between two elements in pixels. Each element then runs from
+            its start on the metric pitch, rounded to a pixel, to the start of the next
+            element minus ``kerf_px``, so the element widths differ by at most one pixel
+            and every gap is exactly ``kerf_px`` wide. 0 makes the elements touch.
+            None keeps the element width and spacing in meters. Flat arrays only.
 
 
         Raises
         ------
         ValueError
             If neither pixel nor meter dimensions are provided
-            or if the transducer exceeds grid bounds.
+            or if the transducer exceeds grid bounds,
+            or if kerf_px is negative, is combined with a curved array,
+            or leaves an element without a pixel.
 
         """
         if validate_input:
@@ -163,6 +172,11 @@ class TransducerGeometry:
         self.grid = grid
         self.is_3d = grid.is_3d
         self.radius = radius
+        self.kerf_px = kerf_px
+        if kerf_px is not None and (kerf_px < 0 or radius != float("inf")):
+            error_msg = "kerf_px must be 0 or more and needs a flat array"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         (
             self.element_width_px,
             self.element_width_m,
@@ -445,8 +459,12 @@ class TransducerGeometry:
                             + (self.element_width_px + self.element_spacing_px) * lateral_index
                         )
 
+                    element_width_px = self.element_width_px
+                    if self.kerf_px is not None:
+                        element_pos_y, element_width_px = self._lateral_span(lateral_index)
+
                     xs = np.arange(element_pos_x, element_pos_x + self.element_layer_px)
-                    ys = np.arange(element_pos_y, element_pos_y + self.element_width_px)
+                    ys = np.arange(element_pos_y, element_pos_y + element_width_px)
                     zs = np.arange(element_pos_z, element_pos_z + self.element_height_px)
                     xx, yy, zz = np.meshgrid(xs, ys, zs, indexing="ij")
                     src = np.stack([xx.ravel(), yy.ravel(), zz.ravel()], axis=1)
@@ -455,7 +473,7 @@ class TransducerGeometry:
 
                     # Single center pixel for sensor output
                     sx = self._flat_sensor_row(element_pos_x=element_pos_x)
-                    sy = element_pos_y + self.element_width_px - 1
+                    sy = element_pos_y + element_width_px - 1
                     sz = element_pos_z + self.element_height_px // 2 - 1
                     sensor_coords_parts.append(np.array([[sx, sy, sz]]))
                     sensor_ids_parts.append(np.array([element_index + 1]))
@@ -475,8 +493,12 @@ class TransducerGeometry:
                             + (self.element_width_px + self.element_spacing_px) * element_index
                         )
 
+                    element_width_px = self.element_width_px
+                    if self.kerf_px is not None:
+                        element_pos_y, element_width_px = self._lateral_span(element_index)
+
                     xs = np.arange(element_pos_x, element_pos_x + self.element_layer_px)
-                    ys = np.arange(element_pos_y, element_pos_y + self.element_width_px)
+                    ys = np.arange(element_pos_y, element_pos_y + element_width_px)
                     xx, yy = np.meshgrid(xs, ys, indexing="ij")
                     src = np.stack([xx.ravel(), yy.ravel()], axis=1)
                     source_coords_parts.append(src)
@@ -484,10 +506,10 @@ class TransducerGeometry:
 
                     sx = self._flat_sensor_row(element_pos_x=element_pos_x)
                     if self.average_surface_signals:
-                        out_ys = np.arange(element_pos_y, element_pos_y + self.element_width_px)
+                        out_ys = np.arange(element_pos_y, element_pos_y + element_width_px)
                         out_xs = np.full(len(out_ys), sx)
                     else:
-                        out_ys = np.array([element_pos_y + self.element_width_px // 2 - 1])
+                        out_ys = np.array([element_pos_y + element_width_px // 2 - 1])
                         out_xs = np.array([sx])
                     snsr = np.stack([out_xs, out_ys], axis=1)
                     sensor_coords_parts.append(snsr)
@@ -501,6 +523,25 @@ class TransducerGeometry:
         sensor_coords = np.concatenate(sensor_coords_parts, axis=0).astype(np.int64)
         sensor_ids = np.concatenate(sensor_ids_parts, axis=0).astype(np.int64)
         return source_coords, source_ids, sensor_coords, sensor_ids
+
+    def _lateral_start_px(self, index: int) -> int:
+        """Return the first lateral pixel of element ``index`` on the metric pitch."""
+        pitch_m = self.element_width_m + self.element_spacing_m
+        return round((self.position_m[1] + pitch_m * index) / self.grid_spacing[1])
+
+    def _lateral_span(self, index: int) -> tuple[int, int]:
+        """Return the first lateral pixel and the width of element ``index`` for ``kerf_px``.
+
+        The element runs from its rounded start to the rounded start of the next element,
+        minus ``kerf_px`` pixels, so every gap is exactly ``kerf_px`` pixels wide.
+        """
+        start = self._lateral_start_px(index)
+        width = self._lateral_start_px(index + 1) - start - self.kerf_px
+        if width < 1:
+            error_msg = f"kerf_px={self.kerf_px} leaves element {index} without a pixel"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        return start, width
 
     def _flat_sensor_row(self, *, element_pos_x: int) -> int:
         """Return the sensor row of a flat-array element.
@@ -803,6 +844,9 @@ class TransducerGeometry:
             Total width of the transducer in grid points.
 
         """
+        if self.kerf_px is not None:
+            n_lateral = self.number_elements // self.elements_in_elevation
+            return self._lateral_start_px(n_lateral) - self.kerf_px - int(self.position_px[1])
         return int(self._last_element_offset_px(lateral=True) + self.element_width_px)
 
     def _last_element_offset_px(self, *, lateral: bool) -> int:
@@ -963,6 +1007,7 @@ class Transducer:
         validate_input: bool = True,
         sampling_modulus_time: int = 1,
         source_type: str,
+        hold_kerf: bool = False,
     ) -> None:
         """Initialize the GeneralTransducer with the provided geometry, grid, and input signal.
 
@@ -997,12 +1042,29 @@ class Transducer:
             pressure after the signal ends. "soft" adds the signal to the field,
             scaled so the aperture radiates the pressure it is given, at the
             grid's reference sound speed.
+        hold_kerf: bool
+            True makes the source hold the kerf: the gap pixels between the elements.
+            They run free while the drive plays and are held at zero pressure from the step
+            after the last driven sample, so the array face stays closed between the
+            elements. A ``Solver`` whose binary does not read ``nkerf0.dat``, or whose source
+            type is not "hard", drops the kerf pixels of this transducer and logs one
+            warning. Flat arrays only.
+
+        Raises
+        ------
+        ValueError
+            If the source type is not valid, or hold_kerf is combined with a curved array.
 
         """
         if validate_input:
             check_functions.check_instance(transducer_geometry, TransducerGeometry)
             check_functions.check_instance(grid, Grid)
 
+        self.hold_kerf = hold_kerf
+        if hold_kerf and transducer_geometry.radius != float("inf"):
+            error_msg = "hold_kerf supports a flat array only"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         self.transducer_geometry = transducer_geometry
         self.grid = grid
         self.is_3d = grid.is_3d
@@ -1041,12 +1103,15 @@ class Transducer:
         face_depth_m: float = 0.0,
         sampling_modulus_time: int = 1,
         source_type: str = source_type_module.HARD,
+        kerf_px: int | None = 1,
+        hold_kerf: bool = True,
     ) -> "Transducer":
         """Return an ATL Philips L7-4 linear array on one grid.
 
-        128 elements of 0.298 mm pitch and 0.048 mm kerf at 5.208 MHz. The
-        excitation is the one an ATS-539 acquisition was matched against. The
-        elevation aperture of 7.5 mm has no datasheet behind it.
+        128 elements of 0.298 mm pitch at 5.208 MHz. The excitation is the one an
+        ATS-539 acquisition was matched against. The elevation aperture of 7.5 mm
+        has no datasheet behind it. The datasheet kerf is 0.048 mm, which a grid of
+        6 points per wavelength rounds to gaps of 1 or 2 pixels.
 
         Parameters
         ----------
@@ -1071,6 +1136,17 @@ class Transducer:
             face stays reflective. "hard_released_after" assigns it while it
             plays, then lets the source cells evolve freely. "soft" adds the
             signal to the field.
+        kerf_px : int | None
+            The width of every gap between two elements in pixels. The default 1 makes
+            every gap exactly 1 pixel on any grid. Each element runs from its start on the
+            true pitch, rounded to a pixel, to the start of the next element minus the
+            gap, so the element widths differ by at most 1 pixel. 0 makes the elements
+            touch and leaves no kerf. None takes the physical kerf of 0.048 mm and rounds
+            each element, which gives gaps of different widths.
+        hold_kerf : bool
+            True, the default, holds the kerf pixels between the elements at zero pressure
+            after the drive ends; see ``Transducer``. ``kerf_px=None, hold_kerf=False``
+            gives the array without a kerf hold and with the physical kerf.
 
         Returns
         -------
@@ -1090,6 +1166,8 @@ class Transducer:
             pulse=transmit.Pulse(pressure=3.162e5, cycles=1.0, drop_off=2.0),
             sampling_modulus_time=sampling_modulus_time,
             source_type=source_type,
+            hold_kerf=hold_kerf,
+            kerf_px=kerf_px,
         )
 
     @classmethod
@@ -1159,6 +1237,7 @@ class Transducer:
         face_depth_m: float = 0.0,
         sampling_modulus_time: int = 1,
         source_type: str = source_type_module.HARD,
+        hold_kerf: bool = False,
     ) -> "Transducer":
         """Return a 64 element phased array of 27 mm aperture on one grid.
 
@@ -1184,6 +1263,8 @@ class Transducer:
             face stays reflective. "hard_released_after" assigns it while it
             plays, then lets the source cells evolve freely. "soft" adds the
             signal to the field.
+        hold_kerf : bool
+            True holds the kerf pixels between the elements; see ``Transducer``.
 
         Returns
         -------
@@ -1203,6 +1284,7 @@ class Transducer:
             pulse=transmit.Pulse(),
             sampling_modulus_time=sampling_modulus_time,
             source_type=source_type,
+            hold_kerf=hold_kerf,
         )
 
     @classmethod
@@ -1218,6 +1300,8 @@ class Transducer:
         pulse: transmit.Pulse,
         sampling_modulus_time: int,
         source_type: str,
+        hold_kerf: bool = False,
+        kerf_px: int | None = None,
         radius_m: float = float("inf"),
         element_height_m: float | None = None,
         face_depth_m: float = 0.0,
@@ -1234,6 +1318,8 @@ class Transducer:
             "element_layer_px": element_layer_px,
             "radius": radius_m,
         }
+        if kerf_px is not None:
+            shape["kerf_px"] = kerf_px
         corner_m = (face_depth_m, 0.0, 0.0) if grid.is_3d else (face_depth_m, 0.0)
         geometry = cls.geometry_class(grid, position_m=position_m or corner_m, **shape)
         if position_m is None and (grid.is_3d or not curved):
@@ -1254,6 +1340,7 @@ class Transducer:
             pulse=pulse,
             sampling_modulus_time=sampling_modulus_time,
             source_type=source_type,
+            hold_kerf=hold_kerf,
         )
 
     def plane_wave(
@@ -1640,6 +1727,30 @@ class Transducer:
         return self.transducer_geometry._source_coords[mask]
 
     @property
+    def kerf_coords(self) -> NDArray[np.int64]:
+        """Coordinates of the kerf pixels; shape [N_kerf, ndim].
+
+        In every source row, the pixels between the first and the last pixel of any element
+        of the geometry that no element pixel covers: the gaps of ``element_spacing_px``
+        between the elements. Active and inactive elements count alike, so the kerf is the
+        same for every sub-aperture and for every transmit of a batch.
+        """
+        coords = self.transducer_geometry._source_coords
+        lateral_axis = 1
+        row_keys = np.delete(coords, lateral_axis, axis=1)
+        kerf_parts = []
+        for key in np.unique(row_keys, axis=0):
+            lateral = coords[(row_keys == key).all(axis=1), lateral_axis]
+            gaps = np.setdiff1d(np.arange(lateral.min(), lateral.max() + 1), lateral)
+            part = np.empty((len(gaps), coords.shape[1]), dtype=np.int64)
+            part[:, lateral_axis] = gaps
+            part[:, np.arange(coords.shape[1]) != lateral_axis] = key
+            kerf_parts.append(part)
+        if not kerf_parts:
+            return np.empty((0, coords.shape[1]), dtype=np.int64)
+        return np.concatenate(kerf_parts, axis=0)
+
+    @property
     def sensor_coords(self) -> NDArray[np.int64]:
         """Coordinates of active sensor pixels; shape [N_snsr, ndim]."""
         active_ids = np.where(self.active_sensor_elements)[0] + 1
@@ -2015,6 +2126,7 @@ class Transducer:
             p0=self._signal_without_silent_tail(),
             coords=self.source_coords,
             grid_shape=grid_shape,
+            kerf_coords=self.kerf_coords if self.hold_kerf else None,
         )
 
     def _signal_without_silent_tail(self) -> NDArray[np.float64]:

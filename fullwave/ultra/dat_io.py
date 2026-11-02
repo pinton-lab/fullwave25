@@ -8,12 +8,27 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from numpy.typing import NDArray
+
+KERF_FILES = ("icckerf.dat", "ncoordskerf.dat", "nkerf0.dat")
 
 
 def write_int(path: str | Path, value: int) -> None:
     """Write one ``int32`` to ``path``."""
     np.asarray([value], dtype=np.int32).tofile(path)
+
+
+def write_ints(path: str | Path, values: Sequence[int]) -> None:
+    """Write the ``int32`` values to ``path``."""
+    np.asarray(values, dtype=np.int32).tofile(path)
+
+
+def remove_kerf_files(outdir: Path) -> None:
+    """Remove the kerf input files that an earlier run left in ``outdir``."""
+    for name in KERF_FILES:
+        (outdir / name).unlink(missing_ok=True)
 
 
 def write_float(path: str | Path, value: float) -> None:

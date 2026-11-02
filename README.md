@@ -235,6 +235,8 @@ The flat arrays (`l7_4`, `p4_1c`, `LinearTransducer`, `make_p4_1c_trasnducer`) s
 
 The source type is `"hard"` by default for the named arrays: the transducer assigns its pressure for the whole run, so the source cells stay at zero pressure after the drive ends and the face stays reflective. `"hard_released_after"` assigns it while the drive signal plays, then the source cells evolve freely. `"soft"` adds the signal to the field. Pass `source_type=` to `Transducer.l7_4`, `c5_2v`, `p4_1c` or `fullwave.Solver`.
 
+`Transducer.l7_4` gives every gap between two elements exactly one pixel (`kerf_px=1`) and holds those kerf pixels at zero pressure after the drive (`hold_kerf=True`). This changes the element widths and positions of every L7-4 run, with either solver; `kerf_px=None, hold_kerf=False` gives the previous array. A `Solver` whose binary does not read `nkerf0.dat`, or whose source type is not `"hard"`, drops the kerf pixels of a transducer and logs one warning.
+
 `transducer.apply_transducer_stack(...)` still paints a probe's backing, matching layer, lens and standoff onto the medium maps before the `Medium` is built, for a calibrated stack. `fullwave.TransducerStack` holds the values.
 
 ### Transmit batches
