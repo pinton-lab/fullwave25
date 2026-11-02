@@ -1292,15 +1292,16 @@ class Medium:
             ``MediumRelaxationMaps.sound_speed`` reports the base speed that
             gives it. See ``band_scaled_sound_speed``.
         scale_to_requested_alpha_coeff : bool, optional
-            Give the requested attenuation coefficient rather than the
-            calibrated level the lookup serves. The coefficient axis holds
-            0.0022 and then 0.01 to 1.00 in absolute steps of 0.01, so a request
-            between two levels is served the one above and a request past either
-            end is clipped. Setting this True scales the relaxation departure by
-            the shortfall instead. It matters most under a band transfer, which
-            multiplies the request by a factor and often carries it off the
-            axis. False, the default, reproduces every result produced before
-            this existed.
+            Give the specified attenuation coefficient rather than the
+            coefficient of the cell used. The coefficient axis holds
+            0.0022, then 0.01 to 1.00 in steps of 0.01, then 1.1 to 2.0 in
+            steps of 0.1, then 3 to 10 in steps of 1, so a specified value
+            between two nodes maps to the node above and a value past either
+            end maps to the last node. Setting this True scales the relaxation
+            departure by the shortfall instead. It matters most under a band
+            transfer, which multiplies the specified coefficient by a factor and
+            often carries it off the axis. False, the default, reproduces every
+            result produced before this existed.
         n_jobs : int, optional
             Number of parallel jobs for relaxation parameter calculation.
             Default is -1, which uses all available CPUs.

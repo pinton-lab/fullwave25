@@ -141,7 +141,7 @@ class TestTheShippedTableCarriesItsOwnRecord:
         assert held.invalid_cells["schema"] == 4
         assert held.invalid_reasons()
 
-    def test_every_reason_it_carries_is_one_of_the_five(self):
+    def test_every_reason_it_carries_is_one_of_the_six(self):
         held = RelaxationParametersGenerator()
         named = {reason for reasons in held.invalid_reasons().values() for reason in reasons}
         assert named <= {
@@ -150,6 +150,7 @@ class TestTheShippedTableCarriesItsOwnRecord:
             "attenuation",
             "phase_velocity",
             "diverged",
+            "not_fitted",
         }
 
     def test_a_marked_cell_of_the_shipped_table_reads_as_invalid(self):
