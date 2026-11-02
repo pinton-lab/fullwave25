@@ -852,7 +852,12 @@ class MediumRelaxationMaps:
             target_map_dict.items(),
             strict=False,
         ):
-            plot_utils.plot_array_on_ax(ax, map_data, title=title)
+            plot_utils.plot_array_on_ax(
+                ax,
+                map_data,
+                title=title,
+                **plot_utils.mm_axes_kwargs(self.grid),
+            )
         plt.tight_layout()
 
         if export_path is not None:
@@ -1129,10 +1134,8 @@ class MediumExponentialAttenuation:
                 ax,
                 map_data,
                 title=title,
-                xlim=(0 - 10, self.grid.ny + 10),
-                ylim=(0 - 10, self.grid.nx + 10),
-                reverse_y_axis=True,
                 cmap=cmap,
+                **plot_utils.mm_axes_kwargs(self.grid),
             )
         plt.tight_layout()
 
@@ -1543,10 +1546,8 @@ class Medium:
                     ax,
                     map_data,
                     title=title,
-                    xlim=(0 - 10, self.grid.ny + 10),
-                    ylim=(0 - 10, self.grid.nx + 10),
-                    reverse_y_axis=True,
                     cmap=cmap,
+                    **plot_utils.mm_axes_kwargs(self.grid),
                 )
                 ax.title.set_fontsize(fontsize_title)
             plt.tight_layout()
