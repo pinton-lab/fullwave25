@@ -11,6 +11,7 @@ from fullwave.beamformer.mach_beamformer import (
     face_crossing_time_s,
     focused_arrival_s,
     plane_wave_arrival_s,
+    receiver_positions_m,
     synthetic_aperture_arrival_s,
     user_arrival_s,
 )
@@ -102,6 +103,61 @@ def test_face_crossing_time_adds_the_travel_from_the_back_source_row():
     )
     expected = 2e-6 + 4 * dx / c0
     assert face_crossing_time_s(transducer) == pytest.approx(expected, abs=3e-8)
+
+
+def _flat_array_transducer(*, element_count: int = 4) -> SimpleNamespace:
+    dt, dx = 1e-8, 5e-5
+    time = np.arange(400) * dt
+    signal = np.zeros((2, 400))
+    signal[0] = np.sin(2 * np.pi * 2e6 * (time - 2e-6)) * np.exp(-(((time - 2e-6) / 5e-7) ** 2))
+    signal[1] = signal[0]
+    return SimpleNamespace(
+        signal=signal,
+        grid=SimpleNamespace(dt=dt, dx=dx, c0=SOUND_SPEED, f0=2e6),
+        source_coords=np.array([[10, 0], [11, 0]]),
+        face_row_px=12,
+        sampling_modulus_time=3,
+        element_id_to_receiver_center={
+            element_id: (12, 20 + 4 * element_id) for element_id in range(1, element_count + 1)
+        },
+    )
+
+
+def test_receiver_positions_are_centered_laterally_and_at_the_face_depth():
+    transducer = _flat_array_transducer()
+
+    positions = receiver_positions_m(transducer)
+
+    np.testing.assert_allclose(positions[:, 0], np.array([-6, -2, 2, 6]) * 5e-5, atol=1e-12)
+    np.testing.assert_array_equal(positions[:, 1:], 0.0)
+
+
+def test_from_transducer_equals_the_explicit_construction():
+    transducer = _flat_array_transducer()
+    lateral_position_m = np.linspace(-1e-3, 1e-3, 5)
+    axial_position_m = np.linspace(2e-3, 6e-3, 7)
+
+    from_transducer = MachBeamformer.from_transducer(
+        transducer,
+        lateral_position_m=lateral_position_m,
+        axial_position_m=axial_position_m,
+        f_number=1.5,
+    )
+    explicit = MachBeamformer(
+        lateral_position_m=lateral_position_m,
+        axial_position_m=axial_position_m,
+        receiver_positions_m=receiver_positions_m(transducer),
+        sound_speed=transducer.grid.c0,
+        center_frequency_hz=transducer.grid.f0,
+        sampling_frequency_hz=1 / (transducer.grid.dt * transducer.sampling_modulus_time),
+        f_number=1.5,
+        time_zero_s=face_crossing_time_s(transducer),
+        tukey_alpha=0.5,
+    )
+
+    assert from_transducer.__dict__.keys() == explicit.__dict__.keys()
+    for name, value in from_transducer.__dict__.items():
+        np.testing.assert_array_equal(value, explicit.__dict__[name])
 
 
 def test_beamform_without_mach_raises_import_error_that_names_the_extra(monkeypatch):
