@@ -35,7 +35,7 @@ The solver advances the pressure $p$ and the particle velocity $\mathbf{v}$ with
 
 $$\nabla_1 p + \rho \cfrac{\partial {\bf{v}}}{\partial t} = 0, \qquad \nabla_2 \cdot {\bf{v}} + \kappa \cfrac{\partial p}{\partial t} = 0 .$$
 
-in which the spatial derivatives $\nabla_1$ and $\nabla_2$ carry a set of relaxation mechanisms. fullwave25 looks up the parameters of these mechanisms in a precomputed table for the $\alpha_0$ and $\gamma$ of each cell, so that the simulated attenuation matches the power law and the phase velocity matches its Kramers-Kronig dispersion. The table spans $\alpha_0$ up to 1.0 dB/(MHz^γ cm) and $\gamma$ from 0.4 to 2.0, for frequencies from 0.1 to 20 MHz.
+in which the spatial derivatives $\nabla_1$ and $\nabla_2$ carry a set of relaxation mechanisms. fullwave25 looks up the parameters of these mechanisms in a precomputed table for the $\alpha_0$ and $\gamma$ of each cell, so that the simulated attenuation matches the power law and the phase velocity matches its Kramers-Kronig dispersion. The table spans $\alpha_0$ up to 1.0 dB/(MHz^γ cm) and $\gamma$ from 0.4 to 2.0, for frequencies from 0.1 to 20 MHz. It extends to $\alpha_0$ = 2.0 dB/(MHz^γ cm) for $\gamma$ from 0.4 to 1.6, and to $\alpha_0$ = 10 dB/(MHz^γ cm) for $\gamma$ = 1.0. A specified pair on a cell the table does not fit logs a warning.
 
 The figure compares the target attenuation $\alpha_0 f^\gamma$ (red lines) with the simulated attenuation (black dots) for $\alpha_0 =$ 0.25, 0.5 and 0.75 dB/(MHz^γ cm) and $\gamma =$ 0.4, 0.7, 1.0, 1.3 and 1.6. Each dot is one simulation of a plane wave through a uniform medium, read at two depths.
 

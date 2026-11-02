@@ -10,6 +10,7 @@ from scipy.io import loadmat
 
 import fullwave
 from fullwave.solver.shipped_database import ShippedDatabase
+from fullwave.solver.utils import initialize_relaxation_param_dict
 from fullwave.utils import relaxation_parameters
 from fullwave.utils.relaxation_parameters import (
     RelaxationParametersGenerator,
@@ -42,6 +43,26 @@ def two_mechanism_table() -> Path:
     if not table.exists():
         pytest.skip(f"this release ships no two mechanism table: {table.name}")
     return table
+
+
+@pytest.fixture(scope="module")
+def previous_table() -> Path:
+    """Return the four mechanism table whose coefficient axis stops at 1.00.
+
+    The counts of calibrated cells below were measured on that table.
+    """
+    return ShippedDatabase.root / "relaxation_params_database_num_relax=4_20260828_1456.mat"
+
+
+@pytest.fixture(scope="module")
+def previous_grid(previous_table: Path) -> tuple[np.ndarray, np.ndarray]:
+    """Every attenuation pair on the grid of the previous table."""
+    database = loadmat(previous_table)
+    return np.meshgrid(
+        database["alpha_0_list"].ravel(),
+        database["power_list"].ravel(),
+        indexing="ij",
+    )
 
 
 @pytest.fixture(scope="module")
@@ -404,15 +425,29 @@ def test_the_anchor_is_per_voxel() -> None:
         assert together[index] == pytest.approx(alone, abs=1e-9)
 
 
-def test_the_anchor_stays_under_two_per_cent_across_the_whole_grid(
+def test_the_anchor_stays_under_two_per_cent_on_the_rows_up_to_one(
     whole_grid: tuple[np.ndarray, np.ndarray],
 ) -> None:
-    """Measured worst is 1.81% at a band scale of 10, at the top of the coefficient axis."""
+    """Measured worst is 1.81% at a band scale of 10, at the top of those rows, on every cell."""
     alpha_coeff, alpha_power = whole_grid
+    rows_up_to_one = alpha_coeff <= 1.0
     sound_speed = np.full(alpha_coeff.shape, 1540.0)
     for band_scale in (0.1, 0.5, 2.0, 10.0):
         transferred = band_scaled_sound_speed(sound_speed, alpha_coeff, alpha_power, band_scale)
-        assert np.abs(transferred - 1540.0).max() / 1540.0 < 0.02
+        assert np.abs(transferred - 1540.0)[rows_up_to_one].max() / 1540.0 < 0.02
+
+
+def test_the_anchor_stays_under_five_per_cent_on_the_calibrated_cells_above_one(
+    whole_grid: tuple[np.ndarray, np.ndarray],
+) -> None:
+    """Measured worst is 4.32% at a band scale of 10, at (10, 1.0001)."""
+    alpha_coeff, alpha_power = whole_grid
+    calibrated = np.asarray(RelaxationParametersGenerator().is_calibrated(alpha_coeff, alpha_power))
+    calibrated_above_one = calibrated & (alpha_coeff > 1.0)
+    sound_speed = np.full(alpha_coeff.shape, 1540.0)
+    for band_scale in (0.1, 0.5, 2.0, 10.0):
+        transferred = band_scaled_sound_speed(sound_speed, alpha_coeff, alpha_power, band_scale)
+        assert np.abs(transferred - 1540.0)[calibrated_above_one].max() / 1540.0 < 0.05
 
 
 def _medium_at(band_scale: float, alpha_power: float = 1.4) -> fullwave.MediumRelaxationMaps:
@@ -490,15 +525,15 @@ def test_the_shortfall_is_one_on_a_calibrated_level(
 
 
 def test_the_shortfall_reports_the_quantization_and_the_clip(database_path: Path) -> None:
-    """The axis steps by 0.01 and stops at 0.0022 and 1.00."""
+    """The axis steps by 0.01 up to 1.00 and stops at 0.0022 and 10."""
     generator = RelaxationParametersGenerator(path_database=database_path)
-    asked = np.array([0.0, 0.001, 0.155, 0.5, 3.1623])
+    asked = np.array([0.0, 0.001, 0.155, 0.5, 11.0])
     shortfall = generator.alpha_coeff_shortfall(asked)
     assert shortfall[0] == 0.0
     assert shortfall[1] == pytest.approx(0.001 / 0.0022)
     assert shortfall[2] == pytest.approx(0.155 / 0.16)
     assert shortfall[3] == pytest.approx(1.0)
-    assert shortfall[4] == pytest.approx(3.1623)
+    assert shortfall[4] == pytest.approx(1.1)
 
 
 def test_scaling_to_the_request_leaves_a_calibrated_level_alone(
@@ -612,27 +647,67 @@ def test_scaling_to_the_request_makes_a_lossless_voxel_exactly_lossless() -> Non
     np.testing.assert_array_equal(scaled["d_x1_nu1"], np.zeros((2, 2)))
 
 
-def test_scaling_to_the_request_recovers_a_band_transfer_that_clips(
+def test_scaling_to_the_specified_value_recovers_a_value_above_the_axis(
     stretching_keys: tuple[str, ...],
 ) -> None:
-    """At (1.0, 0.5) and s = 0.1 the rule asks for 3.1623 against a ceiling of 1.00."""
-    asked = np.full((2, 2), 1.0)
-    power = np.full((2, 2), 0.5)
-    plain = generate_relaxation_params(alpha_coeff=asked, alpha_power=power, band_scale=0.1)
+    """At (20, 1.0) the specified value is twice the last node of 10, the cell used."""
+    specified = np.full((2, 2), 20.0)
+    power = np.full((2, 2), 1.0)
+    plain = generate_relaxation_params(alpha_coeff=specified, alpha_power=power)
     scaled = generate_relaxation_params(
-        alpha_coeff=asked,
+        alpha_coeff=specified,
         alpha_power=power,
-        band_scale=0.1,
         scale_to_requested_alpha_coeff=True,
     )
-    ratio = 1.0 * 0.1 ** (0.5 - 1.0)
-    assert ratio == pytest.approx(3.16227766)
+    ratio = 2.0
     expected = scale_relaxation_attenuation(plain, ratio, exact=True)
     for key, value in expected.items():
         np.testing.assert_allclose(scaled[key], value, rtol=1e-12, err_msg=key)
     moved = (scaled["kappa_x1"] / plain["kappa_x1"]) ** 2
     assert scaled["d_x1_nu1"] / plain["d_x1_nu1"] == pytest.approx(ratio * moved, rel=1e-9)
     del stretching_keys
+
+
+def test_scaling_to_the_specified_value_follows_the_exponent_used_under_a_band_transfer() -> None:
+    """At (4.0, 0.5) and s = 0.1 the key 12.649 clips to (10, 0.5), which is not fitted.
+
+    The exponent used is then 1.0001, and the key read with it is 3.9991, so the
+    cell used is (4, 1.0001).
+    """
+    specified = np.full((2, 2), 4.0)
+    power = np.full((2, 2), 0.5)
+    plain = generate_relaxation_params(alpha_coeff=specified, alpha_power=power, band_scale=0.1)
+    scaled = generate_relaxation_params(
+        alpha_coeff=specified,
+        alpha_power=power,
+        band_scale=0.1,
+        scale_to_requested_alpha_coeff=True,
+    )
+    key = 4.0 * 0.1 ** (1.0001 - 1.0)
+    assert key == pytest.approx(3.99908)
+    ratio = key / 4.0
+    assert np.asarray(plain["d_x1_nu1"]).all()
+    expected = scale_relaxation_attenuation(plain, ratio, exact=True)
+    for name, value in expected.items():
+        np.testing.assert_allclose(scaled[name], value, rtol=1e-12, err_msg=name)
+
+
+def test_scaling_to_the_specified_value_works_on_the_cell_used_after_a_not_fitted_move() -> None:
+    """(5.5, 0.5) lands on (6, 0.5), which is not fitted, so the lookup uses (6, 1.0001)."""
+    specified = np.full((2, 2), 5.5)
+    power = np.full((2, 2), 0.5)
+    plain = generate_relaxation_params(alpha_coeff=specified, alpha_power=power)
+    cell_used = generate_relaxation_params(
+        alpha_coeff=np.full((2, 2), 6.0), alpha_power=np.full((2, 2), 1.0001)
+    )
+    for name, value in cell_used.items():
+        np.testing.assert_array_equal(plain[name], value, err_msg=name)
+    scaled = generate_relaxation_params(
+        alpha_coeff=specified, alpha_power=power, scale_to_requested_alpha_coeff=True
+    )
+    expected = scale_relaxation_attenuation(cell_used, 5.5 / 6.0, exact=True)
+    for name, value in expected.items():
+        np.testing.assert_allclose(scaled[name], value, rtol=1e-12, err_msg=name)
 
 
 def test_a_stretching_factor_of_one_is_a_fixed_point_of_the_exact_rule() -> None:
@@ -678,28 +753,70 @@ def test_medium_carries_the_request_scaling_through_to_the_build() -> None:
     assert not np.allclose(scaled["kappa_x1"], plain["kappa_x1"])
 
 
-def test_the_shipped_table_flags_124_of_its_1717_cells(
-    whole_grid: tuple[np.ndarray, np.ndarray],
+def test_the_previous_table_flags_124_of_its_1717_cells(
+    previous_table: Path, previous_grid: tuple[np.ndarray, np.ndarray]
 ) -> None:
     """1593 cells passed the calibration of the four mechanism table.
 
     102 of the 124 come from the fit's own gate, 8 from the curve gate and 14
-    from the absorbing layer gate, which the shipped table now carries.
+    from the absorbing layer gate, which that table carries.
     """
-    alpha_coeff, alpha_power = whole_grid
-    generator = RelaxationParametersGenerator()
+    alpha_coeff, alpha_power = previous_grid
+    generator = RelaxationParametersGenerator(path_database=previous_table)
     calibrated = generator.is_calibrated(alpha_coeff, alpha_power)
     assert calibrated.size == 1717
     assert int(calibrated.sum()) == 1593
     assert int((~calibrated).sum()) == 124
 
 
-def test_the_flagged_cells_gather_at_the_high_exponents(
+def test_the_default_table_holds_2023_cells_and_flags_292(
     whole_grid: tuple[np.ndarray, np.ndarray],
 ) -> None:
-    """110 of the 124 flagged cells sit at an exponent of 1.5 or above."""
+    """The 124 flags of the previous table, plus the 168 cells the new rows do not fit."""
     alpha_coeff, alpha_power = whole_grid
     generator = RelaxationParametersGenerator()
+    calibrated = generator.is_calibrated(alpha_coeff, alpha_power)
+    assert calibrated.size == 2023
+    assert int((~calibrated).sum()) == 292
+    assert len(generator.invalid_reasons()) == 292
+
+
+def test_the_default_table_marks_168_cells_not_fitted_and_they_hold_no_strength() -> None:
+    """Each not_fitted cell lies above the previous axis and is a lossless medium."""
+    generator = RelaxationParametersGenerator()
+    keys = list(initialize_relaxation_param_dict(generator.n_relaxation_mechanisms))
+    strength_columns = [index for index, key in enumerate(keys) if key.startswith("d_")]
+    coefficients = np.asarray(generator.alpha_list).ravel()
+    not_fitted = [
+        cell for cell in generator.invalid_cells["invalid"] if "not_fitted" in cell["reasons"]
+    ]
+    assert len(not_fitted) == 168
+    for cell in not_fitted:
+        row, column = int(cell["row"]), int(cell["column"])
+        assert generator.invalid_matrix[row, column]
+        assert coefficients[row] > 1.0
+        np.testing.assert_array_equal(generator.look_up_table[row, column, strength_columns], 0.0)
+
+
+def test_the_default_table_keeps_the_rows_of_the_previous_table(previous_table: Path) -> None:
+    default = loadmat(ShippedDatabase.table)
+    previous = loadmat(previous_table)
+    rows = previous["alpha_0_list"].size
+    assert rows == 101
+    np.testing.assert_array_equal(
+        default["alpha_0_list"].ravel()[:rows], previous["alpha_0_list"].ravel()
+    )
+    np.testing.assert_array_equal(default["power_list"], previous["power_list"])
+    np.testing.assert_array_equal(default["database"][:rows], previous["database"])
+    np.testing.assert_array_equal(default["invalid_matrix"][:rows], previous["invalid_matrix"])
+
+
+def test_the_flagged_cells_gather_at_the_high_exponents(
+    previous_table: Path, previous_grid: tuple[np.ndarray, np.ndarray]
+) -> None:
+    """110 of the 124 flagged cells of the previous table sit at an exponent of 1.5 or above."""
+    alpha_coeff, alpha_power = previous_grid
+    generator = RelaxationParametersGenerator(path_database=previous_table)
     flagged = ~generator.is_calibrated(alpha_coeff, alpha_power)
     assert int(flagged[alpha_power >= 1.5].sum()) == 110
     assert int(flagged[alpha_power < 1.5].sum()) == 14
@@ -728,14 +845,14 @@ def test_the_two_mechanism_table_flags_389_of_its_1717_cells(
 
 
 def test_the_coefficient_axis_is_full_except_at_three_exponents(
-    whole_grid: tuple[np.ndarray, np.ndarray],
+    previous_table: Path, previous_grid: tuple[np.ndarray, np.ndarray]
 ) -> None:
-    """The four mechanism fit reaches the top of the axis at 14 of the 17 exponents.
+    """The previous four mechanism fit reaches the top of its axis at 14 of the 17 exponents.
 
     It stops at 0.94 at an exponent of 1.7, at 0.71 at 1.8 and at 0.7 at 1.999.
     """
-    alpha_coeff, alpha_power = whole_grid
-    generator = RelaxationParametersGenerator()
+    alpha_coeff, alpha_power = previous_grid
+    generator = RelaxationParametersGenerator(path_database=previous_table)
     calibrated = generator.is_calibrated(alpha_coeff, alpha_power)
     exponents = alpha_power[0, :]
     largest = {
@@ -874,3 +991,78 @@ def test_the_exact_rule_is_refused_only_at_already_flagged_cells(
             whole_table, np.asarray(factor), 2, xp=np
         )
         assert not (~admissible & calibrated).any()
+
+
+def _attenuation_decibels_per_centimeter(
+    relaxation_param_dict: dict[str, np.ndarray], hertz: np.ndarray, sound_speed: float = 1540.0
+) -> np.ndarray:
+    """Return the attenuation of one voxel from the relaxation model, written independently.
+
+    The wavenumber is ``omega / c`` times ``(S_x1 * S_x2) ** (-1/2)``.
+    """
+    omega = 2.0 * np.pi * hertz
+    operator = np.ones_like(omega, dtype=complex)
+    for direction in ("x1", "x2"):
+        kappa = float(np.asarray(relaxation_param_dict[f"kappa_{direction}"]).ravel()[0])
+        total = np.zeros_like(omega, dtype=complex)
+        for i_relax in range(1, ShippedDatabase.mechanisms + 1):
+            strength = float(
+                np.asarray(relaxation_param_dict[f"d_{direction}_nu{i_relax}"]).ravel()[0]
+            )
+            rate = float(
+                np.asarray(relaxation_param_dict[f"alpha_{direction}_nu{i_relax}"]).ravel()[0]
+            )
+            total += (strength / kappa**2) / (strength / kappa + rate + 1j * omega)
+        operator *= 1.0 / kappa - total
+    wavenumber = omega / sound_speed * operator ** (-0.5)
+    return np.abs(wavenumber.imag) * 20.0 / np.log(10.0) / 100.0
+
+
+def test_a_band_transfer_after_a_not_fitted_move_gives_the_specified_coefficient() -> None:
+    """(1.0, 0.5) at s = 0.1 reads the key 3.16, whose row fits only y = 1.0001.
+
+    The exponent used is then 1.0001, and the key is read again with it, so the
+    medium attenuates as 1.0 * f ** 1.0001 over the transferred band.
+    """
+    parameters = generate_relaxation_params(
+        alpha_coeff=np.full((1, 1), 1.0),
+        alpha_power=np.full((1, 1), 0.5),
+        band_scale=0.1,
+        scale_to_requested_alpha_coeff=True,
+    )
+    hertz = np.logspace(np.log10(0.1e6), np.log10(2.0e6), 12)
+    attenuation = _attenuation_decibels_per_centimeter(parameters, hertz)
+    np.testing.assert_allclose(attenuation, 1.0 * (hertz / 1e6) ** 1.0001, rtol=0.02)
+
+
+def test_the_exponent_used_after_a_band_transfer_is_the_fitted_one() -> None:
+    generator = RelaxationParametersGenerator()
+    used = generator._exponent_used(
+        np.array([[1.0, 0.5, 5.0]]), np.array([[0.5, 1.4, 0.5]]), band_scale=0.1
+    )
+    np.testing.assert_array_equal(used, [[1.0001, 1.4, 1.0001]])
+
+
+def test_the_exponent_used_is_the_specified_one_where_nothing_moves() -> None:
+    specified = np.array([[0.5, 0.2]])
+    exponent = np.array([[1.0, 1.234]])
+    used = RelaxationParametersGenerator()._exponent_used(specified, exponent, band_scale=1.0)
+    np.testing.assert_array_equal(used, exponent)
+
+
+def test_medium_anchors_a_moved_voxel_at_the_exponent_used() -> None:
+    grid = fullwave.Grid(
+        domain_size=(2e-3, 2e-3), f0=1.0e6, duration=1e-6, c0=1540.0, ppw=16, cfl=0.2
+    )
+    shape = (grid.nx, grid.ny)
+    built = fullwave.Medium(
+        grid=grid,
+        sound_speed=np.full(shape, 1540.0),
+        density=np.full(shape, 1000.0),
+        alpha_coeff=np.full(shape, 1.0),
+        alpha_power=np.full(shape, 0.5),
+        beta=np.zeros(shape),
+        band_scale=0.1,
+    ).build()
+    expected = band_scaled_sound_speed(1540.0, 1.0, 1.0001, 0.1)
+    np.testing.assert_allclose(built.sound_speed, expected, rtol=1e-12)

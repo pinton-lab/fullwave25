@@ -38,7 +38,7 @@ class ShippedDatabase:
     default_mechanisms = 4
     stems: ClassVar[dict[int, str]] = {
         3: "relaxation_params_database_num_relax=3_20260828_1513",
-        4: "relaxation_params_database_num_relax=4_20260828_1456",
+        4: "relaxation_params_database_num_relax=4_20261102_1540",
     }
 
     @classmethod
