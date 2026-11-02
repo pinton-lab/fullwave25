@@ -12,3 +12,4 @@ wheels/
 temp/*
 outputs
 .env
+.claude/*
