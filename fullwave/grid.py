@@ -126,6 +126,21 @@ class Grid:
         """Grid point spacing in z-direction [m]."""
         return self.wavelength / self.ppw if len(self.domain_size) == 3 else 0
 
+    def extent_mm(self) -> tuple[float, float, float, float]:
+        """Return the 2D plot extent in millimeters.
+
+        The lateral axis is centered on 0 and the depth axis starts at 0 on the top.
+
+        Returns
+        -------
+        tuple[float, float, float, float]
+            (left, right, bottom, top) as expected by matplotlib's ``imshow``.
+
+        """
+        half_width_mm = self.ny * self.dy * 1e3 / 2
+        depth_mm = self.nx * self.dx * 1e3
+        return (-half_width_mm, half_width_mm, depth_mm, 0.0)
+
     @property
     def nt(self) -> int:
         """Number of time steps."""

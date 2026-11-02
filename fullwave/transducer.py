@@ -1515,7 +1515,7 @@ class Transducer:
         scatterer : NDArray[np.float64] | None
             The scatter map. When given, the backing keeps the tissue speckle.
         stack : type[TransducerStack]
-            The layers to paint. The default is the calibrated probe.
+            The layers to paint. The default is ``TransducerStack``.
         rng : np.random.Generator | None
             The generator the rough backing face uses. None takes a fresh one.
 

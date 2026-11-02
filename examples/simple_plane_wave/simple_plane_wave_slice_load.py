@@ -153,6 +153,7 @@ def main() -> None:
     plot_utils.plot_array(
         propagation_map,
         export_path=work_dir / "pressure_at_time_step_100.png",
+        **plot_utils.mm_axes_kwargs(grid),
     )
 
     # Alternatively, we can load the data at a specific sensor index

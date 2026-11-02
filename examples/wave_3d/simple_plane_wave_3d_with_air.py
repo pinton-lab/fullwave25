@@ -158,7 +158,7 @@ def main() -> None:
         medium=medium,
         source=source,
         sensor=sensor,
-        run_on_memory=False,
+        run_on_memory=True,
     )
     fw_solver.print_info()
     sensor_output = fw_solver.run()

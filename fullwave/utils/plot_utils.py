@@ -1,5 +1,6 @@
 """plot utils."""
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import cv2
@@ -7,10 +8,19 @@ import numpy as np
 from matplotlib import animation
 from matplotlib import pyplot as plt
 from matplotlib.axes import Axes
+from matplotlib.colors import Colormap
 from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
+from matplotlib.patches import Circle
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from numpy.typing import NDArray
 from tqdm import tqdm
+
+from fullwave.grid import Grid
+
+DEFAULT_MARK_COLOR = "red"
+CIRCLE_LINEWIDTH = 0.6
+POINT_MARKER_SIZE = 1.5
 
 
 def plot_array(  # noqa: PLR0912
@@ -147,6 +157,27 @@ def plot_array(  # noqa: PLR0912
     return plt.gcf()
 
 
+def mm_axes_kwargs(grid: Grid) -> dict:
+    """Return the extent and labels that draw a 2D map of the grid in millimeters.
+
+    Parameters
+    ----------
+    grid : Grid
+        The 2D grid of the map.
+
+    Returns
+    -------
+    dict
+        Keyword arguments ``extent``, ``xlabel`` and ``ylabel`` for the plot functions.
+
+    """
+    return {
+        "extent": grid.extent_mm(),
+        "xlabel": "Lateral position (mm)",
+        "ylabel": "Depth (mm)",
+    }
+
+
 def plot_array_on_ax(
     ax: Axes,
     x: NDArray[np.float64 | np.int64 | np.bool],
@@ -160,6 +191,9 @@ def plot_array_on_ax(
     *,
     reverse_y_axis: bool = False,
     cmap: str = "vanimo",
+    extent: tuple[float, float, float, float] | None = None,
+    xlabel: str = "",
+    ylabel: str = "",
 ) -> Axes:
     """Plot a 2D array using matplotlib.
 
@@ -187,6 +221,12 @@ def plot_array_on_ax(
         The title of the plot
     cmap: str
         The colormap to use for the plot.
+    extent : tuple, optional
+        The extent of the axes (left, right, bottom, top).
+    xlabel : str
+        The x-axis label.
+    ylabel : str
+        The y-axis label.
 
     Returns
     -------
@@ -200,7 +240,10 @@ def plot_array_on_ax(
         vmax=vmax,
         cmap=cmap,
         interpolation=interpolation,
+        extent=extent,
     )
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
     if xlim is not None:
         ax.set_xlim(*xlim)
     if ylim is not None:
@@ -302,6 +345,9 @@ def plot_wave_propagation_animation(
     n_transition_layer: int = 20,
     m_spatial_order: int = 8,
     linewidth: float = 0.1,
+    extent: tuple[float, float, float, float] | None = None,
+    xlabel: str = "",
+    ylabel: str = "",
     # plot_grid: bool = False,
     # grid_steps: int = 2,
 ) -> None:
@@ -338,6 +384,12 @@ def plot_wave_propagation_animation(
         Thickness of the PML transition layer in pixels.
     cmap : str, optional
         The colormap to use for the plot.
+    extent : tuple, optional
+        The extent of the axes (left, right, bottom, top).
+    xlabel : str, optional
+        The x-axis label.
+    ylabel : str, optional
+        The y-axis label.
 
     """
     nt = propagation_map.shape[0]
@@ -377,7 +429,10 @@ def plot_wave_propagation_animation(
             vmax=vmax,
             interpolation="nearest",
             cmap=cmap,
+            extent=extent,
         )
+        axes.set_xlabel(xlabel)
+        axes.set_ylabel(ylabel)
         text = axes.text(
             0.5,
             1.05,
@@ -553,6 +608,47 @@ def plot_wave_propagation_animation(
     animation_data.save(export_name, writer="ffmpeg", dpi=dpi)
 
 
+def _add_circles(
+    axes: Axes,
+    circles: Sequence[tuple[float, float, float]] | None,
+    mark_color: str,
+) -> list[Circle]:
+    if circles is None:
+        return []
+    return [
+        axes.add_patch(
+            Circle(
+                (lateral, depth),
+                radius,
+                fill=False,
+                edgecolor=mark_color,
+                linewidth=CIRCLE_LINEWIDTH,
+            ),
+        )
+        for lateral, depth, radius in circles
+    ]
+
+
+def _add_points(
+    axes: Axes,
+    points: Sequence[tuple[float, float]] | None,
+    mark_color: str,
+) -> list[Line2D]:
+    if not points:
+        return []
+    laterals, depths = zip(*points, strict=True)
+    return axes.plot(
+        laterals,
+        depths,
+        linestyle="none",
+        marker="o",
+        markersize=POINT_MARKER_SIZE,
+        color=mark_color,
+        scalex=False,
+        scaley=False,
+    )
+
+
 def plot_wave_propagation_with_map(
     propagation_map: NDArray[np.float64],
     c_map: NDArray[np.float64],
@@ -577,6 +673,11 @@ def plot_wave_propagation_with_map(
     plot_grid: bool = False,
     grid_steps: int = 2,
     extent: tuple[float, float, float, float] | None = None,
+    circles: Sequence[tuple[float, float, float]] | None = None,
+    points: Sequence[tuple[float, float]] | None = None,
+    cmap: str | Colormap | None = None,
+    show_medium: bool = True,
+    mark_color: str = DEFAULT_MARK_COLOR,
 ) -> None:
     """Plot wave propagation with a map overlay using the specified parameters.
 
@@ -627,6 +728,19 @@ def plot_wave_propagation_with_map(
         The x-axis limits.
     ylim : tuple, optional
         The y-axis limits.
+    circles : Sequence[tuple[float, float, float]] | None, optional
+        (lateral position, depth, radius) of unfilled circles drawn on every frame, in the
+        units of ``extent``. The default None draws none.
+    points : Sequence[tuple[float, float]] | None, optional
+        (lateral position, depth) of small filled dots drawn on every frame, in the
+        units of ``extent``. The default None draws none.
+    cmap : str | Colormap | None, optional
+        Colormap of the frames. The default None uses the matplotlib default.
+    show_medium : bool, optional
+        True adds the normalized acoustic impedance under the wave. False draws the
+        pressure alone, so zero pressure sits at the middle of ``cmap``.
+    mark_color : str, optional
+        Color of the circles and dots. The default is red.
 
     """
     nt = propagation_map.shape[0]
@@ -645,7 +759,7 @@ def plot_wave_propagation_with_map(
     if vmin is None:
         vmin = np.min(propagation_map)
 
-    z_map_offset = vmax * 0.8
+    z_map_offset = vmax * 0.8 if show_medium else 0.0
 
     animation_list = []
     # propagation_map = propagation_map.transpose(2, 0, 1)
@@ -665,6 +779,7 @@ def plot_wave_propagation_with_map(
             vmax=vmax,
             interpolation="nearest",
             extent=extent,
+            cmap=cmap,
         )
         if xlim is not None:
             plt.xlim(*xlim)
@@ -856,7 +971,14 @@ def plot_wave_propagation_with_map(
                 which="both",
                 alpha=0.5,
             )
-        animation_list.append([image2, text])
+        animation_list.append(
+            [
+                image2,
+                text,
+                *_add_circles(axes, circles, mark_color),
+                *_add_points(axes, points, mark_color),
+            ],
+        )
     animation_data = animation.ArtistAnimation(
         fig,
         animation_list,
@@ -887,6 +1009,14 @@ def plot_wave_propagation_snapshot(
     plot_grid: bool = False,
     grid_steps: int = 2,
     turn_off_axes: bool = False,
+    extent: tuple[float, float, float, float] | None = None,
+    xlabel: str = "",
+    ylabel: str = "",
+    circles: Sequence[tuple[float, float, float]] | None = None,
+    points: Sequence[tuple[float, float]] | None = None,
+    cmap: str | Colormap | None = None,
+    show_medium: bool = True,
+    mark_color: str = DEFAULT_MARK_COLOR,
 ) -> None:
     """Plot wave propagation with a map overlay using the specified parameters.
 
@@ -927,6 +1057,25 @@ def plot_wave_propagation_snapshot(
         If True, plot the grid lines.
     turn_off_axes : bool, optional
         If True, turn off the axes.
+    extent : tuple, optional
+        The extent of the axes (left, right, bottom, top).
+    xlabel : str, optional
+        The x-axis label.
+    ylabel : str, optional
+        The y-axis label.
+    circles : Sequence[tuple[float, float, float]] | None, optional
+        (lateral position, depth, radius) of unfilled circles, in the units of ``extent``.
+        The default None draws none.
+    points : Sequence[tuple[float, float]] | None, optional
+        (lateral position, depth) of small filled dots, in the units of ``extent``.
+        The default None draws none.
+    cmap : str | Colormap | None, optional
+        Colormap of the image. The default None uses the matplotlib default.
+    show_medium : bool, optional
+        True adds the normalized acoustic impedance under the wave. False draws the
+        pressure alone, so zero pressure sits at the middle of ``cmap``.
+    mark_color : str, optional
+        Color of the circles and dots. The default is red.
 
     """
     plt.close()
@@ -941,7 +1090,7 @@ def plot_wave_propagation_snapshot(
     if vmin is None:
         vmin = np.min(propagation_map)
 
-    z_map_offset = vmax * 0.8
+    z_map_offset = vmax * 0.8 if show_medium else 0.0
 
     p_map_i = propagation_map
     processed_p_map = p_map_i + z_map_offset * (z_map)
@@ -954,8 +1103,13 @@ def plot_wave_propagation_snapshot(
         vmin=vmin,
         vmax=vmax,
         interpolation="nearest",
+        extent=extent,
+        cmap=cmap,
     )
-    # set text to show the current time step
+    _add_circles(axes, circles, mark_color)
+    _add_points(axes, points, mark_color)
+    axes.set_xlabel(xlabel)
+    axes.set_ylabel(ylabel)
 
     if plot_pml_boundary:
         edge_pml_1 = [

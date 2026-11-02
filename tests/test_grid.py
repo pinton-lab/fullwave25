@@ -37,6 +37,17 @@ def test_properties_2d():
     assert grid.nt == nt_expected
 
 
+def test_extent_mm_is_centered_laterally_and_starts_at_zero_depth():
+    grid = Grid((0.06, 0.045), 1e6, 1e-5, c0=1540)
+
+    left, right, bottom, top = grid.extent_mm()
+
+    assert np.isclose(left, -right)
+    assert np.isclose(right - left, grid.ny * grid.dy * 1e3)
+    assert np.isclose(bottom, grid.nx * grid.dx * 1e3)
+    assert top == 0
+
+
 def test_properties_3d():
     domain_size = (0.12, 0.12, 0.12)  # meters
     f0 = 1e6

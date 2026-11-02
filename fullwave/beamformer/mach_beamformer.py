@@ -217,6 +217,36 @@ def user_arrival_s(
     return arrival
 
 
+def receiver_positions_m(transducer: fullwave.Transducer) -> NDArray[np.float64]:
+    """Return the receiver positions of a flat array, shape [n_elements, 3] [m].
+
+    The columns are lateral (0 at the center of the array), elevation and depth below the
+    probe face. The rows follow the element ids.
+
+    Parameters
+    ----------
+    transducer : fullwave.Transducer
+        A flat array.
+
+    Returns
+    -------
+    NDArray[np.float64]
+        The receiver positions [m].
+
+    """
+    grid = transducer.grid
+    centers = transducer.element_id_to_receiver_center
+    element_ids = sorted(centers)
+    receivers_px = np.array([centers[i] for i in element_ids], dtype=float)
+    lateral_center_px = receivers_px[:, 1].mean()
+    receivers_m = np.zeros((len(receivers_px), 3))
+    receivers_m[:, 0] = (receivers_px[:, 1] - lateral_center_px) * grid.dx
+    if receivers_px.shape[1] == 3:
+        receivers_m[:, 1] = (receivers_px[:, 2] - receivers_px[:, 2].mean()) * grid.dx
+    receivers_m[:, 2] = (receivers_px[:, 0] - transducer.face_row_px) * grid.dx
+    return receivers_m
+
+
 def face_crossing_time_s(transducer: fullwave.Transducer) -> float:
     """Return when the earliest firing element has its pulse at the probe face.
 
@@ -357,19 +387,10 @@ class MachBeamformer:
 
         """
         grid = transducer.grid
-        centers = transducer.element_id_to_receiver_center
-        element_ids = sorted(centers)
-        receivers_px = np.array([centers[i] for i in element_ids], dtype=float)
-        lateral_center_px = receivers_px[:, 1].mean()
-        receivers_m = np.zeros((len(receivers_px), 3))
-        receivers_m[:, 0] = (receivers_px[:, 1] - lateral_center_px) * grid.dx
-        if receivers_px.shape[1] == 3:
-            receivers_m[:, 1] = (receivers_px[:, 2] - receivers_px[:, 2].mean()) * grid.dx
-        receivers_m[:, 2] = (receivers_px[:, 0] - transducer.face_row_px) * grid.dx
         return cls(
             lateral_position_m=lateral_position_m,
             axial_position_m=axial_position_m,
-            receiver_positions_m=receivers_m,
+            receiver_positions_m=receiver_positions_m(transducer),
             sound_speed=float(grid.c0),
             center_frequency_hz=float(grid.f0),
             sampling_frequency_hz=1.0 / (float(grid.dt) * transducer.sampling_modulus_time),

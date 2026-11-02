@@ -13,7 +13,7 @@ import numpy as np
 from plane_wave_compounding import convert_to_db, make_echoic_targets
 
 import fullwave
-from fullwave.beamformer import MachBeamformer
+from fullwave.beamformer import MachBeamformer, face_crossing_time_s, receiver_positions_m
 from fullwave.utils import plot_utils
 
 
@@ -32,7 +32,7 @@ def main() -> None:
     # --- define the computational grid ---
     #
 
-    # The calibrated L7-4 setup: 5.208 MHz, 12 points per wavelength, Courant 0.4.
+    # L7-4 setup: 5.208 MHz, 12 points per wavelength, Courant 0.4.
     f0 = 5.208e6
     c0 = 1540
     ppw = 12
@@ -86,7 +86,11 @@ def main() -> None:
         face_depth_m=transducer.face_depth_m,
         centered=True,
     )
-    plot_utils.plot_array(scatterer, export_path=work_dir / "scatterer.png")
+    plot_utils.plot_array(
+        scatterer,
+        export_path=work_dir / "scatterer.png",
+        **plot_utils.mm_axes_kwargs(grid),
+    )
     # scatterer modulates the density map.
     # scatterer values are centered around 1.0 with small variations.
     density_map *= scatterer
@@ -150,11 +154,16 @@ def main() -> None:
         endpoint=True,
     )
 
-    beamformer = MachBeamformer.from_transducer(
-        transducer,
+    beamformer = MachBeamformer(
         lateral_position_m=b_mode_x,
         axial_position_m=b_mode_z,
+        receiver_positions_m=receiver_positions_m(transducer),
+        sound_speed=grid.c0,
+        center_frequency_hz=grid.f0,
+        sampling_frequency_hz=1 / (grid.dt * transducer.sampling_modulus_time),
         f_number=1.0,
+        time_zero_s=face_crossing_time_s(transducer),
+        tukey_alpha=0.5,
     )
     tx_arrival_s = np.stack(
         [beamformer.plane_wave_arrival_s(angle_deg=angle) for angle in angles],

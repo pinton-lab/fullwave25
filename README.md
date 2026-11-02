@@ -1,247 +1,158 @@
-# Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities
+# Fullwave 2.5
+
+**Ultrasound wave propagation simulation with heterogeneous power-law attenuation**
 
 <a href="https://doi.org/10.5281/zenodo.17625780"><img src="https://zenodo.org/badge/DOI/10.5281/zenodo.17625780.svg" alt="DOI"></a>
+<a href="https://pypi.org/project/fullwave25/"><img src="https://img.shields.io/pypi/v/fullwave25" alt="PyPI version"></a>
 <a href="https://pepy.tech/projects/fullwave25"><img src="https://static.pepy.tech/personalized-badge/fullwave25?period=total&units=INTERNATIONAL_SYSTEM&left_color=GREY&right_color=BLUE&left_text=PyPI+Downloads" alt="PyPI Downloads"></a>
+<a href="LICENSE"><img src="https://img.shields.io/github/license/pinton-lab/fullwave25" alt="License"></a>
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/example_simple_plane_wave.ipynb)
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/153Sx9D_5zTlF7UtlKHlyz_CTJnLIAI6s)
+Fullwave 2.5 simulates nonlinear ultrasound propagation in tissue whose attenuation follows a power law $\alpha_0 f^\gamma$ **with a coefficient $\alpha_0$ and an exponent $\gamma$ that can differ in every grid cell**, together with the dispersion that the Kramers-Kronig relations give for each cell. It runs 2D and 3D simulations on multiple GPUs from a Python interface.
 
-Fullwave 2.5 is a Python package for high-fidelity ultrasound wave propagation simulation with the following features:
+<p align="center">
+  <img src="figs/l7_4_abdomen_3d.gif" width="360" alt="3D simulation of a focused L7-4 transmit through an abdominal wall"/>
+</p>
+<p align="center"><em>3D simulation of a focused transmit from an L7-4 linear array through an abdominal wall. L7-4 CAD model: <a href="https://grabcad.com/library/ultrasound-probes-1">Ultrasound probes</a> by Amirhasan Qadamian (GrabCAD).</em></p>
 
-- State-of-the-art attenuation modelling capabilities for ultrasound wave propagation in complex biological tissues
-  - Heterogeneous power law attenuation ($\alpha=\alpha_0 f^\gamma$) modeling, where **both the attenuation coefficient $\alpha_0$ and exponent $\gamma$ can vary** spatially.
-- High-performance simulation engine
-  - High accuracy staggered-grid finite-difference time-domain (FDTD) scheme (8th-order in space and 4th-order in time).
-  - 2D and 3D ultrasound wave propagation simulation.
-  - Multiple GPU execution support.
-- Easy-to-use Python interface with CUDA/C backend
-  - Python wrapper for easy usability and extensibility, with the core simulation engine implemented in CUDA/C for high performance on NVIDIA GPUs.
-  - It offers a user experience similar to [k-Wave](http://www.k-wave.org/) and [k-wave-python](https://github.com/waltsims/k-wave-python), while providing advanced attenuation modeling capabilities and multi-GPU support in FDTD simulations.
-
-| Computational medium                     | Wave propagation                                                           |
+| Medium: abdominal wall and liver (2D)    | Focused transmit from an L7-4 array                                        |
 | ---------------------------------------- | -------------------------------------------------------------------------- |
-| <img src="figs/medium.png" width="600"/> | <img src="figs/linear_transducer_focused_abdominal_wall.gif" width="200"/> |
+| <img src="figs/medium.png" width="300"/> | <img src="figs/linear_transducer_focused_abdominal_wall.gif" width="200"/> |
 
-Building upon the original Fullwave 2 simulator, Fullwave 2.5 enhances its capabilities to model ultrasound wave propagation in media where **both the attenuation coefficient and exponent can vary spatially**. This enables more accurate simulations of biological tissues, which often exhibit complex attenuation behaviours that cannot be captured by uniform exponent models.
+## Highlights
 
-The library is designed with a Python wrapper for ease of use and extensibility, while the core simulation engine is implemented in CUDA/C to leverage high-performance computing on NVIDIA GPUs. Fullwave 2.5 supports 2D and 3D simulations, including multi-GPU execution for enhanced performance.
+- **Heterogeneous power-law attenuation.** Multiple relaxation processes give the attenuation and the dispersion of $\alpha_0 f^\gamma$ for a map of $\alpha_0$ and a map of $\gamma$.
+- **High-order FDTD.** Staggered-grid pressure-velocity scheme, 8th order in space and 4th order in time, with a relaxing perfectly matched layer.
+- **2D and 3D, multi-GPU.** The 3D domain is split along depth across GPUs.
+- **Transducers ready to use.** L7-4 linear, C5-2V curved and P4-1C phased arrays, or any geometry, with plane wave, focused, diverging and synthetic aperture transmits.
+- **Transmit batches.** Several transmits on one medium run in one simulation.
+- **Beamforming.** A delay-and-sum `Beamformer` on the CPU, and `MachBeamformer` on the GPU, built on [mach](https://github.com/Forest-Neurotech/mach).
+- **Familiar interface.** The workflow follows [k-Wave](http://www.k-wave.org/) and [k-wave-python](https://github.com/waltsims/k-wave-python).
 
-## Special Thanks
+## Attenuation model
 
-This repository design was inspired by [k-wave-python](https://github.com/waltsims/k-wave-python). We appreciate the great work of the k-wave-python development team.
-This repository would not have been possible without them.
+The solver advances the pressure $p$ and the particle velocity $\mathbf{v}$ with
 
-Please check their repository for additional ultrasound simulation tools and resources.
-Their comprehensive tools have significantly contributed to the ultrasound research community.
+$$\nabla_1 p + \rho \cfrac{\partial {\bf{v}}}{\partial t} = 0, \qquad \nabla_2 \cdot {\bf{v}} + \kappa \cfrac{\partial p}{\partial t} = 0 .$$
 
-## Theoretical Background
+in which the spatial derivatives $\nabla_1$ and $\nabla_2$ carry a set of relaxation mechanisms. fullwave25 looks up the parameters of these mechanisms in a precomputed table for the $\alpha_0$ and $\gamma$ of each cell, so that the simulated attenuation matches the power law and the phase velocity matches its Kramers-Kronig dispersion. The table spans $\alpha_0$ up to 1.0 dB/(MHz^γ cm) and $\gamma$ from 0.4 to 2.0, for frequencies from 0.1 to 20 MHz.
 
-Fullwave 2.5 models multiple relaxation processes to approximate frequency-dependent power-law attenuation in heterogeneous media.
-It solves the stretched-coordinate pressure-velocity formulation using a staggered-grid finite-difference schemes with 8th-order accuracy in space and 4th-order accuracy in time.
-The formulation is expressed as follows:
+The figure compares the target attenuation $\alpha_0 f^\gamma$ (red lines) with the simulated attenuation (black dots) for $\alpha_0 =$ 0.25, 0.5 and 0.75 dB/(MHz^γ cm) and $\gamma =$ 0.4, 0.7, 1.0, 1.3 and 1.6. Each dot is one simulation of a plane wave through a uniform medium, read at two depths.
 
-$$\nabla_1 p + \rho \cfrac{\partial {\bf{v}}}{\partial t} = 0$$
-$$\nabla_2 \cdot {\bf{v}} + \kappa \cfrac{\partial p}{\partial t} = 0$$
+![Simulated against target power-law attenuation](./figs/attenuation_modeling.svg)
 
-The stretched-coordinate derivatives, denoted by $\nabla_1$ and $\nabla_2$, control frequency-dependent power-law attenuation and dispersion by selecting the optimal relaxation parameters.
+[attenuation_dispersion.py](examples/attenuation_dispersion/attenuation_dispersion.py) makes these measurements, so you can check the model for your own parameters.
 
-The following figure illustrates the performance of the attenuation modeling in Fullwave 2.5.
-The graph shows a comparison of the target power-law attenuation $\alpha=\alpha_0 f^\gamma$ (red line) and the simulated attenuation (black dots) for various spatially varying attenuation coefficients ($\alpha_0 =$ 0.25, 0.5, and 0.75) and exponents ($\gamma =$ 0.4, 0.7, 1.0, 1.3, and 1.6).
+## Installation
 
-![attenuation modeling performance](./figs/attenuation_modeling.svg)
-
-## Citation
-
-Fullwave 2.5 is developed and maintained by [Pinton Lab](https://github.com/pinton-lab) at the University of North Carolina at Chapel Hill.
-
-If you use Fullwave 2.5 in your research, please cite this repository as follows. If you use `MachBeamformer`, please also cite mach (see [Beamforming](#beamforming)).
-
-```bibtex
-@ARTICLE{Sode2026-rd,
-  title        = {Spatially heterogeneous power-law attenuation with multiple
-                  relaxation mechanisms for ultrasound modeling},
-  author       = {Sode, Masashi and Pinton, Gianmarco},
-  journaltitle = {arXiv [physics.med-ph]},
-  date         = {2026},
-  eprint       = {2606.11103},
-  eprinttype   = {arXiv},
-  eprintclass  = {physics.med-ph},
-  url          = {http://arxiv.org/abs/2606.11103},
-}
-
-@ARTICLE{Sode2026-fullwave2,
-  title     = "{A fullwave model of the nonlinear wave equation with multiple
-               relaxations and relaxing perfectly matched layers for high-order
-               numerical finite difference solutions}",
-  author    = "Sode, Masashi and Pinton, Gianmarco",
-  journal   = "Phys. Med. Biol.",
-  publisher = "IOP Publishing",
-  month     =  "27~" # jul,
-  year      =  2026,
-  url       = "http://dx.doi.org/10.1088/1361-6560/ae9116",
-  doi       = "10.1088/1361-6560/ae9116",
-  issn      = "0031-9155,1361-6560",
-  language  = "en"
-}
-
-
-@software{Sode2025-fullwave25,
-  author = {Sode, Masashi and Pinton, Gianmarco},
-  title = {{Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities}},
-  year = {2025},
-  month = oct,
-  doi = {10.5281/zenodo.17497689},
-  url = {https://github.com/pinton-lab/fullwave25},
-}
-
-```
-
----
-
-## Hardware prerequisites
-
-- This system operates in a Linux environment.
-  - If you need a Windows environment, please consider using [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) (Windows Subsystem for Linux 2).
-- This simulation requires an NVIDIA GPU to execute.
-- You may need multiple GPUs for 3D simulation.
-
-## Technical recommendations
-
-- We recommend setting up an SSH key for GitHub, if you haven't done already. The repository changes over time to fix bugs and add new features. You can keep your local repository up to date by pulling the latest changes from GitHub. Cloning through SSH is more convenient than HTTPS in the long run.
-  - for ssh key generation
-    - please see: [Generating a new SSH key and adding it to the ssh-agent](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent)
-  - for ssh key registration to your github account
-    - please see: [Adding a new SSH key to your GitHub account](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/adding-a-new-ssh-key-to-your-github-account)
-- after that, you can clone the repository through
-
-  ```sh
-  git clone git@github.com:pinton-lab/fullwave-python.git
-  ```
-
-## Technical references
-
-- If you are not familiar with the tools below, please refer to the provided links.
-  - VSCode
-    - [Official Visual Studio Code documentation](https://code.visualstudio.com/docs)
-    - [Visual Studio Code Tutorial for Beginners by Udacity](https://www.udacity.com/blog/2025/09/visual-studio-code-tutorial-for-beginners-productivity-tips-and-extensions.html)
-  - Git
-    - [Git Tutorial by GeeksForGeeks](https://www.geeksforgeeks.org/git/git-tutorial/)
-    - [Git Tutorial by W3 schools](https://www.w3schools.com/git/default.asp)
-    - [Using Git source control in VS Code](https://code.visualstudio.com/docs/sourcecontrol/overview)
-  - UV
-    - [Python UV: The Ultimate Guide to the Fastest Python Package Manager](https://www.datacamp.com/tutorial/python-uv)
-
----
-
-## installation for users
+Requirements: Linux (on Windows, use [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install)) and an NVIDIA GPU. A 3D simulation can need several GPUs.
 
 ```sh
 pip install fullwave25
+pip install "fullwave25[mach]"  # optional: MachBeamformer (mach-beamform, pymust, cupy)
 ```
 
-## Troubleshooting
+The released solver binaries need glibc 2.34 or newer (for example Ubuntu 22.04). On an older system, use the container in [docker/README.md](docker/README.md).
 
-If `ffmpeg` is not installed on your system, please install it using the package manager of your Linux distribution.
-`ffmpeg` is used for video writing in plotting functions.
-
-please see the installation guide below.
-reference: [FFmpeg Installation Guide](https://ffmpeg.org/download.html)
+The plotting functions write videos with `ffmpeg` and OpenCV (`cv2`). If they are missing, install them with your package manager:
 
 ```sh
-# for Ubuntu/Debian
-sudo apt install ffmpeg
+sudo apt install ffmpeg python3-opencv  # Ubuntu/Debian; or: pip install opencv-python
 ```
 
-Additionally, if you encounter any issues related to `cv2` (OpenCV) during the installation, please install it separately using linux package manager or pip.
+### Development installation
 
-please see the installation guide below.
-`cv2` is used fro video writing in plotting functions.
-
-reference: [Installing OpenCV on Linux: A Comprehensive Guide](https://linuxvox.com/blog/install-opencv-linux/)
+We use [uv](https://docs.astral.sh/uv/) to manage the environment.
 
 ```sh
-# using apt for Ubuntu/Debian
-sudo apt install python3-opencv
-
-# using pip
-pip install opencv-python
-```
-
-## installation for development
-
-We use [uv](https://docs.astral.sh/uv/) for package project and virtual environment management.
-
-If uv is not installed, run below.
-
-```sh
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-Run below to install the development environment.
-
-```sh
+curl -LsSf https://astral.sh/uv/install.sh | sh  # if uv is not installed
 git clone git@github.com:pinton-lab/fullwave25.git
 cd fullwave25
-make install-all-extras # for running examples
-# or
-make install # for the core library installation
-```
-
-To test the installation, run
-
-```sh
+make install-all-extras  # core library, examples and development tools
 make test
 ```
 
----
+## Quick start
 
-## Tutorial: Basic Usage
+Start with the notebook [example_simple_plane_wave.ipynb](examples/simple_plane_wave/example_simple_plane_wave.ipynb), or run it in Google Colab without a local GPU: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/example_simple_plane_wave.ipynb)
 
-Please start from [example_simple_plane_wave.ipynb](https://github.com/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/example_simple_plane_wave.ipynb).
+A simulation has five steps:
 
-or try the Google Colab tutorial.
-You don't need to install or set up a GPU environment on your local machine in order to run the simulation.
+1. Define the computational grid (`fullwave.Grid`).
+2. Define the acoustic medium (`fullwave.Medium`): sound speed, density, attenuation coefficient and exponent, nonlinearity.
+3. Define the source (`fullwave.Source`) or a transducer (`fullwave.Transducer`).
+4. Define the sensor (`fullwave.Sensor`).
+5. Run the solver (`fullwave.Solver`).
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/153Sx9D_5zTlF7UtlKHlyz_CTJnLIAI6s)
+To start your own simulation, copy [simple_plane_wave.py](examples/simple_plane_wave/simple_plane_wave.py) (2D) or [simple_plane_wave_3d.py](examples/wave_3d/simple_plane_wave_3d.py) (3D) and change it.
 
-Here are the main steps to run the Fullwave simulation
+### Simulation guide
 
-1. Define the computational grid.
-2. Define the properties of the acoustic medium.
-3. Define the acoustic source.
-4. Define the sensor.
-5. Execute the simulation.
+[.claude/skills/fullwave25/SKILL.md](.claude/skills/fullwave25/SKILL.md) is a short guide to setting up a simulation the standard way. It covers:
 
-## Tutorial: transducers and transmits
+- the basic flow, the output shapes and the sensor order;
+- scatterers, air and the discretized attenuation values;
+- grid resolution, duration, the size of the record and running in memory;
+- transducers, presets and beamforming;
+- multi-GPU runs, the container and troubleshooting.
 
-A named array places itself on the grid, and one call states the transmit.
+Read it before writing a new simulation. The same file is a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skill: Claude Code loads it in a clone of this repository, and you can copy the folder to `~/.claude/skills/fullwave25/` to use it in your own projects.
+
+## Transducers and transmits
+
+A named array places itself on the grid, and one call sets the transmit.
 
 ```python
 grid = fullwave.Grid(domain_size=(4.5e-2, 4.5e-2), f0=5.208e6, duration=6.7e-5, c0=1540)
 
 transducer = fullwave.Transducer.l7_4(grid)
 transducer.plane_wave(angle_deg=2.5)
-maps = transducer.fill_probe_above_face(sound_speed=sound_speed_map, density=density_map, alpha_coeff=alpha_coeff_map, alpha_power=alpha_power_map)
+maps = transducer.fill_probe_above_face(
+    sound_speed=sound_speed_map, density=density_map, alpha_coeff=alpha_coeff_map, alpha_power=alpha_power_map,
+)
 medium = fullwave.Medium(grid, beta=beta_map, **maps)
 
 solver = fullwave.Solver(work_dir="./outputs/my_run", grid=grid, medium=medium, transducer=transducer)
-recorded = solver.run()
+sensor_output = solver.run()  # [n_elements, n_t]
 ```
 
-The arrays are `l7_4` (linear, 128 elements, 5.208 MHz), `c5_2v` (curved, 49.57 mm radius, 3.7 MHz) and `p4_1c` (phased, 64 elements). `fullwave.TransducerGeometry` builds any other.
+| Array   | Type          | Elements | Aperture                        | Center frequency |
+| ------- | ------------- | -------- | ------------------------------- | ---------------- |
+| `l7_4`  | linear        | 128      | 38.09 mm                        | 5.208 MHz        |
+| `p4_1c` | linear phased | 64       | 27 mm                           | `grid.f0`        |
+| `c5_2v` | curved        | 128      | 0.508 mm pitch, 49.57 mm radius | 3.7 MHz          |
 
-The transmits are `plane_wave(angle_deg=...)`, `focus(focus_m=...)`, `diverging(virtual_source_m=...)` and `synthetic_aperture(element)`. Each takes `apodization` and `pulse`. Set `transducer.active_source_elements` first to use part of the aperture.
+`fullwave.TransducerGeometry` builds any other array. The transmits are `plane_wave(angle_deg=...)`, `focus(focus_m=...)`, `diverging(virtual_source_m=...)` and `synthetic_aperture(element)`; each takes `apodization` and `pulse`. To transmit with part of the aperture, set `transducer.active_source_elements` first.
 
-The flat arrays (`l7_4`, `p4_1c`, `LinearTransducer`, `make_p4_1c_trasnducer`) share one layout. The source is one wavelength of rows (at least 8) with its first row on grid row 0, the sponge directly behind it. The receiver row is directly in front of the last source row, and the probe face (depth 0) is the row after it, where the medium starts. The array is centered in the grid, so make the grid wider than the array (the calibrated L7-4 uses 45 mm for its 38.09 mm). `transducer.fill_probe_above_face(...)` sets the cells above the face between the first and the last element edge (the source, kerf and receiver cells) to the probe fill (1540 m/s, 1000 kg/m3, attenuation 0.005 dB/MHz/cm, power 1.0), and the columns beside the array on the same rows to water (the same values with power 1.999), with no scatterers; pass its result to `fullwave.Medium`, or register `transducer.probe_fill_domain()` last in a `MediumBuilder`. `transducer.face_row_px` is the face row and `transducer.face_depth_m` its depth: start the tissue there (for an `AbdominalWallDomain`, pass `start_depth=transducer.face_depth_m`) and measure targets and focus depths from it. `Beamformer(..., face_row_px=...)` measures its depths from there. The curved `c5_2v` keeps its own layout, and `transducer.make_surface_reflective_with_air()` returns the air behind it.
+### Linear array layout
 
-The source type is `"hard"` by default for the named arrays: the transducer assigns its pressure for the whole run, so the source cells stay at zero pressure after the drive ends and the face stays reflective. `"hard_released_after"` assigns it while the drive signal plays, then the source cells evolve freely. `"soft"` adds the signal to the field. Pass `source_type=` to `Transducer.l7_4`, `c5_2v`, `p4_1c` or `fullwave.Solver`.
+The linear arrays (`l7_4`, `p4_1c` and `LinearTransducer`) share one layout, from the top of the grid:
 
-`Transducer.l7_4` gives every gap between two elements exactly one pixel (`kerf_px=1`) and holds those kerf pixels at zero pressure after the drive (`hold_kerf=True`). This changes the element widths and positions of every L7-4 run, with either solver; `kerf_px=None, hold_kerf=False` gives the previous array. A `Solver` whose binary does not read `nkerf0.dat`, or whose source type is not `"hard"`, drops the kerf pixels of a transducer and logs one warning.
+| Rows                          | Content                                                                                   |
+| ----------------------------- | ----------------------------------------------------------------------------------------- |
+| from row 0                    | source: one wavelength of rows (at least 8), with the absorbing layer directly behind it  |
+| next row                      | receiver                                                                                  |
+| `transducer.face_row_px`      | probe face, depth 0 (`transducer.face_depth_m`): the medium starts here                   |
 
-`transducer.apply_transducer_stack(...)` still paints a probe's backing, matching layer, lens and standoff onto the medium maps before the `Medium` is built, for a calibrated stack. `fullwave.TransducerStack` holds the values.
+The array is centered laterally, so make the grid wider than the array (for example 45 mm for the 38.09 mm L7-4). `transducer.fill_probe_above_face(...)` sets the rows above the face to a probe fill (1540 m/s, 1000 kg/m³, 0.005 dB/(MHz cm), power 1.0) across the array and to water beside it, without scatterers. Pass its result to `fullwave.Medium`, or register `transducer.probe_fill_domain()` last in a `MediumBuilder`.
+
+`Transducer.l7_4` gives every gap between two elements exactly one pixel (`kerf_px=1`) and holds those kerf pixels at zero pressure after the drive (`hold_kerf=True`); `kerf_px=None, hold_kerf=False` gives an array without held kerfs. A held kerf needs `source_type="hard"`.
+
+Start the tissue at the face (for an `AbdominalWallDomain`, pass `start_depth=transducer.face_depth_m`) and measure target and focus depths from it. The curved `c5_2v` keeps its own layout; `transducer.make_surface_reflective_with_air()` returns the air behind it. `transducer.apply_transducer_stack(...)` paints a backing, a matching layer, a lens and a standoff (`fullwave.TransducerStack`) onto the medium maps before the `Medium` is built.
+
+### Source types
+
+| `source_type`           | Behavior                                                                                                   |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `"hard"` (named arrays) | assigns the source pressure for the whole run; after the drive ends the source cells stay at 0 Pa, so the face reflects |
+| `"hard_released_after"` | assigns the source pressure while the drive plays; then the source cells evolve freely                    |
+| `"soft"`                | adds the signal to the field                                                                               |
+
+Pass `source_type=` to `Transducer.l7_4`, `c5_2v`, `p4_1c` or `fullwave.Solver`.
 
 ### Transmit batches
 
-A transmit sequence on one medium, such as plane wave angles, focused lines or synthetic aperture elements, can run as a batch: several transmits in one simulation, which is faster than one `run` per transmit. The transmits of a batch share the medium, the sensor and the source positions, and differ only in their signals. The transmits of one transducer satisfy this.
+A transmit sequence on one medium, such as plane wave angles, focused lines or synthetic aperture elements, can run as a batch: several transmits in one simulation, which is faster than one `run` per transmit. The transmits of a batch share the medium, the sensor and the source positions, and differ only in their signals; the transmits of one transducer satisfy this.
 
 ```python
 sources = []
@@ -249,17 +160,19 @@ for angle in (-10, -5, 0, 5, 10):
     transducer.plane_wave(angle_deg=angle)
     sources.append(transducer.source)
 
-solver = fullwave.Solver(
-    work_dir="./outputs/my_batch", grid=grid, medium=medium, transducer=transducer,
-)
-recorded = solver.run_batch(sources)  # [n_transmits, n_sensors, n_t]
+sensor_output = solver.run_batch(sources)  # [n_transmits, n_sensors, n_t]
 ```
 
-`run_batch` runs all transmits of the list. It puts at most `max_members_per_run` transmits in one simulation: by default 32, or fewer when the GPU memory estimate does not fit that many into the free GPU memory. A longer sequence runs as several simulations of nearly equal size, so 128 transmits run as 4 simulations of 32. In a 2D L7-4 test the time per transmit stopped falling at 16 to 32 transmits. [transmit_batch_basics.py](examples/transmit_batch/transmit_batch_basics.py) shows plane waves and focused lines as batches, and [plane_wave_compounding_batch.py](examples/linear_transducer/plane_wave_compounding_batch.py) makes a compounded B-mode from one batch.
+`run_batch` puts at most `max_members_per_run` transmits in one simulation: 32 by default, or fewer when the estimated GPU memory does not fit. A longer sequence runs as several simulations of nearly equal size, so 128 transmits run as 4 simulations of 32. In a 2D L7-4 test the time per transmit stopped falling at 16 to 32 transmits per simulation.
 
 ### Beamforming
 
-`fullwave.beamformer.Beamformer` is a delay-and-sum beamformer for linear arrays that runs on the CPU, for educational purposes; it is not optimized for speed. For fast beamforming, use `fullwave.beamformer.MachBeamformer`, built on [mach](https://github.com/Forest-Neurotech/mach), an open-source GPU beamformer with an optimized delay-and-sum CUDA kernel (1.1 trillion points per second on a consumer-grade GPU, more than 10 times faster than other open-source GPU beamformers). Install the extra with `pip install "fullwave25[mach]"`, which brings mach-beamform, pymust and cupy; mach needs Linux and an NVIDIA GPU with driver 12.8 or later. It converts the traces to IQ with `pymust.rf2iq`, measures depth from the probe face, and takes the transmit as a plane wave, a focus, one element, or arrival times you give:
+| Beamformer                               | Runs on | Purpose                                                       |
+| ---------------------------------------- | ------- | ------------------------------------------------------------- |
+| `fullwave.beamformer.Beamformer`         | CPU     | delay-and-sum for linear arrays, for teaching; not optimized for speed |
+| `fullwave.beamformer.MachBeamformer`     | GPU     | fast delay-and-sum with [mach](https://github.com/Forest-Neurotech/mach) |
+
+mach is an open-source GPU beamformer with an optimized delay-and-sum CUDA kernel: 1.1 trillion points per second on a consumer GPU, more than 10 times faster than other open-source GPU beamformers. `pip install "fullwave25[mach]"` installs mach-beamform, pymust and cupy; mach needs Linux and an NVIDIA driver for CUDA 12.8 or newer.
 
 ```python
 beamformer = MachBeamformer.from_transducer(
@@ -269,238 +182,124 @@ arrival_s = [beamformer.plane_wave_arrival_s(angle_deg=a) for a in angles]
 image = beamformer.beamform(np.stack(traces), tx_arrival_s=np.stack(arrival_s))  # complex [n_depth, n_lateral]
 ```
 
-`traces` is one `[n_elements, n_time]` array per transmit (from `post_process_sensor_output`). `focused_arrival_s(focus_m=...)` and `synthetic_aperture_arrival_s(element=...)` give the other transmits. `f_number` is F = depth / aperture width; `Beamformer` takes the half width as depth / F, so pass `f_number / 2` to match it. Time zero comes from the drive and the source-to-face rows, so it holds for any transmit of the named flat arrays. [plane_wave_compounding.py](examples/linear_transducer/plane_wave_compounding.py) and [full_synthetic_aperture.py](examples/linear_transducer/full_synthetic_aperture.py) use it.
+`MachBeamformer` converts the traces to IQ with `pymust.rf2iq` and measures depth from the probe face. `traces` holds one `[n_elements, n_t]` array per transmit (from `post_process_sensor_output`). `focused_arrival_s(focus_m=...)` and `synthetic_aperture_arrival_s(element=...)` give the other transmits. Time zero follows from the drive and the rows between the source and the face, so it holds for every transmit of the named linear arrays. `f_number` is depth / aperture width; `Beamformer` takes the half width as depth / F, so pass `f_number / 2` to it for the same aperture. If you use `MachBeamformer`, please also cite mach (see [Citation](#citation)).
+
+### Imaging a phantom
+
+`fullwave.presets.CombinedPhantomDomain` builds an imaging phantom: point targets in a column and in rows, and hypoechoic and hyperechoic cylinders, on a scattering background. [plane_wave_phantom.py](examples/linear_transducer/plane_wave_phantom.py) sends one plane wave from an L7-4 array at 5.208 MHz through it and beamforms the echoes into a B-mode with `MachBeamformer`.
+
+| Plane wave through the phantom                         | B-mode, one plane wave (0 to −40 dB)                          |
+| ------------------------------------------------------ | ------------------------------------------------------------- |
+| <img src="figs/plane_wave_phantom.gif" width="200"/>   | <img src="figs/plane_wave_phantom_b_mode.png" width="360"/>   |
+
+## Examples
+
+| Task | Example | Notebook / Colab |
+| --- | --- | --- |
+| 2D plane wave from a source built by hand, through an inclusion | [simple_plane_wave.py](examples/simple_plane_wave/simple_plane_wave.py) | [notebook](examples/simple_plane_wave/example_simple_plane_wave.ipynb), [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/example_simple_plane_wave.ipynb) |
+| 2D plane wave through an inclusion with scattered air cells | [simple_plane_wave_air.py](examples/simple_plane_wave/simple_plane_wave_air.py) | [notebook](examples/simple_plane_wave/example_simple_plane_wave_air.ipynb), [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/example_simple_plane_wave_air.ipynb) |
+| Attenuation and phase velocity of a uniform medium against the power law | [attenuation_dispersion.py](examples/attenuation_dispersion/attenuation_dispersion.py) | |
+| Layered medium built with `MediumBuilder` | [medium_builder_example.py](examples/medium_builder/medium_builder_example.py) | [notebook](examples/medium_builder/medium_builder_example.ipynb), [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/pinton-lab/fullwave25/blob/main/examples/medium_builder/medium_builder_example.ipynb) |
+| Abdominal wall built with `MediumBuilder` | [medium_builder_abdominal_example.py](examples/medium_builder/medium_builder_abdominal_example.py) | |
+| L7-4 linear array: focused transmit through an abdominal wall | [linear_transducer_abdominal_wall.py](examples/linear_transducer/linear_transducer_abdominal_wall.py) | |
+| L7-4 linear array: plane wave compounding B-mode | [plane_wave_compounding.py](examples/linear_transducer/plane_wave_compounding.py) | [notebook](examples/linear_transducer/plane_wave_compounding.ipynb), [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/pinton-lab/fullwave25/blob/main/examples/linear_transducer/plane_wave_compounding.ipynb) |
+| L7-4 linear array: plane wave movie and B-mode of an imaging phantom | [plane_wave_phantom.py](examples/linear_transducer/plane_wave_phantom.py) | |
+| L7-4 linear array: plane wave compounding B-mode, all angles in one transmit batch | [plane_wave_compounding_batch.py](examples/linear_transducer/plane_wave_compounding_batch.py) | |
+| L7-4 linear array: plane waves and focused lines as transmit batches | [transmit_batch_basics.py](examples/transmit_batch/transmit_batch_basics.py) | |
+| L7-4 linear array: full synthetic aperture B-mode | [full_synthetic_aperture.py](examples/linear_transducer/full_synthetic_aperture.py) | [notebook](examples/linear_transducer/full_synthetic_aperture.ipynb), [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/pinton-lab/fullwave25/blob/main/examples/linear_transducer/full_synthetic_aperture.ipynb) |
+| L7-4 linear array: high-pass filter on the recorded traces | [plane_wave_with_filter.py](examples/signal_filter/plane_wave_with_filter.py) | |
+| P4-1C phased array: focused transmit from half the aperture, with a movie of the field | [linear_transducer_focused_animation.py](examples/linear_transducer/linear_transducer_focused_animation.py) | |
+| C5-2V curved array: full synthetic aperture acquisition | [convex_transducer_fsa.py](examples/convex_transducer/convex_transducer_fsa.py) | |
+| C5-2V curved array: focused transmit through an abdominal wall | [convex_transducer_abdominal_wall.py](examples/convex_transducer/convex_transducer_abdominal_wall.py) | |
+| 3D plane wave through an inclusion | [simple_plane_wave_3d.py](examples/wave_3d/simple_plane_wave_3d.py) | |
+| 3D plane wave through an inclusion with scattered air cells | [simple_plane_wave_3d_with_air.py](examples/wave_3d/simple_plane_wave_3d_with_air.py) | |
+
+### Gallery
+
+| Plane wave through an inclusion                   | P4-1C focused transmit                                 | C5-2V through an abdominal wall                                 |
+| ------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------- |
+| <img src="figs/simple_plane_wave.gif" width="200"/> | <img src="figs/linear_transducer_focused.gif" width="200"/> | <img src="figs/convex_transducer_abdominal_wall.gif" width="200"/> |
+
+**3D plane wave through an inclusion, without and with scattered air cells**
+
+|             | x-y slice                                                  | x-z slice                                                  |
+| ----------- | ---------------------------------------------------------- | ---------------------------------------------------------- |
+| without air cells | <img src="figs/wave_propagation_x-y.gif" width="200"/>     | <img src="figs/wave_propagation_x-z.gif" width="200"/>     |
+| with air cells    | <img src="figs/wave_propagation_x-y_air.gif" width="200"/> | <img src="figs/wave_propagation_x-z_air.gif" width="200"/> |
+
+## Experimental: fullwave2-ultra backend
+
+`Solver(..., use_ultra=True)` runs the simulation with the fullwave2-ultra binary, which is optimized for speed. It is experimental, its API may change, and the binaries are not part of fullwave25. See [docs/fullwave2_ultra.md](docs/fullwave2_ultra.md).
+
+## Notes
+
+- **Axis order.** The grid axes are (x, y, z) = (depth, lateral, elevation). The solver splits the domain along depth across GPUs, so depth comes first.
+- **Index order.** Source and sensor coordinates are in C (row-major) order inside the solver, whatever order you use. Check this when you build a source by hand.
+- **GPU memory.** A 3D simulation needs much GPU memory. Reduce the grid or use more GPUs if it does not fit; `nvidia-smi` or `nvtop` shows the use. `Solver.run` estimates the memory before the run (`gpu_memory_estimate=True`, the default).
+- **Multi-GPU.** 2D and 3D runs can use multiple GPUs (`cuda_device_id`); the run time scales linearly with the number of GPUs.
+- **3D.** Start with the 2D version of a simulation. The 3D code is similar, runs longer, and some plot functions are 2D only.
+
+## Citation
+
+Fullwave 2.5 is developed and maintained by the [Pinton Lab](https://github.com/pinton-lab) at the University of North Carolina at Chapel Hill. If you use Fullwave 2.5 in your research, please cite:
+
+```bibtex
+@article{Sode2026-heterogeneous-attenuation,
+  title         = {Spatially heterogeneous power-law attenuation with multiple relaxation mechanisms for ultrasound modeling},
+  author        = {Sode, Masashi and Pinton, Gianmarco},
+  journal       = {arXiv preprint arXiv:2606.11103},
+  year          = {2026},
+  eprint        = {2606.11103},
+  archivePrefix = {arXiv},
+  primaryClass  = {physics.med-ph},
+  url           = {https://arxiv.org/abs/2606.11103}
+}
+
+@article{Sode2026-fullwave2,
+  title     = {A fullwave model of the nonlinear wave equation with multiple relaxations and relaxing perfectly matched layers for high-order numerical finite difference solutions},
+  author    = {Sode, Masashi and Pinton, Gianmarco},
+  journal   = {Physics in Medicine \& Biology},
+  publisher = {IOP Publishing},
+  year      = {2026},
+  doi       = {10.1088/1361-6560/ae9116},
+  url       = {https://doi.org/10.1088/1361-6560/ae9116}
+}
+
+@software{Sode2025-fullwave25,
+  title  = {Fullwave 2.5: Ultrasound wave propagation simulation with heterogeneous power law attenuation modelling capabilities},
+  author = {Sode, Masashi and Pinton, Gianmarco},
+  year   = {2025},
+  doi    = {10.5281/zenodo.17497689},
+  url    = {https://github.com/pinton-lab/fullwave25}
+}
+```
 
 If you use `MachBeamformer`, please also cite mach:
 
 ```bibtex
 @article{mach,
-  title = {mach: ultrafast ultrasound beamforming},
-  author = {Guan, Charles and Rockhill, Alexander P and Sode, Masashi and Pinton, Gianmarco},
-  year = 2026,
-  journal = {Journal of Medical Imaging},
+  title     = {mach: ultrafast ultrasound beamforming},
+  author    = {Guan, Charles and Rockhill, Alexander P and Sode, Masashi and Pinton, Gianmarco},
+  year      = 2026,
+  journal   = {Journal of Medical Imaging},
   publisher = {Society of Photo-Optical Instrumentation Engineers},
-  volume = 13,
-  number = 6,
-  pages = {062203--062203},
-  doi = {10.1117/1.JMI.13.6.062203},
-  url = {https://github.com/Forest-Neurotech/mach}
+  volume    = 13,
+  number    = 6,
+  pages     = {062203--062203},
+  doi       = {10.1117/1.JMI.13.6.062203},
+  url       = {https://github.com/Forest-Neurotech/mach}
 }
 ```
 
-### Which example to read
+## Contributing
 
-| I want to                          | example                                                                                                     |
-| ---------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| send one plane wave                | [simple_plane_wave.py](examples/simple_plane_wave/simple_plane_wave.py)                                     |
-| do the same with fullwave2-ultra   | [simple_plane_wave_ultra.py](examples/simple_plane_wave/simple_plane_wave_ultra.py)                         |
-| do the same in 3D                  | [simple_plane_wave_3d.py](examples/wave_3d/simple_plane_wave_3d.py)                                         |
-| compound plane waves into a B-mode | [plane_wave_compounding.py](examples/linear_transducer/plane_wave_compounding.py)                           |
-| run a transmit sequence as batches | [transmit_batch_basics.py](examples/transmit_batch/transmit_batch_basics.py)                                |
-| compound plane waves in one batch  | [plane_wave_compounding_batch.py](examples/linear_transducer/plane_wave_compounding_batch.py)               |
-| focus and watch the beam           | [linear_transducer_focused_animation.py](examples/linear_transducer/linear_transducer_focused_animation.py) |
-| run a full synthetic aperture      | [full_synthetic_aperture.py](examples/linear_transducer/full_synthetic_aperture.py)                         |
-| do the same on a curved array      | [convex_transducer_fsa.py](examples/convex_transducer/convex_transducer_fsa.py)                             |
-| image through an abdominal wall    | [linear_transducer_abdominal_wall.py](examples/linear_transducer/linear_transducer_abdominal_wall.py)       |
-| build a layered phantom            | [medium_builder_example.py](examples/medium_builder/medium_builder_example.py)                              |
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) for the branch names, the pull request flow and the code checks.
 
-## New simulation development instruction
+## Acknowledgments
 
-- after the [installation](#installation)
-- make a directory for your simulation under your favorite path.
-  - e.g. `examples/my_simulation/`
-- make a `.py` file or copy the example files below to use the boilerplate.
-  - 2D plane wave
-    - [examples/simple_plane_wave/simple_plane_wave_demo.py](https://github.com/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/simple_plane_wave.py)
-  - 3D plane wave
-    - [examples/wave_3d/simple_plane_wave_3d.py](https://github.com/pinton-lab/fullwave25/blob/main/examples/wave_3d/simple_plane_wave_3d.py)
-- after that follow [Usage 2D](#tutorial-basic-usage) to define the simulation code.
-
-## Tutorial: Advanced Usages
-
-Please see the following examples for more advanced usage.
-
-- 2D plane wave
-  - Basic usage
-    - [Simple plane wave](https://github.com/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/simple_plane_wave.py) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/153Sx9D_5zTlF7UtlKHlyz_CTJnLIAI6s)
-      - <img src="figs/simple_plane_wave.gif" width="200"/>
-    - [Simple plane wave with air](https://github.com/pinton-lab/fullwave25/blob/main/examples/simple_plane_wave/simple_plane_wave.py) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1AnTaT6ZtwyIEcOvGgpn5srB4LWPfYKh0)
-      <!-- - <img src="figs/simple_plane_wave_with_air.gif" width="200"/> -->
-  - Linear transducer
-    - [Linear transducer](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer.py)
-    - [Linear transducer (plane wave transmit) with animation settings](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer_animation.py)
-      <!-- - <img src="figs/linear_transducer.gif" width="200"/> -->
-    - [Linear transducer (focused transmit) with animation settings](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer_animation.py)
-      - <img src="figs/linear_transducer_focused.gif" width="200"/>
-    - [Linear transducer (focused transmit) with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/linear_transducer/linear_transducer.py) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1zlviYe0qBy0JLifFuA2MqUkavJKUQrNb)
-      - <img src="figs/linear_transducer_focused_abdominal_wall.gif" width="200"/>
-    - linear transducer plane wave compounding
-      - [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1LXlkpYhIfQtaPhNDJ1vONTDSdiLBhkEP)
-    - linear transducer full synthetic aperture
-      - [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1_jVULK2mglOx8__gWYHGhNVxYLhAGNF5)
-  - Convex transducer
-    - [Convex transducer with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/convex_transducer/convex_transducer_abdominal_wall.py)
-      - <img src="figs/convex_transducer_abdominal_wall.gif" width="200"/>
-- 3D plane wave
-  - Basic usage
-    - [Simple plane wave in 3D](https://github.com/pinton-lab/fullwave25/blob/main/examples/wave_3d/simple_plane_wave_3d.py)
-      <table>
-        <tr>
-          <td style="text-align: center;" colspan="2">Computational medium</td>
-        </tr>
-        <tr>
-          <td style="text-align: center;" colspan="2"><img src="figs/medium_3d.png" width="600"/></td>
-        </tr>
-        <tr>
-          <td style="text-align: center;" >x-y slice propagation</td>
-          <td style="text-align: center;" >x-z slice propagation</td>
-        </tr>
-        <tr>
-          <td style="text-align: center;" ><img src="figs/wave_propagation_x-y.gif" width="300"/></td>
-          <td style="text-align: center;" ><img src="figs/wave_propagation_x-z.gif" width="300"/></td>
-        </tr>
-      </table>
-    - [Simple plane wave in 3D with air inclusion](https://github.com/pinton-lab/fullwave25/blob/main/examples/wave_3d/simple_plane_wave_3d_with_air.py)
-      <table>
-        <tr>
-          <td style="text-align: center;"  colspan="2">Computational medium with air inclusion</td>
-        </tr>
-        <tr>
-          <td style="text-align: center;"  colspan="2"><img src="figs/medium_3d_air.png" width="600"/></td>
-        </tr>
-        <tr>
-          <td style="text-align: center;" >x-y slice propagation</td>
-          <td style="text-align: center;" >x-z slice propagation</td>
-        </tr>
-        <tr>
-          <td style="text-align: center;" ><img src="figs/wave_propagation_x-y_air.gif" width="300"/></td>
-          <td style="text-align: center;" ><img src="figs/wave_propagation_x-z_air.gif" width="300"/></td>
-        </tr>
-      </table>
-
-- Medium builder usage
-  - Medium builder is a utility to create computational medium from simple geometric operations. This is especially useful when you want to create complex heterogeneous media.
-  - [simple medium builder usage](https://github.com/pinton-lab/fullwave25/blob/main/examples/medium_builder/medium_builder_example.py) [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/169aHbXRt_-aXFEdf2pfPkwH4-niJvrfL)
-  - [simple medium builder usage with abdominal wall](https://github.com/pinton-lab/fullwave25/blob/main/examples/medium_builder/medium_builder_abdominal_example.py)
-  - [medium builder in 3D](https://github.com/pinton-lab/fullwave25/blob/main/examples/medium_builder/medium_builder_example_3d.py)
-
----
-
-## Experimental: fullwave2-ultra backend
-
-`Solver(..., use_ultra=True)` runs the simulation with the fullwave2-ultra binary instead of the fullwave25 solver binary. It is experimental and the API may change.
-
-The fullwave2-ultra backend is optimized for speed at ppw = 6 (`Grid.ppw`); a larger ppw runs, but more slowly, and gives a warning.
-
-fullwave25 does not ship the fullwave2-ultra binaries. Obtain them from the Pinton lab.
-
-Point the solver to the binary with `path_fullwave_simulation_bin` or with the environment variable `FW2U_BATCH_BIN`. Either can be the binary file or the folder that contains it. The binary name is `bench_2d_batch` for a 2D grid and `bench_3d_opt` for a 3D grid.
-
-```python
-from pathlib import Path
-
-import fullwave
-
-solver = fullwave.Solver(
-    work_dir=Path("./outputs/ultra"),
-    grid=grid,  # 2D or 3D fullwave.Grid
-    medium=medium,  # fullwave.Medium
-    source=source,
-    sensor=sensor,
-    path_fullwave_simulation_bin=Path("/path/to/fullwave2-ultra/bin"),
-    use_ultra=True,
-)
-traces = solver.run()  # (n_sensors, n_frames)
-# 2D only: traces = solver.run_batch(sources)  # (n_transmits, n_sensors, n_frames)
-```
-
-In 2D, `run_batch` treats `max_members_per_run` as an upper bound that the free GPU memory can lower, and it keeps the requested value, with a warning, when the free memory cannot be read. The native path uses an explicit `max_members_per_run` as given.
-
-Supported now:
-
-- 2D grids with `run` and `run_batch`, including air cells.
-- 3D grids with `run`, including air cells.
-- Additive sources (`p0_additive`) and `source_type="soft"` in 2D and 3D.
-- The three source types in 2D and 3D, as on the native path: `"hard"` holds the source cells at zero pressure after `p0` ends, `"hard_released_after"` lets them evolve freely, and `"soft"` (and `p0_additive`) add to the pressure.
-
-`UltraUnsupportedError` is raised for:
-
-- `run_batch` in 3D.
-- Velocity sources, and sources that are not pressure sources.
-- Sparse-grid sensors, `is_static_map`, and `record_whole_domain`.
-- Media other than `fullwave.Medium` (exponential attenuation).
-- `use_pml=False`, `m_spatial_order` other than 8, `use_gpu=False`, and an invalid `source_type`.
-- In 2D, a binary that does not read the files for air cells, for the additive channel, or for releasing the source (with such a binary, pad `p0` to `grid.nt`).
-- In 3D, air cells with a binary that does not read `icczero.dat` and `nzero0.dat`, and additive sources with a binary that does not read `ncoords_add.dat` and `icmat_add.dat`.
-
-This list will grow as the backend does.
-
-Unless `ultra_attenuation_parameters` is set (below), the backend runs the exponential attenuation model (frequency-independent: the same attenuation at every frequency); a frequency-dependent attenuation is available only with `ultra_attenuation_parameters` and a compatible binary. Without it, `alpha_coeff` is used as given in dB/(MHz cm) and `alpha_power` is ignored, as fullwave25 standard with exponential attenuation does. Set the width of its absorbing sponge, in cells, with `ultra_sponge_thickness_px`; the default is 6 wavelengths in 2D and 4 wavelengths in 3D. `exponential_attenuation_pml_thickness_px` no longer sets this width with `use_ultra=True`; a script that relied on it now gets the default width until it passes `ultra_sponge_thickness_px`.
-
-Options that only tune the native solver are ignored with a warning, once per process: `pml_layer_thickness_px`, `n_transition_layer`, `pml_alpha_entrance`, `exponential_attenuation_pml_thickness_px` (use `ultra_sponge_thickness_px` instead), `use_gpu_pml`, `save_gpu_memory`, `write_maps_the_solver_does_not_read`, `use_isotropic_relaxation=False`, and a `cuda_device_id` that lists more than one device (the run uses the first one listed). `use_exponential_attenuation=False`, the native default, also warns that the backend runs the exponential attenuation model, whose attenuation is frequency-independent, not the relaxation model, whose attenuation is frequency-dependent. Pass `use_exponential_attenuation=True` to silence it.
-
-#### Attenuation modes
-
-A 2D or 3D run has three attenuation modes. Each needs `use_ultra=True`; the last two need the power-law attenuation binaries from the Pinton lab and `use_exponential_attenuation=False`.
-
-```python
-# 1. Default: frequency-independent attenuation (as described above).
-solver = fullwave.Solver(..., use_ultra=True, path_fullwave_simulation_bin=bin_folder)
-
-# 2. Power-law attenuation alpha_coeff * f**alpha_power.
-solver = fullwave.Solver(
-    ...,
-    use_ultra=True,
-    use_exponential_attenuation=False,
-    path_fullwave_simulation_bin=bin_folder,
-    ultra_attenuation_parameters="centered",  # or "author", or the path of a settings file
-)
-
-# 3. The same with any number of materials (more GPU memory).
-solver = fullwave.Solver(..., ultra_attenuation_parameters="centered", ultra_unlimited_materials=True)
-```
-
-`bin_folder` is the folder of the binaries. With `ultra_attenuation_parameters` it gives the power-law build of the grid dimension; without it, `bench_2d_batch` or `bench_3d_opt`. A name looks for `attenuation_parameters_<name>_v1.dat` next to the binary, then in the `params` folder beside `bin_folder`; the error lists the places searched. "centered" is the recommended band. `UltraUnsupportedError` is raised without `use_ultra=True`, with `use_exponential_attenuation=True`, for a missing settings file, for a binary that does not read `alpha_power.dat`, and, with `ultra_unlimited_materials=True`, for a binary that does not support it. The run directory then gets `alpha_coeff.dat`, `alpha_power.dat`, `f0.dat` and a copy of the settings file as `attenuation_parameters.dat`, and `Aexp.dat` holds the sponge only. The environment variable `FW2U_BATCH_BIN` is not used in modes 2 and 3.
-
----
-
-## Attention
-
-- The simulation grid is defined as follows:
-  - (x, y, z) = (depth, lateral, elevational).
-    - This order is due to the efficiency of the multiple-GPU execution.
-    - Multi-GPU domain decomposition is processed in the depth dimension.
-  - The index of the input coordinates (i.e. the acoustic source location) is defined in C-array order (i.e. row-major) within the simulation, regardless of your setup. This is to improve the efficiency of multi-GPU development.
-  - This might be confusing, so please be careful when you define the source and source signal definition.
-- GPU memory requirement
-  - A 3D simulation requires a lot of GPU memory.
-    - Please reduce the grid size or use multiple GPUs if you run out of memory.
-    - You can check GPU memory usage with the 'nvidia-smi' or 'nvtop' commands.
-- Multi-GPU execution
-  - The current implementation supports multiple GPU execution in 2D and 3D simulations.
-  - Our implementation demonstrates linear performance scaling with the number of GPUs.
-- Before 3D simulation:
-  - If you want to run a 3D simulation, it is recommended that you start with a 2D simulation first to understand the basic usage.
-  - The 3D simulation code is similar to the 2D code, but some plot functions are unavailable in 3D.
-  - The 3D simulation takes longer to run, so starting with 2D will help you debug your code faster.
-
-## Note for developers
-
-- Contributions are welcome!
-- When developing something new, please create a new branch such as `TYPE/BRANCH_NAME`.
-  - TYPE can be `feature`, `bugfix`, `hotfix`, `docs`, `refactor`, `release`, `test`, or `experiment`.
-  - `BRANCH_NAME` should be descriptive of the feature or fix you are working on.
-  - see also: [GitHub Branching Name Best Practices](https://dev.to/jps27cse/github-branching-name-best-practices-49ei)
-- Please write clear and concise commit messages.
-- please see [CONTRIBUTING.md](CONTRIBUTING.md) for more details.
-
----
+The design of this repository was inspired by [k-wave-python](https://github.com/waltsims/k-wave-python). We thank the k-wave-python developers; their tools have contributed much to the ultrasound research community.
 
 ## Authors
 
-- Masashi Sode (GitHub: [MasashiSode](https://github.com/MasashiSode))
-- Gianmarco Pinton (GitHub: [gfpinton](https://github.com/gfpinton))
-
-## Maintainers
-
-- Masashi Sode (GitHub: [MasashiSode](https://github.com/MasashiSode))
+- Masashi Sode ([MasashiSode](https://github.com/MasashiSode)), maintainer
+- Gianmarco Pinton ([gfpinton](https://github.com/gfpinton))

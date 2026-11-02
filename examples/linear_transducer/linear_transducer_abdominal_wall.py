@@ -121,7 +121,7 @@ def main() -> None:
         medium=medium,
         transducer=transducer,
         sensor=sensor,
-        run_on_memory=False,
+        run_on_memory=True,
     )
     sensor_output = fw_solver.run()
 
@@ -148,6 +148,7 @@ def main() -> None:
         vmax=p_max_plot,
         turn_off_axes=True,
         figsize=(6, 6),
+        **plot_utils.mm_axes_kwargs(grid),
     )
 
     plot_utils.plot_wave_propagation_with_map(
@@ -158,13 +159,14 @@ def main() -> None:
         vmin=-p_max_plot,
         vmax=p_max_plot,
         figsize=(6, 6),
+        **plot_utils.mm_axes_kwargs(grid),
     )
 
     # maximum intensity projection
     plot_utils.plot_array(
         np.max(np.abs(propagation_map**2), axis=0),
-        aspect=propagation_map.shape[2] / propagation_map.shape[1],
         export_path=work_dir / "wave_propagation_mip.png",
+        **plot_utils.mm_axes_kwargs(grid),
     )
 
 

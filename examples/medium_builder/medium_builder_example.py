@@ -158,7 +158,7 @@ def main() -> None:
         medium=medium,
         source=transducer.source,
         sensor=sensor,
-        run_on_memory=False,
+        run_on_memory=True,
     )
     sensor_output = fw_solver.run()
 
@@ -171,6 +171,7 @@ def main() -> None:
         c_map=medium.sound_speed,
         rho_map=medium.density,
         export_name=work_dir / "wave_propagation.mp4",
+        **plot_utils.mm_axes_kwargs(grid),
     )
 
 
