@@ -28,6 +28,7 @@ MARKER_AIR_HOLD_2D = b"nTzero.dat"
 MARKER_AIR_WINDOW_2D = b"nzero0.dat"
 MARKER_SOURCE_RELEASE_2D = b"nszero0.dat"
 MARKER_HOLD_SOURCE_3D = b"nszero0.dat"
+MARKER_KERF = b"nkerf0.dat"
 
 OUTPUT_TAIL_CHARS = 2000
 
@@ -46,6 +47,7 @@ class BinaryFeatures:
     has_additive_signals: bool
     has_air_hold_2d: bool
     has_source_release_2d: bool
+    has_kerf: bool
 
 
 def binary_name(*, is_3d: bool, power_law: bool = False) -> str:
@@ -98,6 +100,7 @@ def inspect_binary(binary: str | Path) -> BinaryFeatures:
         has_additive_signals=MARKER_ADDITIVE_SIGNALS in found,
         has_air_hold_2d=MARKER_AIR_HOLD_2D in found or MARKER_AIR_WINDOW_2D in found,
         has_source_release_2d=MARKER_SOURCE_RELEASE_2D in found,
+        has_kerf=MARKER_KERF in found,
     )
 
 
@@ -121,6 +124,7 @@ def _markers(stamp: _FileStamp) -> frozenset[bytes]:
         MARKER_AIR_HOLD_2D,
         MARKER_AIR_WINDOW_2D,
         MARKER_SOURCE_RELEASE_2D,
+        MARKER_KERF,
     )
     with stamp.path.open("rb") as fh, mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as mm:
         return frozenset(n for n in needles if mm.find(n) != -1)

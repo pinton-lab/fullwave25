@@ -232,6 +232,31 @@ def lead_seconds(hertz: float) -> float:
     return cycles / hertz
 
 
+def record_periods(*, axial_wavelengths: float, hertz: float) -> float:
+    """Return how many periods the record runs, long enough to hold the far window.
+
+    A record that ends inside the far window clips it to a span that is not a whole
+    number of periods, and the constant the zero mean pulse leaves behind it then
+    leaks into the single bin reading.
+
+    Parameters
+    ----------
+    axial_wavelengths : float
+        The axial extent, in wavelengths.
+    hertz : float
+        The center frequency of the pulse.
+
+    Returns
+    -------
+    float
+        The record length, in periods of the pulse.
+    """
+    far_window_end = (
+        Case.far_fraction * axial_wavelengths + lead_seconds(hertz) * hertz + Case.window_periods
+    )
+    return max(Case.record_ratio * axial_wavelengths, far_window_end)
+
+
 def pulse_trace(samples: int, time_step: float, hertz: float):
     """Return the pulse of the record, scaled so its peak is the wanted pressure.
 
@@ -365,13 +390,14 @@ def measured(coefficient: float, exponent: float, hertz: float, work_dir: Path) 
     # --- define the computational grid ---
     axial, lateral = extents_for(coefficient, exponent, hertz)
     wavelength = Case.sound_speed / hertz
+    record_wavelengths = record_periods(axial_wavelengths=axial, hertz=hertz)
     grid = fullwave.Grid(
         domain_size=(axial * wavelength, lateral * wavelength),
         f0=hertz,
         c0=Case.sound_speed,
         ppw=Case.points_per_wavelength,
         cfl=Case.courant_number,
-        duration=Case.record_ratio * axial * wavelength / Case.sound_speed,
+        duration=record_wavelengths * wavelength / Case.sound_speed,
     )
 
     # --- define the acoustic medium properties ---

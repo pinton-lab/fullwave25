@@ -75,6 +75,33 @@ def is_hard_held(source_type: str) -> bool:
     return source_type == HARD
 
 
+def kerf_refusal(source_type: str) -> str | None:
+    """Return why a kerf cannot be held with this source type, or None when it can."""
+    if is_hard_held(source_type):
+        return None
+    return (
+        f"a kerf needs source_type='hard', not {source_type!r}, because only a hard source "
+        "keeps its pixels at zero pressure after the drive"
+    )
+
+
+def kerf_switch_step(hard: NDArray) -> int:
+    """Return the step at which the kerf cells are first held: the last driven sample plus 1.
+
+    Parameters
+    ----------
+    hard : NDArray
+        The ``(ncoords, n_tic)`` hard signal of one transmit.
+
+    Returns
+    -------
+    int
+        The index of the last nonzero sample over all cells plus 1; 0 for a silent signal.
+    """
+    driven_samples = np.flatnonzero((np.asarray(hard) != 0).any(axis=0))
+    return int(driven_samples[-1]) + 1 if len(driven_samples) else 0
+
+
 def source_row(coords: NDArray[np.int64], grid_shape: tuple[int, ...]) -> int:
     """Return the row the source occupies, and check that it fills one whole row.
 

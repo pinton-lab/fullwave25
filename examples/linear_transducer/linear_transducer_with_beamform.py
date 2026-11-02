@@ -1,6 +1,7 @@
-"""Send one plane wave, then beamform the element traces into an image.
+"""Send one plane wave, then beamform the element traces into an image with mach.
 
 The medium holds seven point targets and a speckle pattern, so the image shows both.
+The beamformer runs on the GPU.
 
 Run it with:
     uv run python examples/linear_transducer/linear_transducer_with_beamform.py
@@ -12,7 +13,7 @@ from pathlib import Path
 import numpy as np
 
 import fullwave
-from fullwave.beamformer.beamformer import Beamformer
+from fullwave.beamformer import MachBeamformer, face_crossing_time_s, receiver_positions_m
 from fullwave.utils import plot_utils
 
 
@@ -111,7 +112,7 @@ def main() -> None:
         grid=grid,
         medium=medium,
         transducer=transducer,
-        run_on_memory=False,
+        run_on_memory=True,
     )
 
     sensor_output = fw_solver.run()
@@ -121,34 +122,31 @@ def main() -> None:
         average_surface_signals=True,
     )
 
-    num_elements = transducer.transducer_geometry.number_elements
     aperture_m = transducer.transducer_geometry.transducer_width_m
 
-    lateral_position = np.arange(
+    lateral_position_m = np.arange(
         -aperture_m / 2,
         aperture_m / 2,
         grid.wavelength / 8,
     )
+    # depths below the probe face
     image_start_m = 5 * grid.wavelength
     image_end_m = domain_size[0] - transducer.face_depth_m
-    axial_position = np.arange(image_start_m, image_end_m, grid.wavelength / 8)
+    axial_position_m = np.arange(image_start_m, image_end_m, grid.wavelength / 8)
 
-    element_id_to_receiver_center = transducer.element_id_to_receiver_center
-    transducer_coordinates = np.array(
-        [element_id_to_receiver_center[i] for i in range(1, num_elements + 1)],
+    beamformer = MachBeamformer(
+        lateral_position_m=lateral_position_m,
+        axial_position_m=axial_position_m,
+        receiver_positions_m=receiver_positions_m(transducer),
+        sound_speed=grid.c0,
+        center_frequency_hz=grid.f0,
+        sampling_frequency_hz=1 / (grid.dt * transducer.sampling_modulus_time),
+        f_number=2.0,
+        time_zero_s=face_crossing_time_s(transducer),
+        tukey_alpha=0.5,
     )
-
-    beamformer = Beamformer(
-        c0=grid.c0,
-        dx=grid.dx,
-        dt=grid.dt,
-        lateral_position_m=lateral_position,
-        axial_position_m=axial_position,
-        num_elements=num_elements,
-        transducer_coordinates=transducer_coordinates,
-        face_row_px=transducer.face_row_px,
-    )
-    beamformed_image = beamformer.run(sensor_output)
+    plane_wave_arrival_s = beamformer.plane_wave_arrival_s(angle_deg=0.0)
+    beamformed_image = beamformer.beamform(sensor_output, tx_arrival_s=plane_wave_arrival_s)
 
     # --- visualization ---
 
@@ -158,13 +156,13 @@ def main() -> None:
         vmax=0,
         cmap="gray",
         extent=[
-            lateral_position[0] * 1e3,
-            lateral_position[-1] * 1e3,
-            axial_position[-1] * 1e3,
-            axial_position[0] * 1e3,
+            lateral_position_m[0] * 1e3,
+            lateral_position_m[-1] * 1e3,
+            axial_position_m[-1] * 1e3,
+            axial_position_m[0] * 1e3,
         ],
         xlabel="Lateral position (mm)",
-        ylabel="Axial position (mm)",
+        ylabel="Depth (mm)",
         colorbar=True,
         export_path=work_dir / "beamformed_image.png",
     )

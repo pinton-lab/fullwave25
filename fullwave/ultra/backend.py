@@ -17,6 +17,8 @@ from fullwave.solver.source_type import (
     as_additive_source,
     is_hard_held,
     is_soft,
+    kerf_refusal,
+    kerf_switch_step,
 )
 from fullwave.utils import run_directory_in_memory
 from fullwave.utils.signal_filter import apply_filter
@@ -126,61 +128,6 @@ def refuse(message: str) -> None:
     raise UltraUnsupportedError(message)
 
 
-def warn_power_converted(*, alpha_power: NDArray, f0: float) -> None:
-    """Warn once per process when cells with ``alpha_power != 1`` are converted to power 1."""
-    other_powers = alpha_power[alpha_power != 1.0]
-    if other_powers.size == 0:
-        return
-    _warn_once(
-        name="power_converted",
-        message=(
-            f"use_ultra=True runs attenuation with power 1. Cells with alpha_power from "
-            f"{other_powers.min():g} to {other_powers.max():g} are converted to power 1 with "
-            f"the same attenuation at f0={f0 / 1e6:g} MHz: alpha_coeff * f0_MHz**(alpha_power - 1)."
-        ),
-        category=UserWarning,
-    )
-
-
-def power_one_alpha_coeff(*, alpha_coeff: NDArray, alpha_power: NDArray, f0: float) -> NDArray:
-    """Return ``alpha_coeff`` of the power-1 law with the same attenuation at ``f0``.
-
-    Parameters
-    ----------
-    alpha_coeff : NDArray
-        Attenuation coefficient in dB/(MHz^alpha_power cm).
-    alpha_power : NDArray
-        Exponent of the frequency in the attenuation law.
-    f0 : float
-        Center frequency in Hz.
-
-    Returns
-    -------
-    NDArray
-        ``alpha_coeff * f0_MHz**(alpha_power - 1)``, which is ``alpha_coeff`` itself when every
-        power is 1.
-    """
-    if np.all(alpha_power == 1.0):
-        return alpha_coeff
-    return alpha_coeff * (f0 / 1e6) ** (alpha_power - 1.0)
-
-
-def alpha_coeff_for_binary(
-    *, medium: fullwave.Medium, f0: float, attenuation_parameters: Path | None
-) -> NDArray:
-    """Return the attenuation coefficient map written for the binary.
-
-    With a parameter file the binary computes the power law, so the map is unchanged. Without
-    it the binary runs power 1 and the map is converted by :func:`power_one_alpha_coeff`.
-    """
-    alpha_coeff = to_host(medium.alpha_coeff)
-    if attenuation_parameters is not None:
-        return alpha_coeff
-    return power_one_alpha_coeff(
-        alpha_coeff=alpha_coeff, alpha_power=to_host(medium.alpha_power), f0=f0
-    )
-
-
 def driven_source(
     source: fullwave.Source,
     *,
@@ -195,9 +142,13 @@ def driven_source(
 
     Raises
     ------
+    UltraUnsupportedError
+        When the source has a kerf and the source type is not "hard".
     ValueError
         When a soft source already carries an additive signal.
     """
+    if source.n_kerf and (refusal := kerf_refusal(source_type)):
+        refuse(refusal)
     if not is_soft(source_type):
         return source
     if source.p0_additive is not None:
@@ -208,6 +159,38 @@ def driven_source(
         )
         raise ValueError(msg)
     return as_additive_source(source, grid, medium, use_exponential_attenuation=True)
+
+
+def check_kerf(
+    *,
+    source: fullwave.Source,
+    air_coords: NDArray,
+    features: binary_module.BinaryFeatures,
+    binary: Path,
+) -> None:
+    """Refuse kerf cells that the binary cannot hold or that sit on a source or air cell.
+
+    Raises
+    ------
+    UltraUnsupportedError
+        When the source has kerf cells and there is no hard source, the binary lacks the kerf
+        input, or a kerf cell is also a source cell or an air cell.
+    """
+    if not source.n_kerf:
+        return
+    if not source.n_sources:
+        refuse("kerf_coords need a hard source to be held next to")
+    if not features.has_kerf:
+        refuse(
+            f"{binary} does not read nkerf0.dat, so it cannot hold kerf cells and would run "
+            "with them free"
+        )
+    kerf = np.ravel_multi_index(source.kerf_coords.T, source.grid_shape)
+    for name, coords in (("source", source.incoords), ("air", to_host(air_coords))):
+        if not len(coords):
+            continue
+        if np.intersect1d(kerf, np.ravel_multi_index(coords.T, source.grid_shape)).size:
+            refuse(f"kerf_coords overlap the {name} cells; a cell cannot be both")
 
 
 def to_host(array: object) -> NDArray:
@@ -360,8 +343,6 @@ class UltraBackend3D:
             refuse(f"cfl {self.grid.cfl} is above the 3D stability limit {CFL_LIMIT_3D}")
         if type(self.medium).__name__ != "Medium":
             refuse("use_ultra=True needs fullwave.Medium (exponential attenuation)")
-        if self.attenuation_parameters is None:
-            warn_power_converted(alpha_power=to_host(self.medium.alpha_power), f0=self.grid.f0)
         if any(v is not None for v in (self.source.u0, self.source.v0, self.source.w0)):
             refuse("velocity sources are not supported by use_ultra=True")
         if self.source.n_sources + self.source.n_sources_add == 0:
@@ -385,6 +366,12 @@ class UltraBackend3D:
                 f"{self.binary} has no additive source channel (it does not read both "
                 "ncoords_add.dat and icmat_add.dat) and would run without the additive source"
             )
+        check_kerf(
+            source=self.source,
+            air_coords=self.medium.air_coords,
+            features=features,
+            binary=self.binary,
+        )
         if self.holds_hard_source:
             check_binary_holds_source(
                 self.binary,
@@ -454,9 +441,7 @@ class UltraBackend3D:
                 "cmap": to_host(medium.sound_speed),
                 "rmap": to_host(medium.density),
                 "nmap": to_host(medium.beta),
-                "amap": alpha_coeff_for_binary(
-                    medium=medium, f0=grid.f0, attenuation_parameters=self.attenuation_parameters
-                ),
+                "amap": to_host(medium.alpha_coeff),
                 "pmap": to_host(medium.alpha_power),
             },
             incoords=self.source.incoords,
@@ -473,6 +458,8 @@ class UltraBackend3D:
                 held=self.holds_hard_source,
             ),
             attenuation_parameters=self.attenuation_parameters,
+            kerf_coords=self.source.kerf_coords if self.source.n_kerf else None,
+            kerf_switch_step=kerf_switch_step(hard) if self.source.n_kerf else None,
         )
         write_sources_3d(
             rundir,

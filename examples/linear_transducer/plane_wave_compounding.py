@@ -11,19 +11,12 @@ import logging
 import shutil
 from pathlib import Path
 
-import cupy
 import matplotlib.pyplot as plt
 import numpy as np
-import pymust
-from einops import rearrange
-from mach import experimental, wavefront
-from mach.io.must import (
-    linear_probe_positions,
-    scan_grid,
-)
 from tqdm import tqdm
 
 import fullwave
+from fullwave.beamformer import MachBeamformer, face_crossing_time_s, receiver_positions_m
 from fullwave.utils import plot_utils
 
 
@@ -174,7 +167,7 @@ def main() -> None:
     # --- define the computational grid ---
     #
 
-    # The calibrated L7-4 setup: 5.208 MHz, 12 points per wavelength, Courant 0.4.
+    # L7-4 setup: 5.208 MHz, 12 points per wavelength, Courant 0.4.
     f0 = 5.208e6
     c0 = 1540
     ppw = 12
@@ -228,7 +221,11 @@ def main() -> None:
         face_depth_m=transducer.face_depth_m,
         centered=True,
     )
-    plot_utils.plot_array(scatterer, export_path=work_dir / "scatterer.png")
+    plot_utils.plot_array(
+        scatterer,
+        export_path=work_dir / "scatterer.png",
+        **plot_utils.mm_axes_kwargs(grid),
+    )
     # scatterer modulates the density map.
     # scatterer values are centered around 1.0 with small variations.
     density_map *= scatterer
@@ -294,18 +291,7 @@ def main() -> None:
     #
     # --- b-mode imaging parameters ---
     #
-    params = {
-        "fs": 1 / grid.dt / sampling_interval,  # Sampling frequency (Hz)
-        "fc": f0,  # Center frequency (Hz)
-        "Nelements": 128,  # Number of array elements
-        "pitch": transducer_width_m / 128,  # Element pitch (meters)
-        "c": c0,  # Speed of sound in medium (m/s)
-        "fnumber": 1.0,
-        "t0": 0,  # Start time of data acquisition (seconds)
-    }
-    element_positions = linear_probe_positions(params["Nelements"], params["pitch"])
     b_mode_x = np.linspace(-transducer_width_m / 2, transducer_width_m / 2, num=256, endpoint=True)
-    b_mode_y = np.array([0.0])  # 2D imaging (single y-plane)
     # depth below the probe face, which is the first medium row
     b_mode_z = np.linspace(
         5e-3,
@@ -314,58 +300,31 @@ def main() -> None:
         endpoint=True,
     )
 
-    grid_points = scan_grid(b_mode_x, b_mode_y, b_mode_z)
-
-    origin_m = np.array([0, 0, 0])
-    wavefront_arrivals_s = []
-    for angle in angles:
-        direction = np.array([np.sin(np.radians(angle)), 0, np.cos(np.radians(angle))])
-        at_scan_points_s = wavefront.plane(origin_m, grid_points, direction) / params["c"]
-        at_aperture_s = wavefront.plane(origin_m, element_positions, direction) / params["c"]
-        wavefront_arrivals_s.append(at_scan_points_s - at_aperture_s.min())
-    wavefront_arrivals_s = np.stack(wavefront_arrivals_s, axis=0)
-
-    # -- beamforming ---
+    beamformer = MachBeamformer(
+        lateral_position_m=b_mode_x,
+        axial_position_m=b_mode_z,
+        receiver_positions_m=receiver_positions_m(transducer),
+        sound_speed=grid.c0,
+        center_frequency_hz=grid.f0,
+        sampling_frequency_hz=1 / (grid.dt * transducer.sampling_modulus_time),
+        f_number=1.0,
+        time_zero_s=face_crossing_time_s(transducer),
+        tukey_alpha=0.5,
+    )
+    tx_arrival_s = np.stack(
+        [beamformer.plane_wave_arrival_s(angle_deg=angle) for angle in angles],
+        axis=0,
+    )
     sensor_output = np.stack(sensor_output_list, axis=0)
-    sensor_output = sensor_output.transpose(2, 1, 0)
+    iq_data = beamformer.rf_to_iq(sensor_output)
+    # [n_axial, n_lateral] to [n_lateral, n_axial]
+    b_mode = beamformer.beamform(sensor_output, tx_arrival_s=tx_arrival_s).T
 
-    iq_data = pymust.rf2iq(sensor_output, Fs=params["fs"], Fc=params["fc"])
-
-    # Convert to flattened grid points for beamforming
-    iq_data = iq_data[:, :, :, np.newaxis]
-    iq_data = np.ascontiguousarray(
-        rearrange(
-            iq_data,
-            "samples elements transmit frames -> transmit elements samples frames",
-        ),
-        # iq_data,
-        dtype=np.complex64,
-    )
-
-    b_mode = experimental.beamform(
-        channel_data=cupy.asarray(iq_data),  # IQ data from all elements
-        rx_coords_m=cupy.asarray(element_positions),  # Array element positions
-        scan_coords_m=cupy.asarray(grid_points),  # Imaging grid coordinates
-        tx_wave_arrivals_s=cupy.asarray(
-            wavefront_arrivals_s,
-        ),  # Transmit arrival times (s)
-        f_number=float(params["fnumber"]),  # Dynamic focusing f-number
-        rx_start_s=float(params["t0"]),  # Data acquisition start time
-        sampling_freq_hz=float(params["fs"]),  # Sampling frequency
-        sound_speed_m_s=float(params["c"]),  # Medium sound speed
-        modulation_freq_hz=float(params["fc"]),  # Demodulation frequency
-        tukey_alpha=0.5,  # No additional windowing
-    )
-
-    # convert cupy to numpy
-    b_mode = cupy.asnumpy(b_mode)
-    b_mode = b_mode.reshape(len(b_mode_x), len(b_mode_z))
-
-    # plot convert_to_db(iq_data[0, :, :, 0]).T,
+    # plot the IQ data of the first transmit
     plt.close("all")
     fig, ax = plt.subplots(1, 1, figsize=(6, 6))
     im = ax.imshow(
-        convert_to_db(iq_data[0, :, :, 0]).T,
+        convert_to_db(iq_data[0]).T,
         vmin=-70,
         vmax=0,
         aspect=0.3,

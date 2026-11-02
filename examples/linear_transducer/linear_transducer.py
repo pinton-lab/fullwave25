@@ -92,7 +92,7 @@ def main() -> None:
         grid=grid,
         medium=medium,
         transducer=transducer,
-        run_on_memory=False,
+        run_on_memory=True,
     )
     sensor_output = fw_solver.run()
 

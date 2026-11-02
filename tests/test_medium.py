@@ -20,6 +20,31 @@ class DummyGrid2D:
         self.dt = dt
         self.is_3d = False
 
+    def extent_mm(self):
+        return (-1.0, 1.0, 2.0, 0.0)
+
+
+def test_plot_draws_millimeter_axes(tmp_path, monkeypatch):
+    grid = fullwave.Grid((6e-3, 4e-3), 1e6, 1e-6, c0=1540)
+    shape = (grid.nx, grid.ny)
+    medium = Medium(
+        grid,
+        np.full(shape, 1500.0),
+        np.full(shape, 1000.0),
+        np.full(shape, 0.5),
+        np.full(shape, 1.2),
+        np.full(shape, 0.8),
+    )
+    monkeypatch.setattr(medium_module.plt, "close", lambda *_: None)
+
+    medium.plot(export_path=tmp_path / "medium.png")
+
+    ax = medium_module.plt.gcf().axes[0]
+    assert ax.get_xlabel() == "Lateral position (mm)"
+    assert ax.get_ylabel() == "Depth (mm)"
+    assert ax.images[0].get_extent() == pytest.approx(grid.extent_mm())
+    medium_module.plt.close("all")
+
 
 def test_post_init_conversion(monkeypatch):
     # Provide 1D arrays as inputs

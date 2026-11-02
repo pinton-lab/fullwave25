@@ -177,7 +177,7 @@ def main() -> None:
         medium=medium,
         source=source,
         sensor=sensor,
-        run_on_memory=False,
+        run_on_memory=True,
     )
     result_path: Path = fw_solver.run(load_results=False)
     sensor_output = load_dat_and_reshape(

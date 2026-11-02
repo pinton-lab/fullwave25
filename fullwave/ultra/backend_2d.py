@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from fullwave.solver.binary_markers import check_binary_holds_source
-from fullwave.solver.source_type import HARD_RELEASED_AFTER, is_hard_held
+from fullwave.solver.source_type import HARD_RELEASED_AFTER, is_hard_held, kerf_switch_step
 from fullwave.utils.gpu_memory import (
     free_gpu_memory_bytes,
     members_that_fit,
@@ -21,14 +21,13 @@ from fullwave.utils.gpu_memory import (
 from . import binary as binary_module
 from . import dat_io
 from .backend import (
-    alpha_coeff_for_binary,
     check_filters,
+    check_kerf,
     driven_source,
     filter_traces,
     refuse,
     single_device,
     to_host,
-    warn_power_converted,
     work_directory,
 )
 from .binary import OUTPUT_TAIL_CHARS
@@ -71,6 +70,7 @@ def device_bytes_2d(
     ncoords_add: int = 0,
     n_tic_add: int = 0,
     ncoordszero: int = 0,
+    ncoordskerf: int = 0,
 ) -> tuple[int, int]:
     """Return the GPU memory of a 2D batch, in bytes, without the CUDA context.
 
@@ -87,7 +87,9 @@ def device_bytes_2d(
     ncoords_add, n_tic_add : int
         Additive source cells and source length in steps.
     ncoordszero : int
-        Cells held at zero pressure.
+        Air cells held at zero pressure.
+    ncoordskerf : int
+        Kerf cells held at zero pressure after the drive.
 
     Returns
     -------
@@ -96,7 +98,7 @@ def device_bytes_2d(
     """
     cells = n_x * n_y
     frames = (n_t - 1) // mod_t
-    n_coordinates = ncoords + ncoordszero + ncoordsout + ncoords_add
+    n_coordinates = ncoords + ncoordszero + ncoordskerf + ncoordsout + ncoords_add
     per_member = (
         BYTES_PER_CELL_PER_MEMBER * cells
         + FLOAT_BYTES * ncoords * n_tic
@@ -246,8 +248,6 @@ class UltraBackend2D:
             refuse("this backend runs a 2D grid")
         if type(self.medium).__name__ != "Medium":
             refuse("use_ultra=True needs fullwave.Medium (exponential attenuation)")
-        if self.attenuation_parameters is None:
-            warn_power_converted(alpha_power=to_host(self.medium.alpha_power), f0=self.grid.f0)
         self._check_source(self.source)
         if getattr(self.sensor, "is_sparse_grid", False):
             refuse("sparse-grid sensors are not supported by use_ultra=True")
@@ -274,6 +274,12 @@ class UltraBackend2D:
                 f"{self.binary} has no additive source channel (it does not read ncoords_add.dat) "
                 "and would run without the additive source"
             )
+        check_kerf(
+            source=self.source,
+            air_coords=self.medium.air_coords,
+            features=features,
+            binary=self.binary,
+        )
         if (
             self.source.n_sources
             and self.source.p0.shape[1] < self.grid.nt
@@ -297,8 +303,10 @@ class UltraBackend2D:
         """Return the hard and additive signals of one transmit after checking it fits the batch."""
         self._check_source(member)
         reference = self.source
-        same_cells = np.array_equal(member.incoords, reference.incoords) and np.array_equal(
-            member.incoords_add, reference.incoords_add
+        same_cells = (
+            np.array_equal(member.incoords, reference.incoords)
+            and np.array_equal(member.incoords_add, reference.incoords_add)
+            and np.array_equal(member.kerf_coords, reference.kerf_coords)
         )
         hard = np.asarray(member.p0)
         additive = None if member.p0_additive is None else np.asarray(member.p0_additive)
@@ -522,6 +530,7 @@ class UltraBackend2D:
             ncoords_add=len(self.source.incoords_add) if n_tic_add else 0,
             n_tic_add=n_tic_add,
             ncoordszero=len(self.medium.air_coords),
+            ncoordskerf=self.source.n_kerf,
         )
 
     def _run_one(
@@ -549,9 +558,7 @@ class UltraBackend2D:
                 "cmap": to_host(medium.sound_speed),
                 "rmap": to_host(medium.density),
                 "nmap": to_host(medium.beta),
-                "amap": alpha_coeff_for_binary(
-                    medium=medium, f0=grid.f0, attenuation_parameters=self.attenuation_parameters
-                ),
+                "amap": to_host(medium.alpha_coeff),
                 "pmap": to_host(medium.alpha_power),
             },
             incoords=self.source.incoords,
@@ -564,6 +571,10 @@ class UltraBackend2D:
             n_tic_additive=additive_signals[0].shape[1] if additive_signals else None,
             back_faces=self._back_faces(),
             attenuation_parameters=self.attenuation_parameters,
+            kerf_coords=self.source.kerf_coords if self.source.n_kerf else None,
+            kerf_switch_steps=(
+                [kerf_switch_step(signal) for signal in signals] if self.source.n_kerf else None
+            ),
         )
         write_sources_2d(
             rundir,
