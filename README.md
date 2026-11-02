@@ -88,7 +88,7 @@ To start your own simulation, copy [simple_plane_wave.py](examples/simple_plane_
 
 ### Simulation guide
 
-[.claude/skills/fullwave25/SKILL.md](.claude/skills/fullwave25/SKILL.md) is a short guide to setting up a simulation the standard way. It covers:
+[docs/claude_skill/fullwave25/SKILL.md](docs/claude_skill/fullwave25/SKILL.md) is a short guide to setting up a simulation the standard way. It covers:
 
 - the basic flow, the output shapes and the sensor order;
 - scatterers, air and the discretized attenuation values;
@@ -96,7 +96,7 @@ To start your own simulation, copy [simple_plane_wave.py](examples/simple_plane_
 - transducers, presets and beamforming;
 - multi-GPU runs, the container and troubleshooting.
 
-Read it before writing a new simulation. The same file is a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skill: Claude Code loads it in a clone of this repository, and you can copy the folder to `~/.claude/skills/fullwave25/` to use it in your own projects.
+Read it before writing a new simulation. The same file is a [Claude Code](https://docs.anthropic.com/en/docs/claude-code) skill: to use it in Claude Code, copy the folder `docs/claude_skill/fullwave25/` to `~/.claude/skills/fullwave25/`.
 
 ## Transducers and transmits
 
