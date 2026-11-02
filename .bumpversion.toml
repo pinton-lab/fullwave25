@@ -26,7 +26,7 @@ tag_message = "Bump version: {current_version} → {new_version}"
 
 pre_commit_hooks = [
     "uv lock",
-    "git add uv.lock .bumpversion.toml fullwave/__init__.py pyproject.toml",
+    "git add uv.lock .bumpversion.toml fullwave/__init__.py pyproject.toml examples",
 ]
 
 [[tool.bumpversion.files]]
@@ -40,6 +40,19 @@ replace = 'version = "{new_version}"'
 filename = "fullwave/__init__.py"
 search = '__version__ = "{current_version}"'
 replace = '__version__ = "{new_version}"'
+
+[[tool.bumpversion.files]]
+# Colab install cell of the example notebooks
+glob = "examples/**/*.ipynb"
+search = 'fullwave25=={current_version}'
+replace = 'fullwave25=={new_version}'
+ignore_missing_version = true
+
+[[tool.bumpversion.files]]
+glob = "examples/**/*.ipynb"
+search = 'fullwave25[mach]=={current_version}'
+replace = 'fullwave25[mach]=={new_version}'
+ignore_missing_version = true
 
 [tool.bumpversion.parts.pre_l]
 values = ["dev", "rc", "final"]
