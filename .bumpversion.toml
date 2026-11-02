@@ -1,5 +1,5 @@
 [tool.bumpversion]
-current_version = "1.4.3-dev0"
+current_version = "1.5.0-dev0"
 parse = """(?x)
     (?P<major>0|[1-9]\\d*)\\.
     (?P<minor>0|[1-9]\\d*)\\.
@@ -26,7 +26,7 @@ tag_message = "Bump version: {current_version} → {new_version}"
 
 pre_commit_hooks = [
     "uv lock",
-    "git add uv.lock .bumpversion.toml fullwave/__init__.py pyproject.toml examples",
+    "git add -u uv.lock .bumpversion.toml fullwave/__init__.py pyproject.toml examples",
 ]
 
 [[tool.bumpversion.files]]

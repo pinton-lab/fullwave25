@@ -9,7 +9,7 @@ wheels/
 # Virtual environments
 .venv
 
-temp/*
+**/temp/
 outputs
 .env
 .claude/*
