@@ -156,7 +156,7 @@ def main() -> None:
         medium=medium,
         source=source,
         sensor=sensor,
-        run_on_memory=False,
+        run_on_memory=True,
         save_gpu_memory=True,
     )
     sensor_output = fw_solver.run()
@@ -174,7 +174,7 @@ def main() -> None:
     p_max_plot = np.abs(propagation_map[time_step]).max().item()
     plot_utils.plot_array(
         propagation_map[time_step, :, :],
-        aspect=propagation_map.shape[2] / propagation_map.shape[1],
+        **plot_utils.mm_axes_kwargs(grid),
         export_path=work_dir / "wave_propagation_snapshot.png",
         vmax=p_max_plot,
         vmin=-p_max_plot,
@@ -187,6 +187,7 @@ def main() -> None:
         vmax=p_max_plot,
         vmin=-p_max_plot,
         figsize=(4, 6),
+        **plot_utils.mm_axes_kwargs(grid),
     )
 
 

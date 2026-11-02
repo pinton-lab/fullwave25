@@ -15,7 +15,7 @@ import numpy as np
 from tqdm import tqdm
 
 import fullwave
-from fullwave.beamformer import MachBeamformer
+from fullwave.beamformer import MachBeamformer, face_crossing_time_s, receiver_positions_m
 from fullwave.utils import plot_utils
 
 
@@ -220,7 +220,11 @@ def main() -> None:
         != 1.0
     )
 
-    plot_utils.plot_array(air_map, export_path=work_dir / "air_map.png")
+    plot_utils.plot_array(
+        air_map,
+        export_path=work_dir / "air_map.png",
+        **plot_utils.mm_axes_kwargs(grid),
+    )
     # define scatterer
 
     scatterer, _ = fullwave.utils.generate_scatterer(
@@ -312,11 +316,16 @@ def main() -> None:
         endpoint=True,
     )
 
-    beamformer = MachBeamformer.from_transducer(
-        transducer,
+    beamformer = MachBeamformer(
         lateral_position_m=b_mode_x,
         axial_position_m=b_mode_z,
+        receiver_positions_m=receiver_positions_m(transducer),
+        sound_speed=grid.c0,
+        center_frequency_hz=grid.f0,
+        sampling_frequency_hz=1 / (grid.dt * transducer.sampling_modulus_time),
         f_number=2.0,
+        time_zero_s=face_crossing_time_s(transducer),
+        tukey_alpha=0.5,
     )
     # element ids count from zero here, and from one in the beamformer
     tx_arrival_s = np.stack(

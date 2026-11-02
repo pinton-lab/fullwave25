@@ -126,7 +126,7 @@ def main() -> None:
         medium=medium,
         transducer=transducer,
         sensor=sensor,
-        run_on_memory=False,
+        run_on_memory=True,
     )
     sensor_output = fw_solver.run()
 
@@ -152,9 +152,7 @@ def main() -> None:
         vmin=-p_max_plot,
         vmax=p_max_plot,
         turn_off_axes=True,
-        # extent=(-domain_size[1] * 1e3 / 2, domain_size[1] * 1e3 / 2, domain_size[0] * 1e3, 0),
-        # ylabel="Depth (mm)",
-        # xlabel="Lateral position (mm)",
+        **plot_utils.mm_axes_kwargs(grid),
     )
     plot_utils.plot_wave_propagation_with_map(
         propagation_map=propagation_map,
@@ -164,9 +162,7 @@ def main() -> None:
         vmin=-p_max_plot,
         vmax=p_max_plot,
         figsize=(4, 3.5),
-        extent=(-domain_size[1] * 1e3 / 2, domain_size[1] * 1e3 / 2, domain_size[0] * 1e3, 0),
-        ylabel="Depth (mm)",
-        xlabel="Lateral position (mm)",
+        **plot_utils.mm_axes_kwargs(grid),
     )
     print()
 

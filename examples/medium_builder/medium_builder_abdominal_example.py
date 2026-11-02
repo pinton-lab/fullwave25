@@ -105,7 +105,7 @@ def main() -> None:
         medium=medium,
         source=transducer.source,
         sensor=sensor,
-        run_on_memory=False,
+        run_on_memory=True,
     )
     sensor_output = fw_solver.run()
 
@@ -121,10 +121,11 @@ def main() -> None:
         export_name=work_dir / "wave_propagation.mp4",
         vmax=1e5,
         vmin=-1e5,
+        **plot_utils.mm_axes_kwargs(grid),
     )
     plot_utils.plot_array(
         propagation_map[500, :, :],
-        aspect=propagation_map.shape[2] / propagation_map.shape[1],
+        **plot_utils.mm_axes_kwargs(grid),
         export_path=work_dir / "wave_propagation_snapshot.svg",
         clear_all=True,
     )
