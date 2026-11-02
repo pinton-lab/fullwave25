@@ -19,6 +19,7 @@ from fullwave.solver.utils import initialize_relaxation_param_dict
 from fullwave.utils import check_functions, plot_utils
 from fullwave.utils.coordinates import coords_to_map, map_to_coords
 from fullwave.utils.relaxation_parameters import (
+    RelaxationParametersGenerator,
     _array_module,
     band_scaled_sound_speed,
     generate_relaxation_params,
@@ -1258,9 +1259,11 @@ class Medium:
             Path to the relaxation parameters database.
         path_invalid_cells : Path, optional
             Path to the JSON record an evaluation wrote, which names every
-            invalid cell of the table and why it is invalid. A request that lands
-            on one is warned about, and the lookup still serves it. Without it
-            nothing is marked and the behaviour is unchanged.
+            invalid cell of the table and why it is invalid. Without it, the
+            record ``<table stem>_invalid_cells.json`` beside the table is read
+            where it exists. A voxel on a ``not_fitted`` cell uses the nearest
+            fitted exponent of the same row, and a voxel on another invalid cell
+            uses that cell and warns.
         n_relaxation_mechanisms : int, optional
             Number of relaxation mechanisms, by default 4
         attenuation_builder : str, optional
@@ -1297,11 +1300,14 @@ class Medium:
             0.0022, then 0.01 to 1.00 in steps of 0.01, then 1.1 to 2.0 in
             steps of 0.1, then 3 to 10 in steps of 1, so a specified value
             between two nodes maps to the node above and a value past either
-            end maps to the last node. Setting this True scales the relaxation
-            departure by the shortfall instead. It matters most under a band
-            transfer, which multiplies the specified coefficient by a factor and
-            often carries it off the axis. False, the default, reproduces every
-            result produced before this existed.
+            end maps to the last node. Above 1.0 the table fits only some
+            exponents, so a cell it does not fit maps to the fitted exponent
+            nearest to it in the same coefficient row. The lookup logs a warning
+            that names each specified value and the cell used. Setting this True
+            scales the relaxation departure by the shortfall instead. It matters
+            most under a band transfer, which multiplies the specified
+            coefficient by a factor and often carries it off the axis. False,
+            the default, reproduces every result produced before this existed.
         n_jobs : int, optional
             Number of parallel jobs for relaxation parameter calculation.
             Default is -1, which uses all available CPUs.
@@ -1613,6 +1619,20 @@ class Medium:
             }
         return relaxation_param_dict
 
+    def _exponent_used(
+        self,
+        alpha_coeff: NDArray[np.float64],
+        alpha_power: NDArray[np.float64],
+    ) -> NDArray[np.float64]:
+        """Return the exponent of the cell each voxel uses, which sets the band anchor."""
+        if self.band_scale == 1.0:
+            return alpha_power
+        return RelaxationParametersGenerator(
+            n_relaxation_mechanisms=self.n_relaxation_mechanisms,
+            path_database=self.path_relaxation_parameters_database,
+            path_invalid_cells=self.path_invalid_cells,
+        )._exponent_used(alpha_coeff, alpha_power, band_scale=self.band_scale)
+
     def relaxation_parameters_at(
         self,
         coords: NDArray[np.int64],
@@ -1637,7 +1657,7 @@ class Medium:
         sound_speed = band_scaled_sound_speed(
             self._to_numpy(self.sound_speed[index]),
             alpha_coeff,
-            alpha_power,
+            self._exponent_used(alpha_coeff, alpha_power),
             self.band_scale,
         )
         parameters = self._relaxation_parameters_of(sound_speed, alpha_coeff, alpha_power)
@@ -1669,7 +1689,7 @@ class Medium:
         sound_speed = band_scaled_sound_speed(
             self.sound_speed,
             self.alpha_coeff,
-            self.alpha_power,
+            self._exponent_used(self.alpha_coeff, self.alpha_power),
             self.band_scale,
         )
         relaxation_param_dict = self._relaxation_parameters_of(
