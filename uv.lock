@@ -784,7 +784,7 @@ wheels = [
 
 [[package]]
 name = "fullwave25"
-version = "1.4.2.dev4"
+version = "1.4.3.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "cupy-cuda12x" },
@@ -813,6 +813,11 @@ examples = [
     { name = "mach-beamform" },
     { name = "pymust" },
 ]
+mach = [
+    { name = "cupy-cuda12x" },
+    { name = "mach-beamform" },
+    { name = "pymust" },
+]
 test = [
     { name = "pytest" },
     { name = "tomli" },
@@ -833,10 +838,12 @@ dev = [
 requires-dist = [
     { name = "cupy-cuda12x", specifier = ">=13.6.0" },
     { name = "cupy-cuda12x", marker = "extra == 'examples'", specifier = ">=13.6.0" },
+    { name = "cupy-cuda12x", marker = "extra == 'mach'", specifier = ">=13.6.0" },
     { name = "ipykernel", marker = "extra == 'examples'", specifier = ">=6.28.0" },
     { name = "jupyter", marker = "extra == 'examples'", specifier = ">=1.0.0" },
     { name = "line-profiler", marker = "extra == 'dev'", specifier = ">=5.0.1" },
     { name = "mach-beamform", marker = "extra == 'examples'", specifier = ">=0.0.4" },
+    { name = "mach-beamform", marker = "extra == 'mach'", specifier = ">=0.0.4" },
     { name = "matplotlib", specifier = ">=3.10.7" },
     { name = "numba", specifier = ">=0.63.1" },
     { name = "numexpr", specifier = ">=2.14.1" },
@@ -845,6 +852,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=12.3.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = "==4.6.2" },
     { name = "pymust", marker = "extra == 'examples'", specifier = ">=0.1.8" },
+    { name = "pymust", marker = "extra == 'mach'", specifier = ">=0.1.8" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3.5" },
     { name = "pytest", marker = "extra == 'test'" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12.9" },
@@ -853,7 +861,7 @@ requires-dist = [
     { name = "tomli", marker = "extra == 'test'", specifier = ">=2.3.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
 ]
-provides-extras = ["test", "dev", "examples"]
+provides-extras = ["test", "dev", "examples", "mach"]
 
 [package.metadata.requires-dev]
 dev = [
