@@ -933,7 +933,7 @@ class TestDefaultTableMappingCupyEquivalence:
 
     def test_generate_and_warnings_are_identical(self, caplog):
         generator = RelaxationParametersGenerator()
-        alpha_coeff = np.array([[2.05, 5.0, 11.0, 0.5, 1.05, 0.0022, 5.5, 0.3]])
+        alpha_coeff = np.array([[2.05, 5.0, 25.0, 0.5, 1.05, 0.0022, 5.5, 0.3]])
         alpha_power = np.array([[1.0, 0.5, 1.0, 1.0, 1.65, 1.2, 0.5, 1.999]])
         for band_scale, scale in ((1.0, False), (1.0, True), (0.1, True)):
             caplog.clear()

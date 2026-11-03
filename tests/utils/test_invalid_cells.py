@@ -270,8 +270,8 @@ class TestAValueTheTableDoesNotHoldWarns:
 
     def test_a_value_above_the_axis_names_the_last_node(self, caplog):
         with caplog.at_level(logging.WARNING):
-            RelaxationParametersGenerator().generate(np.array([[11.0]]), np.array([[1.0]]))
-        assert "(11, 1) -> (10, 1.0001)" in caplog.text
+            RelaxationParametersGenerator().generate(np.array([[25.0]]), np.array([[1.0]]))
+        assert "(25, 1) -> (20, 1.0001)" in caplog.text
 
     def test_a_value_on_a_node_does_not_warn(self, caplog):
         with caplog.at_level(logging.WARNING):

@@ -1298,7 +1298,7 @@ class Medium:
             Give the specified attenuation coefficient rather than the
             coefficient of the cell used. The coefficient axis holds
             0.0022, then 0.01 to 1.00 in steps of 0.01, then 1.1 to 2.0 in
-            steps of 0.1, then 3 to 10 in steps of 1, so a specified value
+            steps of 0.1, then 3 to 20 in steps of 1, so a specified value
             between two nodes maps to the node above and a value past either
             end maps to the last node. Above 1.0 the table fits only some
             exponents, so a cell it does not fit maps to the fitted exponent
