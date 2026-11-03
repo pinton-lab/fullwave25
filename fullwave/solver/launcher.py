@@ -4,8 +4,6 @@ import copy
 import ctypes
 import logging
 import os
-import re
-import shutil
 import subprocess
 from pathlib import Path
 from time import time
@@ -13,10 +11,31 @@ from time import time
 import numpy as np
 from numpy.typing import NDArray
 
-from .cuda_utils import find_consecutive_gpus_without_peer_access
+from .cuda_utils import (
+    count_visible_gpus,
+    cuda_visible_devices_for_child,
+    find_consecutive_gpus_without_peer_access,
+)
 from .utils import load_dat_data
 
 logger = logging.getLogger("__main__." + __name__)
+
+
+def _split_device_ids(*, device_id_str: str) -> list[int]:
+    """Return the CUDA device IDs of a string such as "0,1,2,3".
+
+    Parameters
+    ----------
+    device_id_str : str
+        The CUDA device ID(s), separated by commas.
+
+    Returns
+    -------
+    list[int]
+        The IDs in the given order.
+
+    """
+    return [int(device_id) for device_id in device_id_str.split(",")]
 
 
 class SimulationError(Exception):
@@ -55,6 +74,8 @@ class Launcher:
             for multiple GPUs, provide a list of device IDs.
             example 1: [0, 1] for using GPU 0 and GPU 1. or "0,1" as a string.
             example 2: 2 for using GPU 2 or "2" as a string.
+            As in CuPy and PyTorch, the IDs count within ``CUDA_VISIBLE_DEVICES``
+            when it is set: with ``CUDA_VISIBLE_DEVICES=2,3``, [0, 1] uses GPUs 2 and 3.
         save_gpu_memory : bool, optional
             Whether to save GPU memory by using ICMAT_MEMORY_SAVING flag in the simulation.
             The simulation does not load initial conditions into GPU memory and
@@ -153,7 +174,10 @@ class Launcher:
 
     @staticmethod
     def _verify_cuda_devices_exist(device_id_str: str) -> None:
-        """Verify that the specified CUDA devices exist on the system.
+        """Verify that this process can use the specified CUDA devices.
+
+        The CUDA driver counts the GPUs in the order that the binary uses, after
+        ``CUDA_VISIBLE_DEVICES`` and ``CUDA_DEVICE_ORDER`` are applied.
 
         Parameters
         ----------
@@ -163,26 +187,25 @@ class Launcher:
         Raises
         ------
         ValueError
-            If any of the specified CUDA device IDs do not exist.
+            If any of the specified CUDA device IDs do not exist, or if
+            ``CUDA_VISIBLE_DEVICES`` is empty or lists fewer GPUs.
 
         """
-        nvidia_smi_path = shutil.which("nvidia-smi")
-        if nvidia_smi_path is None:
-            message = "nvidia-smi command not found. Please ensure NVIDIA drivers are installed."
+        device_ids = _split_device_ids(device_id_str=device_id_str)
+        if cuda_visible_devices_for_child(device_ids=device_ids) == "":
+            message = "CUDA_VISIBLE_DEVICES is empty, so this process sees no GPU."
             raise ValueError(message)
-
-        result = subprocess.run(  # noqa: S603
-            [nvidia_smi_path, "-L"],
-            check=False,
-            stdout=subprocess.PIPE,
-            encoding="utf-8",
-            shell=False,
-        )
-
-        gpu_ids = re.findall(r"GPU (\d+):", result.stdout)
-        for device_id in device_id_str.split(","):
-            if device_id not in gpu_ids:
-                message = f"CUDA device ID {device_id} does not exist."
+        try:
+            n_visible_gpus = count_visible_gpus()
+        except (AttributeError, NameError, OSError, RuntimeError, ctypes.ArgumentError) as error:
+            message = f"The CUDA driver cannot list the GPUs: {error}"
+            raise ValueError(message) from error
+        for device_id in device_ids:
+            if device_id >= n_visible_gpus:
+                message = (
+                    f"CUDA device ID {device_id} does not exist; this process sees "
+                    f"{n_visible_gpus} GPU(s)."
+                )
                 raise ValueError(message)
 
     @staticmethod
@@ -192,9 +215,6 @@ class Launcher:
         Without peer access (no NVLink, and a PCIe chipset or GPU that refuses it,
         as on GeForce cards), a multi-GPU run is much slower than with peer access.
 
-        The binary runs with ``CUDA_VISIBLE_DEVICES`` set to ``device_id_str``. The
-        CUDA ordinals of this process name the same GPUs only when this process has
-        no ``CUDA_VISIBLE_DEVICES`` of its own, so the check is skipped otherwise.
         It never raises: if the CUDA driver cannot answer, it logs at debug level.
 
         Parameters
@@ -203,13 +223,8 @@ class Launcher:
             The CUDA device ID(s) in string format, for example "0,1,2,3".
 
         """
-        device_ids = [int(device_id) for device_id in device_id_str.split(",")]
+        device_ids = _split_device_ids(device_id_str=device_id_str)
         if len(device_ids) < 2:
-            return
-        if "CUDA_VISIBLE_DEVICES" in os.environ:
-            logger.debug(
-                "Peer access check skipped: CUDA_VISIBLE_DEVICES is set in this process.",
-            )
             return
         try:
             pairs = find_consecutive_gpus_without_peer_access(device_ids)
@@ -289,6 +304,10 @@ class Launcher:
             logger.error(message)
             raise NotImplementedError(message)
 
+        visible_devices = cuda_visible_devices_for_child(
+            device_ids=_split_device_ids(device_id_str=self.cuda_device_id),
+        )
+
         os.chdir(simulation_dir)
         try:
             command = [
@@ -300,7 +319,7 @@ class Launcher:
             with (simulation_dir / "fw2_execution.log").open("w", encoding="utf-8") as file:
                 time_start = time()
                 env = os.environ.copy()
-                env["CUDA_VISIBLE_DEVICES"] = self.cuda_device_id
+                env["CUDA_VISIBLE_DEVICES"] = visible_devices
                 if self.save_gpu_memory:
                     env["ICMAT_MEMORY_SAVING"] = "1"
                 else:

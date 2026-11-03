@@ -12,7 +12,8 @@ based on: https://gist.github.com/f0k/63a664160d016a491b2cbea15913d549?permalink
 import ctypes
 import json
 import logging
-from collections.abc import Callable
+import os
+from collections.abc import Callable, Mapping
 from functools import lru_cache, wraps
 from typing import Any
 
@@ -214,8 +215,124 @@ def cuCtxDetach(ctx):  # noqa: ANN001, ANN201, D103, N802
 
 
 @cuda_api_call
+def cuCtxDestroy(ctx):  # noqa: ANN001, ANN201, D103, N802
+    try:
+        result = cuda.cuCtxDestroy_v2(ctx)
+    except AttributeError:
+        result = cuda.cuCtxDestroy(ctx)
+    return result
+
+
+@cuda_api_call
 def cuDeviceCanAccessPeer(can_access, dev, peer_dev):  # noqa: ANN001, ANN201, D103, N802
     return cuda.cuDeviceCanAccessPeer(can_access, dev, peer_dev)
+
+
+def count_visible_gpus() -> int:
+    """Return the number of GPUs this process can use.
+
+    Returns
+    -------
+    int
+        The CUDA device count, after ``CUDA_VISIBLE_DEVICES`` is applied.
+
+    """
+    cuInit(0)
+    count = ctypes.c_int()
+    cuDeviceGetCount(ctypes.byref(count))
+    return count.value
+
+
+def free_memory_bytes_of_cuda_ordinal(*, ordinal: int) -> int:
+    """Return the free memory of one GPU in bytes.
+
+    A short-lived CUDA context is opened on the GPU, so the value is lower than an
+    idle GPU shows by the size of one context.
+
+    Parameters
+    ----------
+    ordinal : int
+        CUDA device ordinal as this process sees it.
+
+    Returns
+    -------
+    int
+        The free bytes.
+
+    Raises
+    ------
+    ValueError
+        If this process sees no GPU with this ordinal.
+    RuntimeError
+        If the CUDA driver cannot open a context or read the memory.
+
+    """
+    n_visible_gpus = count_visible_gpus()
+    if not 0 <= ordinal < n_visible_gpus:
+        message = f"GPU {ordinal} is not visible; this process sees {n_visible_gpus} GPU(s)."
+        raise ValueError(message)
+    device = ctypes.c_int()
+    cuDeviceGet(ctypes.byref(device), ordinal)
+    context = ctypes.c_void_p()
+    if cuCtxCreate(ctypes.byref(context), 0, device) != CUDA_SUCCESS:
+        message = f"Cannot open a CUDA context on GPU {ordinal}."
+        raise RuntimeError(message)
+    try:
+        free_bytes = ctypes.c_size_t()
+        total_bytes = ctypes.c_size_t()
+        if cuMemGetInfo(ctypes.byref(free_bytes), ctypes.byref(total_bytes)) != CUDA_SUCCESS:
+            message = f"Cannot read the free memory of GPU {ordinal}."
+            raise RuntimeError(message)
+    finally:
+        cuCtxDestroy(context)
+    return free_bytes.value
+
+
+def cuda_visible_devices_for_child(
+    *,
+    device_ids: list[int],
+    environ: Mapping[str, str] | None = None,
+) -> str:
+    """Return the ``CUDA_VISIBLE_DEVICES`` value that gives a child process the same GPUs.
+
+    The ids count within the ``CUDA_VISIBLE_DEVICES`` list of this process, as in CuPy
+    and PyTorch. Without that variable, they count all GPUs. The child inherits
+    ``CUDA_DEVICE_ORDER``, so it numbers the GPUs as this process does.
+
+    Parameters
+    ----------
+    device_ids : list[int]
+        CUDA device ordinals as this process sees them.
+    environ : Mapping[str, str] | None
+        The environment to read. Defaults to ``os.environ``.
+
+    Returns
+    -------
+    str
+        For example "2,3" for ``device_ids=[0, 1]`` and ``CUDA_VISIBLE_DEVICES=2,3``.
+        UUID and MIG entries are passed on as they are written. An empty string
+        when ``CUDA_VISIBLE_DEVICES`` lists no GPU, so the child sees none either.
+
+    Raises
+    ------
+    ValueError
+        If ``CUDA_VISIBLE_DEVICES`` lists GPUs but fewer than ``device_ids`` need.
+
+    """
+    environ = os.environ if environ is None else environ
+    if "CUDA_VISIBLE_DEVICES" not in environ:
+        return ",".join(str(device_id) for device_id in device_ids)
+    visible_text = environ["CUDA_VISIBLE_DEVICES"]
+    visible_entries = [entry.strip() for entry in visible_text.split(",") if entry.strip()]
+    if not visible_entries:
+        return ""
+    if max(device_ids) >= len(visible_entries):
+        message = (
+            f"cuda_device_id {device_ids} counts within CUDA_VISIBLE_DEVICES={visible_text}, "
+            f"which lists {len(visible_entries)} GPU(s); use ids 0 to {len(visible_entries) - 1}."
+        )
+        raise ValueError(message)
+    return ",".join(visible_entries[device_id] for device_id in device_ids)
 
 
 def find_consecutive_gpus_without_peer_access(ordinals: list[int]) -> list[tuple[int, int]]:

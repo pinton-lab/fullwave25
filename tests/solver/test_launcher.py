@@ -1,5 +1,4 @@
 import math
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -9,7 +8,9 @@ import pytest
 from fullwave.solver.launcher import Launcher, SimulationError
 
 
-def dummy_run_success(command, stdout, check, shell, stderr, text, env):
+def dummy_run_success(command, stdout, check, shell, stderr, text, env, *, captured_envs=None):
+    if captured_envs is not None:
+        captured_envs.append(env)
     # Create the expected output file "genout.dat" in the current directory.
     with Path("genout.dat").open("w", encoding="utf-8") as f:
         f.write("dummy")
@@ -19,17 +20,21 @@ def dummy_run_failure(command, stdout, check, shell):
     raise subprocess.CalledProcessError(returncode=1, cmd=command)
 
 
-def selective_run_wrapper(monkeypatch, *, success=True, gpu_ids=None):
-    if gpu_ids is None:
-        gpu_ids = [0]
-    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/nvidia-smi")
+@pytest.fixture(autouse=True)
+def _no_visible_devices_variable(monkeypatch):
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+
+
+def fake_visible_gpus(monkeypatch, *, n_gpus):
+    monkeypatch.setattr("fullwave.solver.launcher.count_visible_gpus", lambda: n_gpus)
+
+
+def selective_run_wrapper(monkeypatch, *, success=True, gpu_ids=None, captured_envs=None):
+    fake_visible_gpus(monkeypatch, n_gpus=1 if gpu_ids is None else len(gpu_ids))
 
     def selective_run(args, *p, **kw):
-        if "/usr/bin/nvidia-smi" in args:
-            # Behavior for special locations
-            return dummy_nvidia_smi(args, monkeypatch, gpu_ids, *p, **kw)
         if success:
-            return dummy_run_success(args, *p, **kw)
+            return dummy_run_success(args, *p, **kw, captured_envs=captured_envs)
         return dummy_run_failure(args, *p, **kw)
 
     return selective_run
@@ -48,24 +53,6 @@ def get_dummy_bin(tmp_path):
     sim_bin = sim_dir / dummy_bin.name
     sim_bin.write_text("")
     return dummy_bin, sim_dir
-
-
-def dummy_nvidia_smi(args, monkeypatch, gpu_ids=None, *p, **kw):
-    if gpu_ids is None:
-        gpu_ids = [0]
-
-    def mock_nvidia_smi(command, check, stdout, encoding, shell):
-        class MockResult:
-            stdout = "\n".join(
-                [
-                    f"GPU {i}: NVIDIA GPU (UUID: GPU-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX)"
-                    for i in gpu_ids
-                ],
-            )
-
-        return MockResult()
-
-    return mock_nvidia_smi(args, *p, **kw)
 
 
 def test_run_success(tmp_path, monkeypatch):
@@ -261,16 +248,7 @@ def test_launcher_init_defaults(tmp_path, monkeypatch):
     # Create a dummy binary for testing
     dummy_bin = tmp_path / "dummy_bin"
     dummy_bin.write_text("")
-
-    # Mock nvidia-smi
-    def mock_nvidia_smi(command, check, stdout, encoding, shell):
-        class MockResult:
-            stdout = "GPU 0: NVIDIA GPU\n"
-
-        return MockResult()
-
-    monkeypatch.setattr(subprocess, "run", mock_nvidia_smi)
-    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/nvidia-smi")
+    fake_visible_gpus(monkeypatch, n_gpus=1)
 
     launcher = Launcher(path_fullwave_simulation_bin=dummy_bin)
     assert launcher.is_3d is False
@@ -280,16 +258,7 @@ def test_launcher_init_defaults(tmp_path, monkeypatch):
 
 def test_run_cpu_not_implemented(tmp_path, monkeypatch):
     dummy_bin, sim_dir = get_dummy_bin(tmp_path)
-
-    # Mock nvidia-smi
-    def mock_nvidia_smi(command, check, stdout, encoding, shell):
-        class MockResult:
-            stdout = "GPU 0: NVIDIA GPU\n"
-
-        return MockResult()
-
-    monkeypatch.setattr(subprocess, "run", mock_nvidia_smi)
-    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/nvidia-smi")
+    fake_visible_gpus(monkeypatch, n_gpus=1)
 
     launcher = Launcher(path_fullwave_simulation_bin=dummy_bin, use_gpu=False)
 
@@ -352,7 +321,6 @@ def _replace_peer_check(monkeypatch, result):
         "fullwave.solver.launcher.find_consecutive_gpus_without_peer_access",
         fake_check,
     )
-    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
     return asked
 
 
@@ -380,13 +348,13 @@ def test_warn_if_gpus_lack_peer_access_skips_one_gpu(monkeypatch, caplog):
     assert caplog.text == ""
 
 
-def test_warn_if_gpus_lack_peer_access_skips_when_visible_devices_is_set(monkeypatch, caplog):
+def test_warn_if_gpus_lack_peer_access_checks_the_visible_ordinals(monkeypatch, caplog):
     asked = _replace_peer_check(monkeypatch, [(0, 1)])
-    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "1,0")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "3,2")
     with caplog.at_level("WARNING"):
         Launcher._warn_if_gpus_lack_peer_access("0,1")
-    assert asked == []
-    assert caplog.text == ""
+    assert asked == [[0, 1]]
+    assert "GPU 0 <-> GPU 1" in caplog.text
 
 
 def test_warn_if_gpus_lack_peer_access_never_raises(monkeypatch, caplog):
@@ -394,3 +362,88 @@ def test_warn_if_gpus_lack_peer_access_never_raises(monkeypatch, caplog):
     with caplog.at_level("WARNING"):
         Launcher._warn_if_gpus_lack_peer_access("0,1")
     assert caplog.text == ""
+
+
+def _run_and_capture_env(
+    tmp_path,
+    monkeypatch,
+    *,
+    cuda_device_id,
+    n_visible_gpus,
+    verify_gpu=True,
+):
+    dummy_bin, sim_dir = get_dummy_bin(tmp_path)
+    captured_envs = []
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        selective_run_wrapper(
+            monkeypatch=monkeypatch,
+            gpu_ids=list(range(n_visible_gpus)),
+            captured_envs=captured_envs,
+        ),
+    )
+    monkeypatch.setattr("fullwave.solver.launcher.load_dat_data", lambda _: np.array([42]))
+    monkeypatch.setattr(
+        "fullwave.solver.launcher.find_consecutive_gpus_without_peer_access",
+        lambda _ordinals: [],
+    )
+    launcher = Launcher(
+        path_fullwave_simulation_bin=dummy_bin,
+        cuda_device_id=cuda_device_id,
+        verify_gpu=verify_gpu,
+    )
+    launcher.run(sim_dir)
+    return captured_envs[0]
+
+
+def test_run_without_gpu_check_passes_an_empty_visible_devices_variable_on(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+    env = _run_and_capture_env(
+        tmp_path,
+        monkeypatch,
+        cuda_device_id=None,
+        n_visible_gpus=0,
+        verify_gpu=False,
+    )
+    assert env["CUDA_VISIBLE_DEVICES"] == ""
+
+
+def test_run_passes_the_ids_unchanged_without_visible_devices(tmp_path, monkeypatch):
+    env = _run_and_capture_env(tmp_path, monkeypatch, cuda_device_id=[2, 3], n_visible_gpus=4)
+    assert env["CUDA_VISIBLE_DEVICES"] == "2,3"
+
+
+def test_run_maps_the_ids_into_the_visible_devices(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2,3")
+    env = _run_and_capture_env(tmp_path, monkeypatch, cuda_device_id=[0, 1], n_visible_gpus=2)
+    assert env["CUDA_VISIBLE_DEVICES"] == "2,3"
+
+
+def test_run_uses_the_first_visible_device_by_default(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2,3")
+    env = _run_and_capture_env(tmp_path, monkeypatch, cuda_device_id=None, n_visible_gpus=2)
+    assert env["CUDA_VISIBLE_DEVICES"] == "2"
+
+
+def test_configure_cuda_device_id_rejects_an_id_beyond_the_visible_devices(monkeypatch):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "2,3")
+    fake_visible_gpus(monkeypatch, n_gpus=2)
+    with pytest.raises(ValueError, match=r"\[2\] counts within CUDA_VISIBLE_DEVICES=2,3"):
+        Launcher._configure_cuda_device_id([2])
+
+
+def test_configure_cuda_device_id_rejects_an_empty_visible_devices_variable(monkeypatch):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+    fake_visible_gpus(monkeypatch, n_gpus=0)
+    with pytest.raises(ValueError, match="CUDA_VISIBLE_DEVICES is empty"):
+        Launcher._configure_cuda_device_id(None)
+
+
+def test_configure_cuda_device_id_rejects_an_id_the_driver_does_not_list(monkeypatch):
+    fake_visible_gpus(monkeypatch, n_gpus=2)
+    with pytest.raises(ValueError, match="CUDA device ID 2 does not exist; this process sees 2"):
+        Launcher._configure_cuda_device_id(2)
