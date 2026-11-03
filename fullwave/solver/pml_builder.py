@@ -696,6 +696,11 @@ class PMLBuilder:
                 cp.get_default_memory_pool().free_all_blocks()
                 return name, result_np
 
+        # Cross-device copies are not ordered after work on the source device.
+        source_devices = {arr.device.id for _, arr in named_arrays if isinstance(arr, cp.ndarray)}
+        for source_device in source_devices:
+            cp.cuda.Device(source_device).synchronize()
+
         items = [(name, arr, i % n_gpus) for i, (name, arr) in enumerate(named_arrays)]
 
         results = {}

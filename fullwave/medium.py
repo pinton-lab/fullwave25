@@ -112,8 +112,12 @@ def _upload_arrays_multi_gpu(
         with cp.cuda.Device(device_id):
             gpu_arr = cp.asarray(arr_np, dtype=dtype)
             if device_id != target_device:
+                # A cross-device copy is not ordered with the work of either device: the
+                # upload must finish before the copy, and the copy before gpu_arr is freed.
+                cp.cuda.Device(device_id).synchronize()
                 with cp.cuda.Device(target_device):
                     result = cp.array(gpu_arr)
+                    cp.cuda.Device(target_device).synchronize()
                 del gpu_arr
                 cp.get_default_memory_pool().free_all_blocks()
                 return name, result
