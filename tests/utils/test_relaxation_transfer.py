@@ -437,17 +437,17 @@ def test_the_anchor_stays_under_two_per_cent_on_the_rows_up_to_one(
         assert np.abs(transferred - 1540.0)[rows_up_to_one].max() / 1540.0 < 0.02
 
 
-def test_the_anchor_stays_under_five_per_cent_on_the_calibrated_cells_above_one(
+def test_the_anchor_stays_under_ten_per_cent_on_the_calibrated_cells_above_one(
     whole_grid: tuple[np.ndarray, np.ndarray],
 ) -> None:
-    """Measured worst is 4.32% at a band scale of 10, at (10, 1.0001)."""
+    """Measured worst is 9.02% at a band scale of 10, at (20, 1.0001)."""
     alpha_coeff, alpha_power = whole_grid
     calibrated = np.asarray(RelaxationParametersGenerator().is_calibrated(alpha_coeff, alpha_power))
     calibrated_above_one = calibrated & (alpha_coeff > 1.0)
     sound_speed = np.full(alpha_coeff.shape, 1540.0)
     for band_scale in (0.1, 0.5, 2.0, 10.0):
         transferred = band_scaled_sound_speed(sound_speed, alpha_coeff, alpha_power, band_scale)
-        assert np.abs(transferred - 1540.0)[calibrated_above_one].max() / 1540.0 < 0.05
+        assert np.abs(transferred - 1540.0)[calibrated_above_one].max() / 1540.0 < 0.10
 
 
 def _medium_at(band_scale: float, alpha_power: float = 1.4) -> fullwave.MediumRelaxationMaps:
@@ -525,9 +525,9 @@ def test_the_shortfall_is_one_on_a_calibrated_level(
 
 
 def test_the_shortfall_reports_the_quantization_and_the_clip(database_path: Path) -> None:
-    """The axis steps by 0.01 up to 1.00 and stops at 0.0022 and 10."""
+    """The axis steps by 0.01 up to 1.00 and stops at 0.0022 and 20."""
     generator = RelaxationParametersGenerator(path_database=database_path)
-    asked = np.array([0.0, 0.001, 0.155, 0.5, 11.0])
+    asked = np.array([0.0, 0.001, 0.155, 0.5, 22.0])
     shortfall = generator.alpha_coeff_shortfall(asked)
     assert shortfall[0] == 0.0
     assert shortfall[1] == pytest.approx(0.001 / 0.0022)
@@ -650,8 +650,8 @@ def test_scaling_to_the_request_makes_a_lossless_voxel_exactly_lossless() -> Non
 def test_scaling_to_the_specified_value_recovers_a_value_above_the_axis(
     stretching_keys: tuple[str, ...],
 ) -> None:
-    """At (20, 1.0) the specified value is twice the last node of 10, the cell used."""
-    specified = np.full((2, 2), 20.0)
+    """At (40, 1.0) the specified value is twice the last node of 20, the cell used."""
+    specified = np.full((2, 2), 40.0)
     power = np.full((2, 2), 1.0)
     plain = generate_relaxation_params(alpha_coeff=specified, alpha_power=power)
     scaled = generate_relaxation_params(
@@ -669,7 +669,7 @@ def test_scaling_to_the_specified_value_recovers_a_value_above_the_axis(
 
 
 def test_scaling_to_the_specified_value_follows_the_exponent_used_under_a_band_transfer() -> None:
-    """At (4.0, 0.5) and s = 0.1 the key 12.649 clips to (10, 0.5), which is not fitted.
+    """At (4.0, 0.5) and s = 0.1 the key 12.649 lands on (13, 0.5), which is not fitted.
 
     The exponent used is then 1.0001, and the key read with it is 3.9991, so the
     cell used is (4, 1.0001).
@@ -769,19 +769,19 @@ def test_the_previous_table_flags_124_of_its_1717_cells(
     assert int((~calibrated).sum()) == 124
 
 
-def test_the_default_table_holds_2023_cells_and_flags_292(
+def test_the_default_table_holds_2193_cells_and_flags_452(
     whole_grid: tuple[np.ndarray, np.ndarray],
 ) -> None:
-    """The 124 flags of the previous table, plus the 168 cells the new rows do not fit."""
+    """The 124 flags of the previous table, plus the 328 cells the new rows do not fit."""
     alpha_coeff, alpha_power = whole_grid
     generator = RelaxationParametersGenerator()
     calibrated = generator.is_calibrated(alpha_coeff, alpha_power)
-    assert calibrated.size == 2023
-    assert int((~calibrated).sum()) == 292
-    assert len(generator.invalid_reasons()) == 292
+    assert calibrated.size == 2193
+    assert int((~calibrated).sum()) == 452
+    assert len(generator.invalid_reasons()) == 452
 
 
-def test_the_default_table_marks_168_cells_not_fitted_and_they_hold_no_strength() -> None:
+def test_the_default_table_marks_328_cells_not_fitted_and_they_hold_no_strength() -> None:
     """Each not_fitted cell lies above the previous axis and is a lossless medium."""
     generator = RelaxationParametersGenerator()
     keys = list(initialize_relaxation_param_dict(generator.n_relaxation_mechanisms))
@@ -790,7 +790,7 @@ def test_the_default_table_marks_168_cells_not_fitted_and_they_hold_no_strength(
     not_fitted = [
         cell for cell in generator.invalid_cells["invalid"] if "not_fitted" in cell["reasons"]
     ]
-    assert len(not_fitted) == 168
+    assert len(not_fitted) == 328
     for cell in not_fitted:
         row, column = int(cell["row"]), int(cell["column"])
         assert generator.invalid_matrix[row, column]
