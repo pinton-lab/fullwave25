@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from types import ModuleType
 
     from numpy.typing import NDArray
+from fullwave.solver.cuda_utils import peer_access_is_allowed_for_visible_gpus
 from fullwave.solver.utils import initialize_relaxation_param_dict
 from fullwave.utils import check_functions, plot_utils
 
@@ -647,6 +648,7 @@ class PMLBuilder:
         # Strategy 1: Multi-GPU parallel
         if n_gpus > 1:
             n_workers = min(n_gpus, len(named_arrays))
+            peer_access_allowed = peer_access_is_allowed_for_visible_gpus(n_devices=n_workers)
             try:
                 logger.info(
                     "Extending %d medium arrays using %d GPUs (of %d available).",
@@ -654,6 +656,8 @@ class PMLBuilder:
                     n_workers,
                     n_gpus,
                 )
+                if not peer_access_allowed:
+                    named_arrays = self._move_named_arrays_to_cpu(named_arrays, attr_names)
                 return self._extend_arrays_multi_gpu(named_arrays, n_gpus)
             except Exception:
                 logger.warning(

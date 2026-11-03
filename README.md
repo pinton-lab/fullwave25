@@ -236,7 +236,7 @@ image = beamformer.beamform(np.stack(traces), tx_arrival_s=np.stack(arrival_s)) 
 - **Axis order.** The grid axes are (x, y, z) = (depth, lateral, elevation). The solver splits the domain along depth across GPUs, so depth comes first.
 - **Index order.** Source and sensor coordinates are in C (row-major) order inside the solver, whatever order you use. Check this when you build a source by hand.
 - **GPU memory.** A 3D simulation needs much GPU memory. Reduce the grid or use more GPUs if it does not fit; `nvidia-smi` or `nvtop` shows the use. `Solver.run` estimates the memory before the run (`gpu_memory_estimate=True`, the default).
-- **Multi-GPU.** 2D and 3D runs can use multiple GPUs (`cuda_device_id`); the run time scales linearly with the number of GPUs. As in CuPy and PyTorch, `cuda_device_id` counts within `CUDA_VISIBLE_DEVICES` when it is set: with `CUDA_VISIBLE_DEVICES=2,3`, `cuda_device_id=[0, 1]` runs on GPUs 2 and 3.
+- **Multi-GPU.** 2D and 3D runs can use multiple GPUs (`cuda_device_id`); the run time scales linearly with the number of GPUs. As in CuPy and PyTorch, `cuda_device_id` counts within `CUDA_VISIBLE_DEVICES` when it is set: with `CUDA_VISIBLE_DEVICES=2,3`, `cuda_device_id=[0, 1]` runs on GPUs 2 and 3. The environment variable `FULLWAVE_P2P` (`auto`, `on` or `off`; default `auto`) sets whether the GPUs access each other's memory directly; `auto` turns it off when the GPUs are attached to different CPU sockets.
 - **3D.** Start with the 2D version of a simulation. The 3D code is similar, runs longer, and some plot functions are 2D only.
 
 ## Citation

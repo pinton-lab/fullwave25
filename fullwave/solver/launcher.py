@@ -12,9 +12,15 @@ import numpy as np
 from numpy.typing import NDArray
 
 from .cuda_utils import (
+    PEER_ACCESS_VARIABLE,
+    binary_reads_peer_access_switch,
     count_visible_gpus,
     cuda_visible_devices_for_child,
     find_consecutive_gpus_without_peer_access,
+    first_consecutive_gpus_on_different_nodes,
+    numa_nodes_of_cuda_ordinals,
+    peer_access_is_allowed,
+    read_peer_access_mode,
 )
 from .utils import load_dat_data
 
@@ -216,6 +222,8 @@ class Launcher:
         as on GeForce cards), a multi-GPU run is much slower than with peer access.
 
         It never raises: if the CUDA driver cannot answer, it logs at debug level.
+        It is also skipped when ``FULLWAVE_P2P`` is ``off`` or invalid; ``Launcher.run``
+        reports an invalid value.
 
         Parameters
         ----------
@@ -223,6 +231,11 @@ class Launcher:
             The CUDA device ID(s) in string format, for example "0,1,2,3".
 
         """
+        try:
+            if read_peer_access_mode() == "off":
+                return
+        except ValueError:
+            return
         device_ids = _split_device_ids(device_id_str=device_id_str)
         if len(device_ids) < 2:
             return
@@ -240,6 +253,86 @@ class Launcher:
             "run whether fewer GPUs give a faster simulation.",
             pair_text,
         )
+
+    @staticmethod
+    def _resolve_peer_access(*, device_id_str: str) -> str:
+        """Decide whether the GPUs of a run may access each other's memory directly.
+
+        The mode comes from the ``FULLWAVE_P2P`` environment variable (``auto``,
+        ``on`` or ``off``; default ``auto``). With ``auto``, peer access is off when
+        the GPUs are attached to different CPU sockets. GPUs whose NUMA node is
+        unknown are ignored.
+
+        Parameters
+        ----------
+        device_id_str : str
+            The CUDA device ID(s) in string format, for example "0,1,2,3".
+
+        Returns
+        -------
+        str
+            ``"on"`` or ``"off"``.
+
+        Raises
+        ------
+        ValueError
+            If ``FULLWAVE_P2P`` holds an invalid value.
+
+        """
+        mode = read_peer_access_mode()
+        if mode == "off":
+            logger.info("Peer access between GPUs is off (%s=off).", PEER_ACCESS_VARIABLE)
+            return "off"
+        device_ids = _split_device_ids(device_id_str=device_id_str)
+        if len(device_ids) < 2:
+            return "on"
+
+        nodes = numa_nodes_of_cuda_ordinals(ordinals=device_ids)
+        resolved = "on" if peer_access_is_allowed(mode=mode, numa_nodes=nodes) else "off"
+        pair = first_consecutive_gpus_on_different_nodes(device_ids=device_ids, numa_nodes=nodes)
+        if pair is None:
+            logger.debug("Peer access %s for GPUs %s (NUMA nodes %s).", resolved, device_ids, nodes)
+            return resolved
+
+        first, second = pair
+        pair_text = (
+            f"GPU {first} and GPU {second} are attached to different CPU sockets "
+            f"(NUMA nodes {nodes[first]} and {nodes[second]})"
+        )
+        if mode == "auto":
+            logger.info(
+                "%s, so peer access between GPUs is off for this run. Set %s=on to use it.",
+                pair_text,
+                PEER_ACCESS_VARIABLE,
+            )
+        else:
+            logger.warning(
+                "%s. Peer-to-peer copies between CPU sockets are unreliable on some "
+                "platforms. Set %s=off or auto if a multi-GPU run crashes the host or "
+                "differs from a 1-GPU run.",
+                pair_text,
+                PEER_ACCESS_VARIABLE,
+            )
+        return resolved
+
+    def _warn_if_binary_ignores_peer_access_switch(self, *, peer_access: str) -> None:
+        """Warn when peer access is off for a multi-GPU run but the binary cannot honor it.
+
+        Parameters
+        ----------
+        peer_access : str
+            The resolved mode, ``"on"`` or ``"off"``.
+
+        """
+        if peer_access != "off" or "," not in self.cuda_device_id:
+            return
+        path_binary = str(self._path_fullwave_simulation_bin.resolve())
+        if not binary_reads_peer_access_switch(path=path_binary):
+            logger.warning(
+                "This solver binary does not read %s and uses peer access when the driver "
+                "allows it. Use a newer solver binary, or GPUs attached to one CPU socket.",
+                PEER_ACCESS_VARIABLE,
+            )
 
     @staticmethod
     def _configure_cuda_device_id(
@@ -307,6 +400,8 @@ class Launcher:
         visible_devices = cuda_visible_devices_for_child(
             device_ids=_split_device_ids(device_id_str=self.cuda_device_id),
         )
+        peer_access = self._resolve_peer_access(device_id_str=self.cuda_device_id)
+        self._warn_if_binary_ignores_peer_access_switch(peer_access=peer_access)
 
         os.chdir(simulation_dir)
         try:
@@ -320,6 +415,7 @@ class Launcher:
                 time_start = time()
                 env = os.environ.copy()
                 env["CUDA_VISIBLE_DEVICES"] = visible_devices
+                env[PEER_ACCESS_VARIABLE] = peer_access
                 if self.save_gpu_memory:
                     env["ICMAT_MEMORY_SAVING"] = "1"
                 else:

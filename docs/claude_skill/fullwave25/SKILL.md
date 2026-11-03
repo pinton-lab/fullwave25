@@ -213,6 +213,7 @@ The presets are `BackgroundDomain` (one tissue everywhere), `AbdominalWallDomain
 - As in CuPy and PyTorch, the IDs count within `CUDA_VISIBLE_DEVICES` when it is set: with `CUDA_VISIBLE_DEVICES=2,3`, `cuda_device_id=[0, 1]` runs on GPUs 2 and 3, and `cuda_device_id=2` is an error.
 - The solver divides the depth rows of the domain equally among the GPUs (to within one row) and exchanges 8 rows at each boundary between neighbouring GPUs. The memory per GPU therefore falls with the number of GPUs, and the run time scales linearly with the number of GPUs.
 - Every GPU holds the whole source signal matrix, so each source point and each time step of the signal costs memory on every GPU.
+- The environment variable `FULLWAVE_P2P` (`auto`, `on` or `off`; default `auto`) sets whether the GPUs access each other's memory directly. `auto` turns it off when the GPUs of a run are attached to different CPU sockets; the log then says so.
 
 ### Use the GPU memory estimate
 
