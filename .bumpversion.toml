@@ -1,5 +1,5 @@
 [tool.bumpversion]
-current_version = "1.5.0-dev1"
+current_version = "1.5.0-alpha1"
 parse = """(?x)
     (?P<major>0|[1-9]\\d*)\\.
     (?P<minor>0|[1-9]\\d*)\\.
@@ -55,5 +55,5 @@ replace = 'fullwave25[mach]=={new_version}'
 ignore_missing_version = true
 
 [tool.bumpversion.parts.pre_l]
-values = ["dev", "rc", "final"]
+values = ["dev", "alpha", "rc", "final"]
 optional_value = "final"

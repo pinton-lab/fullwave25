@@ -14,6 +14,7 @@ import numexpr as ne
 import numpy as np
 
 from fullwave import Grid
+from fullwave.solver.cuda_utils import peer_access_is_allowed_for_visible_gpus
 from fullwave.solver.shipped_database import ShippedDatabase
 from fullwave.solver.utils import initialize_relaxation_param_dict
 from fullwave.utils import check_functions, plot_utils
@@ -112,8 +113,12 @@ def _upload_arrays_multi_gpu(
         with cp.cuda.Device(device_id):
             gpu_arr = cp.asarray(arr_np, dtype=dtype)
             if device_id != target_device:
+                # A cross-device copy is not ordered with the work of either device: the
+                # upload must finish before the copy, and the copy before gpu_arr is freed.
+                cp.cuda.Device(device_id).synchronize()
                 with cp.cuda.Device(target_device):
                     result = cp.array(gpu_arr)
+                    cp.cuda.Device(target_device).synchronize()
                 del gpu_arr
                 cp.get_default_memory_pool().free_all_blocks()
                 return name, result
@@ -151,7 +156,9 @@ def _upload_or_convert_arrays(
         import cupy as cp  # noqa: PLC0415
 
         n_gpus = cp.cuda.runtime.getDeviceCount()
-        if n_gpus > 1:
+        if n_gpus > 1 and peer_access_is_allowed_for_visible_gpus(
+            n_devices=min(n_gpus, len(named_arrays)),
+        ):
             np_arrays = [(name, np.atleast_2d(np.asarray(arr))) for name, arr in named_arrays]
             return _upload_arrays_multi_gpu(np_arrays, dtype)
 

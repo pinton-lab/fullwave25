@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import ctypes
 import gc
 import logging
-import shutil
-import subprocess
 from typing import TYPE_CHECKING
+
+from fullwave.solver import cuda_utils
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -43,45 +44,35 @@ def members_that_fit(*, free_bytes: int, shared_bytes: int, per_member_bytes: in
 
 
 def free_gpu_memory_bytes(device_ids: Sequence[str]) -> dict[str, int] | None:
-    """Return the free memory of each GPU in bytes, as nvidia-smi reports it.
+    """Return the free memory of each GPU in bytes, as the CUDA driver reports it.
 
     Parameters
     ----------
     device_ids : Sequence[str]
-        The GPU indices, as nvidia-smi counts them.
+        CUDA device ordinals as this process sees them, the same ids as ``cuda_device_id``.
 
     Returns
     -------
     dict[str, int] | None
-        The free bytes of each GPU, or None when nvidia-smi cannot be run or does not
-        report every GPU.
+        The free bytes of each GPU, or None when the CUDA driver cannot report every GPU.
 
     """
     wanted = [device.strip() for device in device_ids]
-    nvidia_smi_path = shutil.which("nvidia-smi")
-    if nvidia_smi_path is None:
-        return None
     try:
-        found = subprocess.run(  # noqa: S603
-            [nvidia_smi_path, "--query-gpu=index,memory.free", "--format=csv,noheader,nounits"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=30,
-        ).stdout
-    except (OSError, subprocess.SubprocessError):
+        return {
+            device: cuda_utils.free_memory_bytes_of_cuda_ordinal(ordinal=int(device))
+            for device in wanted
+        }
+    except (
+        AttributeError,
+        NameError,
+        OSError,
+        RuntimeError,
+        ValueError,
+        ctypes.ArgumentError,
+    ) as error:
+        logger.debug("Free GPU memory unknown: %s", error)
         return None
-    free = {}
-    for line in found.splitlines():
-        index, _, mebibytes = line.partition(",")
-        if index.strip() in wanted:
-            try:
-                free[index.strip()] = int(float(mebibytes)) * 1024**2
-            except ValueError:
-                return None
-    if set(free) != set(wanted):
-        return None
-    return free
 
 
 def release_gpu_memory_pools() -> None:
