@@ -7,6 +7,7 @@ import json
 import logging
 import time
 from pathlib import Path
+from typing import ClassVar
 
 import numba as nb
 import numexpr as ne
@@ -734,7 +735,21 @@ def generate_relaxation_params(
 
 
 class RelaxationParametersGenerator:
-    """Class for generating relaxation parameters."""
+    """Class for generating relaxation parameters.
+
+    Attributes
+    ----------
+    exponent_aliases : dict[float, float]
+        Specified exponents the table holds at a nearby node, against that node.
+        The axis holds 1.0001 for 1.0 and 1.999 for 2.0, so these two map to the
+        node without a warning.
+    cells_listed : int
+        The number of specified pairs the warning lists before it counts the rest.
+
+    """
+
+    exponent_aliases: ClassVar[dict[float, float]] = {1.0: 1.0001, 2.0: 1.999}
+    cells_listed = 10
 
     def __init__(
         self,
@@ -753,9 +768,11 @@ class RelaxationParametersGenerator:
             Path to the relaxation parameters database.
         path_invalid_cells : Path, optional
             Path to the JSON record an evaluation wrote, which names every
-            invalid cell of the table and why it is invalid. A request that lands
-            on one is warned about. Without it nothing is marked and the
-            behaviour is unchanged. It is a separate file because the table is
+            invalid cell of the table and why it is invalid. Without it, the
+            record ``<table stem>_invalid_cells.json`` beside the table is read
+            where it exists. A voxel on a ``not_fitted`` cell uses the nearest
+            fitted exponent of the same row, and a voxel on another invalid cell
+            uses that cell and warns. It is a separate file because the table is
             pinned by hash and an evaluation must not change that hash.
 
         Raises
@@ -781,10 +798,17 @@ class RelaxationParametersGenerator:
         self.alpha_max = self.alpha_list.max()
         self.power_min = self.power_list.min()
         self.power_max = self.power_list.max().round(4)
+        self._alpha_nodes = np.asarray(self.alpha_list).ravel().round(10)
+        self._power_nodes = np.asarray(self.power_list).ravel().round(10)
         self.invalid_cells = self._load_invalid_cells(
             self._record_beside_the_table(path_database, path_invalid_cells)
         )
         self._invalid_mask = self._invalid_mask_of(self.invalid_cells)
+        self._column_used = self._column_used_of(self.invalid_cells)
+        quiet = ~np.asarray(self.invalid_matrix).astype(bool)[0]
+        if self._invalid_mask is not None:
+            quiet &= ~self._invalid_mask[0].astype(bool)
+        self._lossless_exponent = float(self._power_nodes[np.argmax(quiet)])
 
         self._check_database()
 
@@ -792,11 +816,11 @@ class RelaxationParametersGenerator:
     def _record_beside_the_table(
         path_database: Path, path_invalid_cells: Path | None
     ) -> Path | None:
-        """Return the record to read, defaulting the shipped table to its own record.
+        """Return the record to read, defaulting a table to the record beside it.
 
-        The record describes one grid, so it pairs with one table. A caller that
-        names its own table and no record therefore gets no record, rather than
-        a refusal about a grid it never asked about.
+        The record describes one grid, so it pairs with one table, and it is
+        named ``<table stem>_invalid_cells.json`` in the same directory. A table
+        with no such file gets no record.
 
         Parameters
         ----------
@@ -813,9 +837,8 @@ class RelaxationParametersGenerator:
         """
         if path_invalid_cells is not None:
             return path_invalid_cells
-        if Path(path_database) == ShippedDatabase.table:
-            return ShippedDatabase.invalid_cells
-        return None
+        beside = Path(path_database).with_name(f"{Path(path_database).stem}_invalid_cells.json")
+        return beside if beside.exists() else None
 
     def _load_invalid_cells(self, path: Path | None) -> dict | None:
         """Return the record of invalid cells an evaluation wrote, checked against the table.
@@ -884,6 +907,25 @@ class RelaxationParametersGenerator:
         for cell in record.get("invalid", []):
             mask[int(cell["row"]), int(cell["column"])] = 1
         return mask
+
+    def _column_used_of(self, record: dict | None) -> NDArray[np.int64]:
+        """Return, for each cell of the grid, the exponent column the lookup uses.
+
+        A cell the record marks ``not_fitted`` holds zeros, which are a lossless
+        medium and not a fit. The lookup uses the fitted cell of the same
+        alpha_0 row with the nearest exponent, the lower one on a tie. Every
+        other cell uses itself.
+        """
+        not_fitted = np.zeros((self.alpha_list.size, self.power_list.size), dtype=bool)
+        for cell in (record or {}).get("invalid", []):
+            if "not_fitted" in cell["reasons"]:
+                not_fitted[int(cell["row"]), int(cell["column"])] = True
+        assert not not_fitted.all(axis=1).any(), "a row of the record holds no fitted cell"
+        exponents = np.asarray(self.power_list, dtype=np.float64).ravel()
+        distance = np.round(np.abs(exponents[:, None] - exponents[None, :]), 6)
+        distance = np.where(not_fitted[:, None, :], np.inf, distance[None, :, :])
+        columns = np.arange(exponents.size)
+        return np.where(not_fitted, distance.argmin(axis=2), columns[None, :])
 
     def invalid_reasons(self) -> dict[tuple[float, float], list[str]]:
         """Return why each invalid cell is invalid, keyed by the cell.
@@ -955,6 +997,13 @@ class RelaxationParametersGenerator:
         sound-speed transfer only changes what comes back. Both default to the
         identity.
 
+        Each voxel maps to one cell: the next node up on each axis, the last
+        node past either end of an axis, and in place of a cell the record marks
+        ``not_fitted``, the nearest fitted exponent of the same alpha_0 row.
+        Under a band transfer the key is read again with the exponent used, so
+        the cell used can lie in another row. A warning names each specified
+        pair that maps to another cell. A zero coefficient does not warn.
+
         Parameters
         ----------
         alpha_coeff : NDArray[np.float64]
@@ -975,21 +1024,35 @@ class RelaxationParametersGenerator:
             A dictionary containing the computed relaxation parameters.
 
         """
-        alpha_coeff = band_scaled_alpha_coeff(alpha_coeff, alpha_power, band_scale)
-        alpha_coeff = self._snap_to_table(alpha_coeff, table_axis=self.alpha_list)
-        alpha_power = self._snap_to_table(alpha_power, table_axis=self.power_list)
-        self._warn_invalid(alpha_coeff, alpha_power)
+        key, _, exponent, row, column = self._cells_used(
+            alpha_coeff, alpha_power, band_scale=band_scale
+        )
+        xp = _array_module(key)
+        reported = xp.asarray(alpha_coeff) != 0
+        self._warn_off_the_grid(
+            specified_alpha_coeff=alpha_coeff,
+            specified_alpha_power=alpha_power,
+            key=key,
+            row=row,
+            column=column,
+            reported=reported,
+            band_scale=band_scale,
+        )
+        alpha_axis = xp.asarray(self._alpha_nodes)
+        power_axis = xp.asarray(self._power_nodes)
+        self._warn_invalid(alpha_axis[row][reported], power_axis[column][reported])
 
-        use_gpu = not isinstance(alpha_coeff, np.ndarray)
-        if use_gpu:
-            relaxation_param_dict = self._generate_gpu(alpha_coeff, alpha_power)
+        kernel_alpha_coeff = xp.where(reported, key, self.alpha_min)
+        kernel_alpha_power = xp.where(reported, exponent, self._lossless_exponent)
+        if xp is np:
+            relaxation_param_dict = self._generate_cpu(kernel_alpha_coeff, kernel_alpha_power)
         else:
-            relaxation_param_dict = self._generate_cpu(alpha_coeff, alpha_power)
+            relaxation_param_dict = self._generate_gpu(kernel_alpha_coeff, kernel_alpha_power)
 
         if scale_to_requested_alpha_coeff:
             relaxation_param_dict = scale_relaxation_attenuation(
                 relaxation_param_dict,
-                self.alpha_coeff_shortfall(alpha_coeff),
+                self.alpha_coeff_shortfall(key),
                 self.n_relaxation_mechanisms,
                 exact=True,
             )
@@ -1006,6 +1069,115 @@ class RelaxationParametersGenerator:
                 self.n_relaxation_mechanisms,
             )
         return relaxation_param_dict
+
+    def _read_exponent(self, alpha_power: NDArray[np.float64]) -> NDArray[np.float64]:
+        """Return the exponents with near-node values and ``exponent_aliases`` on a node."""
+        xp = _array_module(alpha_power)
+        alpha_power = self._snap_to_table(alpha_power, table_axis=self.power_list)
+        for specified, node in self.exponent_aliases.items():
+            if node in self._power_nodes and specified not in self._power_nodes:
+                near = xp.abs(alpha_power - specified) <= _FLOAT32_NOISE_RTOL
+                alpha_power = xp.where(near, node, alpha_power)
+        return alpha_power
+
+    def _cells_used(
+        self,
+        alpha_coeff: NDArray[np.float64],
+        alpha_power: NDArray[np.float64],
+        *,
+        band_scale: float,
+    ) -> tuple[
+        NDArray[np.float64],
+        NDArray[np.float64],
+        NDArray[np.float64],
+        NDArray[np.int64],
+        NDArray[np.int64],
+    ]:
+        """Return the lookup key, the exponent of the key, the exponent, the row and the column.
+
+        A voxel that lands on a ``not_fitted`` cell moves to the column
+        ``_column_used_of`` gives. Under a band transfer the key is then read
+        again with the exponent used, until no voxel moves. A cycle of moves
+        raises ``ValueError``.
+        """
+        xp = _array_module(alpha_coeff)
+        alpha_axis = xp.asarray(self._alpha_nodes)
+        power_axis = xp.asarray(self._power_nodes)
+        column_used = xp.asarray(self._column_used)
+        exponent = self._read_exponent(alpha_power)
+        exponent_of_the_key = alpha_power
+        for _ in range(self.power_list.size):
+            key = band_scaled_alpha_coeff(alpha_coeff, exponent_of_the_key, band_scale)
+            key = self._snap_to_table(key, table_axis=self.alpha_list)
+            row = self._axis_index(key, alpha_axis, self.alpha_min, self.alpha_max)
+            column = self._axis_index(exponent, power_axis, self.power_min, self.power_max)
+            used = column_used[row, column]
+            moved = used != column
+            if not bool(xp.any(moved)):
+                break
+            exponent = xp.where(moved, power_axis[used], exponent)
+            exponent_of_the_key = xp.where(moved, exponent, exponent_of_the_key)
+        else:
+            error_msg = (
+                "the not_fitted cells of the record send some voxels around a cycle of moves"
+            )
+            raise ValueError(error_msg)
+        return key, exponent_of_the_key, exponent, row, column
+
+    def _exponent_used(
+        self,
+        alpha_coeff: NDArray[np.float64],
+        alpha_power: NDArray[np.float64],
+        *,
+        band_scale: float,
+    ) -> NDArray[np.float64]:
+        """Return the exponent the band transfer key of each voxel is computed with."""
+        return self._cells_used(alpha_coeff, alpha_power, band_scale=band_scale)[1]
+
+    def _warn_off_the_grid(
+        self,
+        *,
+        specified_alpha_coeff: NDArray[np.float64],
+        specified_alpha_power: NDArray[np.float64],
+        key: NDArray[np.float64],
+        row: NDArray[np.int64],
+        column: NDArray[np.int64],
+        reported: NDArray[np.bool_],
+        band_scale: float,
+    ) -> None:
+        """Warn where the cell used is not the specified pair, and name both for the first pairs."""
+        xp = _array_module(key)
+        specified_alpha_coeff = xp.asarray(specified_alpha_coeff)
+        specified_alpha_power = xp.asarray(specified_alpha_power)
+        exponent_read = self._read_exponent(specified_alpha_power)
+        off = reported & (
+            (xp.asarray(self._alpha_nodes)[row] != key)
+            | (xp.asarray(self._power_nodes)[column] != exponent_read)
+        )
+        if not bool(xp.any(off)):
+            return
+        pairs = xp.unique(specified_alpha_coeff[off] + 1j * specified_alpha_power[off])
+        listed = _on_the_host(pairs[: self.cells_listed])
+        *_, listed_row, listed_column = self._cells_used(
+            listed.real.copy(), listed.imag.copy(), band_scale=band_scale
+        )
+        lines = [
+            f"({pair.real:g}, {pair.imag:g}) -> ({self._alpha_nodes[used_row]:g}, "
+            f"{self._power_nodes[used_column]:g})"
+            for pair, used_row, used_column in zip(listed, listed_row, listed_column, strict=True)
+        ]
+        if pairs.size > self.cells_listed:
+            lines.append(f"and {pairs.size - self.cells_listed} more")
+        count = int(xp.sum(off))
+        subject = "1 voxel specifies" if count == 1 else f"{count} voxels specify"
+        logger.warning(
+            "%s an (alpha_0, y) off the fitted cells of the table, so the lookup uses "
+            "another cell: the next node up on each axis, the last node past either end "
+            "of an axis, and the nearest fitted y of the same alpha_0 row in place of a "
+            "cell the table does not fit. The specified and the used (alpha_0, y) are %s.",
+            subject,
+            "; ".join(lines),
+        )
 
     def alpha_coeff_shortfall(
         self,

@@ -926,3 +926,60 @@ class TestRelaxationParametersGeneratorCupyEquivalence:
                 rtol=1e-12,
                 err_msg=f"key={key} dispatch mismatch",
             )
+
+
+class TestDefaultTableMappingCupyEquivalence:
+    """The default table maps each specified value to the same cell on both devices."""
+
+    def test_generate_and_warnings_are_identical(self, caplog):
+        generator = RelaxationParametersGenerator()
+        alpha_coeff = np.array([[2.05, 5.0, 25.0, 0.5, 1.05, 0.0022, 5.5, 0.3]])
+        alpha_power = np.array([[1.0, 0.5, 1.0, 1.0, 1.65, 1.2, 0.5, 1.999]])
+        for band_scale, scale in ((1.0, False), (1.0, True), (0.1, True)):
+            caplog.clear()
+            with caplog.at_level("WARNING"):
+                cpu_result = generator.generate(
+                    alpha_coeff,
+                    alpha_power,
+                    band_scale=band_scale,
+                    scale_to_requested_alpha_coeff=scale,
+                )
+            cpu_warnings = [record.getMessage() for record in caplog.records]
+            caplog.clear()
+            with caplog.at_level("WARNING"):
+                gpu_result = generator.generate(
+                    cp.asarray(alpha_coeff),
+                    cp.asarray(alpha_power),
+                    band_scale=band_scale,
+                    scale_to_requested_alpha_coeff=scale,
+                )
+            gpu_warnings = [record.getMessage() for record in caplog.records]
+            assert gpu_warnings == cpu_warnings
+            for key in cpu_result:
+                np.testing.assert_allclose(
+                    _to_np(gpu_result[key]), cpu_result[key], rtol=1e-12, err_msg=key
+                )
+
+    @pytest.mark.parametrize(("band_scale", "scale"), [(1.0, False), (0.1, True)])
+    def test_a_zero_coefficient_and_an_exponent_of_one_log_no_warning(
+        self, caplog, band_scale, scale
+    ):
+        generator = RelaxationParametersGenerator()
+        alpha_coeff = cp.asarray([[0.0, 0.5, 0.0]])
+        alpha_power = cp.asarray([[1.0, 1.0, 1.4]])
+        with caplog.at_level("WARNING"):
+            used = generator.generate(
+                alpha_coeff,
+                alpha_power,
+                band_scale=band_scale,
+                scale_to_requested_alpha_coeff=scale,
+            )
+        assert caplog.text == ""
+        on_the_host = generator.generate(
+            np.array([[0.0, 0.5, 0.0]]),
+            np.array([[1.0, 1.0, 1.4]]),
+            band_scale=band_scale,
+            scale_to_requested_alpha_coeff=scale,
+        )
+        for key, value in on_the_host.items():
+            np.testing.assert_allclose(_to_np(used[key]), value, rtol=1e-12, err_msg=key)
