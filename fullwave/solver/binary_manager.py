@@ -16,6 +16,7 @@ The release tag can be overridden at runtime with the environment variable
 
 import logging
 import os
+import ssl
 import stat
 import urllib.error
 import urllib.request
@@ -31,6 +32,13 @@ CACHE_DIR = Path.home() / ".cache" / "fullwave25" / "bins"
 # Pinned release tag for the solver binaries.
 # Update this only when new binaries are uploaded to a GitHub release.
 BINARY_RELEASE_TAG = "fullwave_bin_v1.8"
+
+_CERTIFICATE_HELP = (
+    "Python does not trust the certificate it received for github.com. "
+    "Networks that inspect HTTPS present their own certificate: ask IT for the "
+    "network's root certificate and point Python to a bundle that contains it with "
+    "SSL_CERT_FILE."
+)
 
 
 def _download_url(filename: str, tag: str) -> str:
@@ -76,6 +84,38 @@ def _download_binary(url: str, dest: Path) -> None:
         raise
 
 
+def _make_executable_for_owner(*, path: Path) -> None:
+    """Add the owner execute bit to *path* if it is missing, keeping other bits."""
+    if os.access(path, os.X_OK):
+        return
+    try:
+        path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    except OSError as e:
+        msg = (
+            f"The solver binary at {path} is not executable and cannot be changed.\n"
+            f"Run:  chmod +x {path}"
+        )
+        raise RuntimeError(msg) from e
+    logger.info("Cached binary %s was not executable; added the owner execute bit.", path)
+
+
+def _is_certificate_failure(*, error: BaseException) -> bool:
+    """Return True if *error* is an SSL certificate failure, possibly wrapped in URLError."""
+    if isinstance(error, ssl.SSLCertVerificationError):
+        return True
+    reason = getattr(error, "reason", None)
+    return isinstance(reason, ssl.SSLCertVerificationError)
+
+
+def _manual_placement_steps(*, url: str, cached: Path) -> str:
+    """Return the error-message bullet for downloading and placing the binary by hand."""
+    return (
+        f"  • Or download it yourself from:  {url}\n"
+        f"    and place it in the folder (create it if needed):  {cached.parent}\n"
+        f"    then run:  chmod +x {cached}\n"
+    )
+
+
 def ensure_binary(local_path: Path) -> Path:
     """Return an executable path for the solver binary.
 
@@ -111,6 +151,7 @@ def ensure_binary(local_path: Path) -> Path:
 
     # 2. Previously downloaded and cached for this exact tag.
     if cached.exists():
+        _make_executable_for_owner(path=cached)
         logger.debug("Using cached binary: %s", cached)
         return cached
 
@@ -132,16 +173,18 @@ def ensure_binary(local_path: Path) -> Path:
             "Possible fixes:\n"
             f"  • Check that release '{tag}' exists and contains '{filename}'.\n"
             f"  • Override the tag:  export FULLWAVE25_BINARY_TAG=<tag>\n"
-            f"  • Place the binary manually at:  {cached}\n"
+            f"{_manual_placement_steps(url=url, cached=cached)}"
         )
         raise RuntimeError(msg) from e
     except Exception as e:
         msg = (
             f"Failed to download binary '{filename}' from:\n  {url}\n"
             f"Error: {e}\n\n"
-            f"  • Place the binary manually at:  {cached}\n"
-            f"  • Or override the tag:  export FULLWAVE25_BINARY_TAG=<tag>\n"
+            f"  • Override the tag:  export FULLWAVE25_BINARY_TAG=<tag>\n"
+            f"{_manual_placement_steps(url=url, cached=cached)}"
         )
+        if _is_certificate_failure(error=e):
+            msg += f"  • {_CERTIFICATE_HELP}\n"
         raise RuntimeError(msg) from e
 
     return cached
