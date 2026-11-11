@@ -4,8 +4,6 @@ import copy
 import ctypes
 import logging
 import os
-import re
-import shutil
 import subprocess
 from pathlib import Path
 from time import time
@@ -13,10 +11,37 @@ from time import time
 import numpy as np
 from numpy.typing import NDArray
 
-from .cuda_utils import find_consecutive_gpus_without_peer_access
+from .cuda_utils import (
+    PEER_ACCESS_VARIABLE,
+    binary_reads_peer_access_switch,
+    count_visible_gpus,
+    cuda_visible_devices_for_child,
+    find_consecutive_gpus_without_peer_access,
+    first_consecutive_gpus_on_different_nodes,
+    numa_nodes_of_cuda_ordinals,
+    peer_access_is_allowed,
+    read_peer_access_mode,
+)
 from .utils import load_dat_data
 
 logger = logging.getLogger("__main__." + __name__)
+
+
+def _split_device_ids(*, device_id_str: str) -> list[int]:
+    """Return the CUDA device IDs of a string such as "0,1,2,3".
+
+    Parameters
+    ----------
+    device_id_str : str
+        The CUDA device ID(s), separated by commas.
+
+    Returns
+    -------
+    list[int]
+        The IDs in the given order.
+
+    """
+    return [int(device_id) for device_id in device_id_str.split(",")]
 
 
 class SimulationError(Exception):
@@ -55,6 +80,8 @@ class Launcher:
             for multiple GPUs, provide a list of device IDs.
             example 1: [0, 1] for using GPU 0 and GPU 1. or "0,1" as a string.
             example 2: 2 for using GPU 2 or "2" as a string.
+            As in CuPy and PyTorch, the IDs count within ``CUDA_VISIBLE_DEVICES``
+            when it is set: with ``CUDA_VISIBLE_DEVICES=2,3``, [0, 1] uses GPUs 2 and 3.
         save_gpu_memory : bool, optional
             Whether to save GPU memory by using ICMAT_MEMORY_SAVING flag in the simulation.
             The simulation does not load initial conditions into GPU memory and
@@ -153,7 +180,10 @@ class Launcher:
 
     @staticmethod
     def _verify_cuda_devices_exist(device_id_str: str) -> None:
-        """Verify that the specified CUDA devices exist on the system.
+        """Verify that this process can use the specified CUDA devices.
+
+        The CUDA driver counts the GPUs in the order that the binary uses, after
+        ``CUDA_VISIBLE_DEVICES`` and ``CUDA_DEVICE_ORDER`` are applied.
 
         Parameters
         ----------
@@ -163,26 +193,25 @@ class Launcher:
         Raises
         ------
         ValueError
-            If any of the specified CUDA device IDs do not exist.
+            If any of the specified CUDA device IDs do not exist, or if
+            ``CUDA_VISIBLE_DEVICES`` is empty or lists fewer GPUs.
 
         """
-        nvidia_smi_path = shutil.which("nvidia-smi")
-        if nvidia_smi_path is None:
-            message = "nvidia-smi command not found. Please ensure NVIDIA drivers are installed."
+        device_ids = _split_device_ids(device_id_str=device_id_str)
+        if cuda_visible_devices_for_child(device_ids=device_ids) == "":
+            message = "CUDA_VISIBLE_DEVICES is empty, so this process sees no GPU."
             raise ValueError(message)
-
-        result = subprocess.run(  # noqa: S603
-            [nvidia_smi_path, "-L"],
-            check=False,
-            stdout=subprocess.PIPE,
-            encoding="utf-8",
-            shell=False,
-        )
-
-        gpu_ids = re.findall(r"GPU (\d+):", result.stdout)
-        for device_id in device_id_str.split(","):
-            if device_id not in gpu_ids:
-                message = f"CUDA device ID {device_id} does not exist."
+        try:
+            n_visible_gpus = count_visible_gpus()
+        except (AttributeError, NameError, OSError, RuntimeError, ctypes.ArgumentError) as error:
+            message = f"The CUDA driver cannot list the GPUs: {error}"
+            raise ValueError(message) from error
+        for device_id in device_ids:
+            if device_id >= n_visible_gpus:
+                message = (
+                    f"CUDA device ID {device_id} does not exist; this process sees "
+                    f"{n_visible_gpus} GPU(s)."
+                )
                 raise ValueError(message)
 
     @staticmethod
@@ -192,10 +221,9 @@ class Launcher:
         Without peer access (no NVLink, and a PCIe chipset or GPU that refuses it,
         as on GeForce cards), a multi-GPU run is much slower than with peer access.
 
-        The binary runs with ``CUDA_VISIBLE_DEVICES`` set to ``device_id_str``. The
-        CUDA ordinals of this process name the same GPUs only when this process has
-        no ``CUDA_VISIBLE_DEVICES`` of its own, so the check is skipped otherwise.
         It never raises: if the CUDA driver cannot answer, it logs at debug level.
+        It is also skipped when ``FULLWAVE_P2P`` is ``off`` or invalid; ``Launcher.run``
+        reports an invalid value.
 
         Parameters
         ----------
@@ -203,13 +231,13 @@ class Launcher:
             The CUDA device ID(s) in string format, for example "0,1,2,3".
 
         """
-        device_ids = [int(device_id) for device_id in device_id_str.split(",")]
-        if len(device_ids) < 2:
+        try:
+            if read_peer_access_mode() == "off":
+                return
+        except ValueError:
             return
-        if "CUDA_VISIBLE_DEVICES" in os.environ:
-            logger.debug(
-                "Peer access check skipped: CUDA_VISIBLE_DEVICES is set in this process.",
-            )
+        device_ids = _split_device_ids(device_id_str=device_id_str)
+        if len(device_ids) < 2:
             return
         try:
             pairs = find_consecutive_gpus_without_peer_access(device_ids)
@@ -225,6 +253,86 @@ class Launcher:
             "run whether fewer GPUs give a faster simulation.",
             pair_text,
         )
+
+    @staticmethod
+    def _resolve_peer_access(*, device_id_str: str) -> str:
+        """Decide whether the GPUs of a run may access each other's memory directly.
+
+        The mode comes from the ``FULLWAVE_P2P`` environment variable (``auto``,
+        ``on`` or ``off``; default ``auto``). With ``auto``, peer access is off when
+        the GPUs are attached to different CPU sockets. GPUs whose NUMA node is
+        unknown are ignored.
+
+        Parameters
+        ----------
+        device_id_str : str
+            The CUDA device ID(s) in string format, for example "0,1,2,3".
+
+        Returns
+        -------
+        str
+            ``"on"`` or ``"off"``.
+
+        Raises
+        ------
+        ValueError
+            If ``FULLWAVE_P2P`` holds an invalid value.
+
+        """
+        mode = read_peer_access_mode()
+        if mode == "off":
+            logger.info("Peer access between GPUs is off (%s=off).", PEER_ACCESS_VARIABLE)
+            return "off"
+        device_ids = _split_device_ids(device_id_str=device_id_str)
+        if len(device_ids) < 2:
+            return "on"
+
+        nodes = numa_nodes_of_cuda_ordinals(ordinals=device_ids)
+        resolved = "on" if peer_access_is_allowed(mode=mode, numa_nodes=nodes) else "off"
+        pair = first_consecutive_gpus_on_different_nodes(device_ids=device_ids, numa_nodes=nodes)
+        if pair is None:
+            logger.debug("Peer access %s for GPUs %s (NUMA nodes %s).", resolved, device_ids, nodes)
+            return resolved
+
+        first, second = pair
+        pair_text = (
+            f"GPU {first} and GPU {second} are attached to different CPU sockets "
+            f"(NUMA nodes {nodes[first]} and {nodes[second]})"
+        )
+        if mode == "auto":
+            logger.info(
+                "%s, so peer access between GPUs is off for this run. Set %s=on to use it.",
+                pair_text,
+                PEER_ACCESS_VARIABLE,
+            )
+        else:
+            logger.warning(
+                "%s. Peer-to-peer copies between CPU sockets are unreliable on some "
+                "platforms. Set %s=off or auto if a multi-GPU run crashes the host or "
+                "differs from a 1-GPU run.",
+                pair_text,
+                PEER_ACCESS_VARIABLE,
+            )
+        return resolved
+
+    def _warn_if_binary_ignores_peer_access_switch(self, *, peer_access: str) -> None:
+        """Warn when peer access is off for a multi-GPU run but the binary cannot honor it.
+
+        Parameters
+        ----------
+        peer_access : str
+            The resolved mode, ``"on"`` or ``"off"``.
+
+        """
+        if peer_access != "off" or "," not in self.cuda_device_id:
+            return
+        path_binary = str(self._path_fullwave_simulation_bin.resolve())
+        if not binary_reads_peer_access_switch(path=path_binary):
+            logger.warning(
+                "This solver binary does not read %s and uses peer access when the driver "
+                "allows it. Use a newer solver binary, or GPUs attached to one CPU socket.",
+                PEER_ACCESS_VARIABLE,
+            )
 
     @staticmethod
     def _configure_cuda_device_id(
@@ -289,6 +397,12 @@ class Launcher:
             logger.error(message)
             raise NotImplementedError(message)
 
+        visible_devices = cuda_visible_devices_for_child(
+            device_ids=_split_device_ids(device_id_str=self.cuda_device_id),
+        )
+        peer_access = self._resolve_peer_access(device_id_str=self.cuda_device_id)
+        self._warn_if_binary_ignores_peer_access_switch(peer_access=peer_access)
+
         os.chdir(simulation_dir)
         try:
             command = [
@@ -300,7 +414,8 @@ class Launcher:
             with (simulation_dir / "fw2_execution.log").open("w", encoding="utf-8") as file:
                 time_start = time()
                 env = os.environ.copy()
-                env["CUDA_VISIBLE_DEVICES"] = self.cuda_device_id
+                env["CUDA_VISIBLE_DEVICES"] = visible_devices
+                env[PEER_ACCESS_VARIABLE] = peer_access
                 if self.save_gpu_memory:
                     env["ICMAT_MEMORY_SAVING"] = "1"
                 else:

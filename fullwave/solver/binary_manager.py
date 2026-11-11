@@ -31,7 +31,7 @@ CACHE_DIR = Path.home() / ".cache" / "fullwave25" / "bins"
 
 # Pinned release tag for the solver binaries.
 # Update this only when new binaries are uploaded to a GitHub release.
-BINARY_RELEASE_TAG = "fullwave_bin_v1.8"
+BINARY_RELEASE_TAG = "fullwave_bin_v1.9"
 
 _CERTIFICATE_HELP = (
     "Python does not trust the certificate it received for github.com. "

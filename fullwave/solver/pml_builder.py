@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from types import ModuleType
 
     from numpy.typing import NDArray
+from fullwave.solver.cuda_utils import peer_access_is_allowed_for_visible_gpus
 from fullwave.solver.utils import initialize_relaxation_param_dict
 from fullwave.utils import check_functions, plot_utils
 
@@ -647,6 +648,7 @@ class PMLBuilder:
         # Strategy 1: Multi-GPU parallel
         if n_gpus > 1:
             n_workers = min(n_gpus, len(named_arrays))
+            peer_access_allowed = peer_access_is_allowed_for_visible_gpus(n_devices=n_workers)
             try:
                 logger.info(
                     "Extending %d medium arrays using %d GPUs (of %d available).",
@@ -654,6 +656,8 @@ class PMLBuilder:
                     n_workers,
                     n_gpus,
                 )
+                if not peer_access_allowed:
+                    named_arrays = self._move_named_arrays_to_cpu(named_arrays, attr_names)
                 return self._extend_arrays_multi_gpu(named_arrays, n_gpus)
             except Exception:
                 logger.warning(
@@ -695,6 +699,11 @@ class PMLBuilder:
                 del arr_local, result_gpu
                 cp.get_default_memory_pool().free_all_blocks()
                 return name, result_np
+
+        # Cross-device copies are not ordered after work on the source device.
+        source_devices = {arr.device.id for _, arr in named_arrays if isinstance(arr, cp.ndarray)}
+        for source_device in source_devices:
+            cp.cuda.Device(source_device).synchronize()
 
         items = [(name, arr, i % n_gpus) for i, (name, arr) in enumerate(named_arrays)]
 
