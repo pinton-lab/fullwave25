@@ -1,4 +1,8 @@
-"""Shared builder of a small 2D Solver(use_ultra=True) for the warning tests."""
+"""Shared builder of a small 2D Solver(use_ultra=True) for the tests in ``tests/ultra``.
+
+The file sits in ``tests`` and not in ``tests/ultra``: pytest 9.1 loses the fixtures of a
+subfolder conftest when a test file of ``tests`` is given between two ``tests/ultra`` files.
+"""
 
 import numpy as np
 import pytest

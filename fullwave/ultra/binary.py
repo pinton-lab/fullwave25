@@ -165,7 +165,9 @@ def run_binary(
         preflight(device or 0)
     env = os.environ.copy()
     if device is not None:
-        env["CUDA_VISIBLE_DEVICES"] = str(device)
+        env["CUDA_VISIBLE_DEVICES"] = cuda_utils.cuda_visible_devices_for_child(
+            device_ids=[device],
+        )
     command = [str(binary)]
     if unlimited_materials:
         command.append("--unlimited-materials")
