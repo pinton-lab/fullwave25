@@ -12,11 +12,16 @@ based on: https://gist.github.com/f0k/63a664160d016a491b2cbea15913d549?permalink
 import ctypes
 import json
 import logging
-from collections.abc import Callable
-from functools import lru_cache, wraps
+import os
+from collections.abc import Callable, Mapping
+from functools import cache, lru_cache, wraps
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("__main__." + __name__)
+
+PEER_ACCESS_VARIABLE = "FULLWAVE_P2P"
+PEER_ACCESS_MODES = ("auto", "on", "off")
 
 # Constants from cuda.h
 CUDA_SUCCESS = 0
@@ -214,8 +219,309 @@ def cuCtxDetach(ctx):  # noqa: ANN001, ANN201, D103, N802
 
 
 @cuda_api_call
+def cuCtxDestroy(ctx):  # noqa: ANN001, ANN201, D103, N802
+    try:
+        result = cuda.cuCtxDestroy_v2(ctx)
+    except AttributeError:
+        result = cuda.cuCtxDestroy(ctx)
+    return result
+
+
+@cuda_api_call
 def cuDeviceCanAccessPeer(can_access, dev, peer_dev):  # noqa: ANN001, ANN201, D103, N802
     return cuda.cuDeviceCanAccessPeer(can_access, dev, peer_dev)
+
+
+@cuda_api_call
+def cuDeviceGetPCIBusId(pci_bus_id, length, dev):  # noqa: ANN001, ANN201, D103, N802
+    return cuda.cuDeviceGetPCIBusId(pci_bus_id, length, dev)
+
+
+def read_numa_node(pci_address: str, *, sysfs_root: str | Path = "/sys/bus/pci/devices") -> int:
+    """Return the NUMA node of a PCI device, or -1 if it is unknown.
+
+    Parameters
+    ----------
+    pci_address : str
+        PCI address as the CUDA driver reports it, for example "00000000:3B:00.0".
+    sysfs_root : str | Path
+        Directory that holds one folder per PCI device.
+
+    Returns
+    -------
+    int
+        The NUMA node number, or -1 if the system does not report one.
+
+    """
+    domain, rest = pci_address.lower().split(":", 1)
+    sysfs_address = f"{domain[-4:]}:{rest}"
+    return int((Path(sysfs_root) / sysfs_address / "numa_node").read_text().strip())
+
+
+def count_visible_gpus() -> int:
+    """Return the number of GPUs this process can use.
+
+    Returns
+    -------
+    int
+        The CUDA device count, after ``CUDA_VISIBLE_DEVICES`` is applied.
+
+    """
+    cuInit(0)
+    count = ctypes.c_int()
+    cuDeviceGetCount(ctypes.byref(count))
+    return count.value
+
+
+def free_memory_bytes_of_cuda_ordinal(*, ordinal: int) -> int:
+    """Return the free memory of one GPU in bytes.
+
+    A short-lived CUDA context is opened on the GPU, so the value is lower than an
+    idle GPU shows by the size of one context.
+
+    Parameters
+    ----------
+    ordinal : int
+        CUDA device ordinal as this process sees it.
+
+    Returns
+    -------
+    int
+        The free bytes.
+
+    Raises
+    ------
+    ValueError
+        If this process sees no GPU with this ordinal.
+    RuntimeError
+        If the CUDA driver cannot open a context or read the memory.
+
+    """
+    n_visible_gpus = count_visible_gpus()
+    if not 0 <= ordinal < n_visible_gpus:
+        message = f"GPU {ordinal} is not visible; this process sees {n_visible_gpus} GPU(s)."
+        raise ValueError(message)
+    device = ctypes.c_int()
+    cuDeviceGet(ctypes.byref(device), ordinal)
+    context = ctypes.c_void_p()
+    if cuCtxCreate(ctypes.byref(context), 0, device) != CUDA_SUCCESS:
+        message = f"Cannot open a CUDA context on GPU {ordinal}."
+        raise RuntimeError(message)
+    try:
+        free_bytes = ctypes.c_size_t()
+        total_bytes = ctypes.c_size_t()
+        if cuMemGetInfo(ctypes.byref(free_bytes), ctypes.byref(total_bytes)) != CUDA_SUCCESS:
+            message = f"Cannot read the free memory of GPU {ordinal}."
+            raise RuntimeError(message)
+    finally:
+        cuCtxDestroy(context)
+    return free_bytes.value
+
+
+def cuda_visible_devices_for_child(
+    *,
+    device_ids: list[int],
+    environ: Mapping[str, str] | None = None,
+) -> str:
+    """Return the ``CUDA_VISIBLE_DEVICES`` value that gives a child process the same GPUs.
+
+    The ids count within the ``CUDA_VISIBLE_DEVICES`` list of this process, as in CuPy
+    and PyTorch. Without that variable, they count all GPUs. The child inherits
+    ``CUDA_DEVICE_ORDER``, so it numbers the GPUs as this process does.
+
+    Parameters
+    ----------
+    device_ids : list[int]
+        CUDA device ordinals as this process sees them.
+    environ : Mapping[str, str] | None
+        The environment to read. Defaults to ``os.environ``.
+
+    Returns
+    -------
+    str
+        For example "2,3" for ``device_ids=[0, 1]`` and ``CUDA_VISIBLE_DEVICES=2,3``.
+        UUID and MIG entries are passed on as they are written. An empty string
+        when ``CUDA_VISIBLE_DEVICES`` lists no GPU, so the child sees none either.
+
+    Raises
+    ------
+    ValueError
+        If ``CUDA_VISIBLE_DEVICES`` lists GPUs but fewer than ``device_ids`` need.
+
+    """
+    environ = os.environ if environ is None else environ
+    if "CUDA_VISIBLE_DEVICES" not in environ:
+        return ",".join(str(device_id) for device_id in device_ids)
+    visible_text = environ["CUDA_VISIBLE_DEVICES"]
+    visible_entries = [entry.strip() for entry in visible_text.split(",") if entry.strip()]
+    if not visible_entries:
+        return ""
+    if max(device_ids) >= len(visible_entries):
+        message = (
+            f"cuda_device_id {device_ids} counts within CUDA_VISIBLE_DEVICES={visible_text}, "
+            f"which lists {len(visible_entries)} GPU(s); use ids 0 to {len(visible_entries) - 1}."
+        )
+        raise ValueError(message)
+    return ",".join(visible_entries[device_id] for device_id in device_ids)
+
+
+def numa_nodes_of_cuda_ordinals(
+    *,
+    ordinals: list[int],
+    sysfs_root: str | Path = "/sys/bus/pci/devices",
+) -> dict[int, int]:
+    """Return the NUMA node (CPU socket) that each GPU is attached to.
+
+    Parameters
+    ----------
+    ordinals : list[int]
+        CUDA device ordinals as this process sees them.
+    sysfs_root : str | Path
+        Directory that holds one folder per PCI device.
+
+    Returns
+    -------
+    dict[int, int]
+        Maps each ordinal to its NUMA node. GPUs whose node is unknown are left out.
+        The result is empty if the CUDA driver cannot answer.
+
+    """
+    try:
+        cuInit(0)
+    except (AttributeError, NameError, OSError, RuntimeError, ctypes.ArgumentError) as error:
+        logger.debug("CPU socket lookup skipped: %s", error)
+        return {}
+    nodes = {}
+    for ordinal in ordinals:
+        try:
+            device = ctypes.c_int()
+            cuDeviceGet(ctypes.byref(device), ordinal)
+            pci_bus_id = ctypes.create_string_buffer(32)
+            cuDeviceGetPCIBusId(pci_bus_id, len(pci_bus_id), device)
+            node = read_numa_node(pci_bus_id.value.decode(), sysfs_root=sysfs_root)
+        except (OSError, RuntimeError, ValueError, ctypes.ArgumentError) as error:
+            logger.debug("CPU socket of GPU %d unknown: %s", ordinal, error)
+            continue
+        if node >= 0:
+            nodes[ordinal] = node
+    return nodes
+
+
+def read_peer_access_mode(*, environ: Mapping[str, str] | None = None) -> str:
+    """Return the peer access mode requested with the ``FULLWAVE_P2P`` variable.
+
+    Parameters
+    ----------
+    environ : Mapping[str, str] | None
+        The environment to read. Defaults to ``os.environ``.
+
+    Returns
+    -------
+    str
+        ``"auto"`` (the default), ``"on"`` or ``"off"``.
+
+    Raises
+    ------
+    ValueError
+        If the variable holds any other value.
+
+    """
+    environ = os.environ if environ is None else environ
+    mode = environ.get(PEER_ACCESS_VARIABLE, "").strip().lower() or "auto"
+    if mode not in PEER_ACCESS_MODES:
+        message = f"{PEER_ACCESS_VARIABLE} must be one of auto, on or off, got {mode!r}."
+        raise ValueError(message)
+    return mode
+
+
+def peer_access_is_allowed(*, mode: str, numa_nodes: dict[int, int]) -> bool:
+    """Decide whether GPUs may access each other's memory directly.
+
+    Parameters
+    ----------
+    mode : str
+        ``"auto"``, ``"on"`` or ``"off"``.
+    numa_nodes : dict[int, int]
+        NUMA node of each GPU of the run. GPUs whose node is unknown are left out.
+
+    Returns
+    -------
+    bool
+        False for ``"off"``, True for ``"on"``. For ``"auto"``, False when the
+        known GPUs are attached to more than one NUMA node.
+
+    """
+    if mode == "off":
+        return False
+    if mode == "on":
+        return True
+    return len(set(numa_nodes.values())) <= 1
+
+
+def first_consecutive_gpus_on_different_nodes(
+    *,
+    device_ids: list[int],
+    numa_nodes: dict[int, int],
+) -> tuple[int, int] | None:
+    """Return the first consecutive GPU pair attached to different NUMA nodes.
+
+    Parameters
+    ----------
+    device_ids : list[int]
+        GPUs of the run, in the requested order.
+    numa_nodes : dict[int, int]
+        NUMA node of each GPU. GPUs whose node is unknown are left out and skipped.
+
+    Returns
+    -------
+    tuple[int, int] | None
+        The pair (a, b) of known GPUs, or None if all known GPUs share one node.
+
+    """
+    known_ids = [device_id for device_id in device_ids if device_id in numa_nodes]
+    for first, second in zip(known_ids, known_ids[1:], strict=False):
+        if numa_nodes[first] != numa_nodes[second]:
+            return first, second
+    return None
+
+
+def peer_access_is_allowed_for_visible_gpus(*, n_devices: int) -> bool:
+    """Decide peer access for CuPy code that uses this process's own GPU ordinals.
+
+    Parameters
+    ----------
+    n_devices : int
+        Number of GPUs the code uses, counted from ordinal 0.
+
+    Returns
+    -------
+    bool
+        See ``peer_access_is_allowed``. A failed NUMA lookup counts as unknown.
+
+    """
+    mode = read_peer_access_mode()
+    numa_nodes = {}
+    if mode == "auto":
+        numa_nodes = numa_nodes_of_cuda_ordinals(ordinals=list(range(n_devices)))
+    return peer_access_is_allowed(mode=mode, numa_nodes=numa_nodes)
+
+
+@cache
+def binary_reads_peer_access_switch(*, path: str) -> bool:
+    """Return whether a solver binary reads the ``FULLWAVE_P2P`` variable.
+
+    Parameters
+    ----------
+    path : str
+        Path of the solver binary.
+
+    Returns
+    -------
+    bool
+        True if the binary contains the variable name.
+
+    """
+    return PEER_ACCESS_VARIABLE.encode() in Path(path).read_bytes()
 
 
 def find_consecutive_gpus_without_peer_access(ordinals: list[int]) -> list[tuple[int, int]]:

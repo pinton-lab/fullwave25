@@ -578,6 +578,8 @@ class Solver:
             for multiple GPUs, provide a list of device IDs.
             example 1: [0, 1] for using GPU 0 and GPU 1. or "0,1" as a string.
             example 2: 2 for using GPU 2 or "2" as a string.
+            As in CuPy and PyTorch, the IDs count within ``CUDA_VISIBLE_DEVICES``
+            when it is set: with ``CUDA_VISIBLE_DEVICES=2,3``, [0, 1] uses GPUs 2 and 3.
         save_gpu_memory : bool, optional
             Whether to save GPU memory by using ICMAT_MEMORY_SAVING flag in the simulation.
         use_gpu_pml : bool, optional
